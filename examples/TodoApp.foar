@@ -1,0 +1,172 @@
+// FOAR Todo App
+// Demonstrates State Machines, Sub-views, Global/Local Data, and Event Emission
+
+data Todo {
+    id: String,
+    text: String,
+    completed: bool,
+}
+
+// ---------------------------------------------------------
+// MAIN APP VIEW
+// ---------------------------------------------------------
+view TodoApp {
+    // Persistent View State
+    store todos: Vec<Todo> = [];
+    store search_query: String = "";
+    store draft: String = "";
+
+    // Base styling applied to the host element
+    style {
+        layout: vertical;
+        padding: 32px;
+        gap: 20px;
+        max-width: 600px;
+        font-family: system-ui;
+    }
+
+    // The App is always active in this example
+    state Active {
+        render {
+            Text("FOAR Todo App")
+                .style({ font-size: 32px; font-weight: bold; color: #333; })
+
+            // Search Bar
+            Input(value: search_query, placeholder: "🔍 Search todos...") 
+                -> on_input(UpdateSearch)
+                .style({ padding: 10px; border-radius: 6px; border: 1px solid #ccc; })
+
+            // Create New Todo Row
+            Row {
+                Input(value: draft, placeholder: "What needs to be done?")
+                    -> on_input(UpdateDraft)
+                    -> on_enter(AddTodo)
+                    .style({ flex: 1; padding: 10px; border-radius: 6px; })
+                
+                Button("Add") 
+                    -> on_click(AddTodo)
+                    .style({ background: #007bff; color: white; border-radius: 6px; padding: 0 20px; })
+            }
+
+            // List rendering with reactive filtering
+            List(todos.filter(|t| t.text.contains(search_query))) { todo =>
+                // Instantiate sub-view and listen to its emitted events
+                TodoItem(item: todo)
+                    -> on_delete(RemoveTodo)
+                    -> on_update(UpdateTodo)
+            }
+        }
+
+        // --- Effects (Transitions & Data Mutations) ---
+        effect UpdateSearch(query: String) {
+            search_query = query;
+        }
+
+        effect UpdateDraft(text: String) {
+            draft = text;
+        }
+
+        effect AddTodo() {
+            if draft.is_empty() { return; }
+            todos.push(Todo { 
+                id: random_uuid(), 
+                text: draft, 
+                completed: false 
+            });
+            draft = ""; // Clear input
+        }
+
+        effect RemoveTodo(id: String) {
+            todos.retain(|t| t.id != id);
+        }
+
+        effect UpdateTodo(updated: Todo) {
+            if let Some(index) = todos.find_index(|t| t.id == updated.id) {
+                todos[index] = updated;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------
+// TODO ITEM VIEW
+// Demonstrates how State Machines eliminate React-style 
+// boolean flags (e.g. `isEditing`) and conditional rendering
+// ---------------------------------------------------------
+view TodoItem(item: Todo) {
+    store draft_edit: String = item.text;
+
+    style {
+        layout: horizontal;
+        align: center;
+        gap: 12px;
+        padding: 12px;
+        border-bottom: 1px solid #eee;
+        transition: background 0.2s ease;
+        
+        @hover { background: #f9f9f9; }
+    }
+
+    // Default State: Showing the Todo
+    state Idle {
+        render {
+            Checkbox(checked: item.completed) -> on_change(Toggle)
+            
+            Text(item.text)
+                .style({ 
+                    text-decoration: item.completed ? line-through : none; 
+                    flex: 1; 
+                    color: item.completed ? #aaa : #000;
+                })
+                -> on_double_click(StartEdit)
+
+            Button("Edit") -> on_click(StartEdit)
+            Button("Delete") -> on_click(DeleteSelf).style({ color: red; })
+        }
+
+        effect Toggle(checked: bool) {
+            let mut new_item = item;
+            new_item.completed = checked;
+            emit update(new_item);
+        }
+
+        effect StartEdit() {
+            draft_edit = item.text; // Reset draft
+            transition Editing;     // Explicitly change UI topology!
+        }
+
+        effect DeleteSelf() {
+            emit delete(item.id);
+        }
+    }
+
+    // Editing State: Layout completely changes surgically
+    state Editing {
+        render {
+            Input(value: draft_edit) 
+                -> on_input(UpdateEditDraft)
+                -> on_enter(SaveEdit)
+                .style({ flex: 1; padding: 6px; })
+
+            Button("Save") -> on_click(SaveEdit).style({ color: green; })
+            Button("Cancel") -> on_click(CancelEdit)
+        }
+
+        effect UpdateEditDraft(text: String) {
+            draft_edit = text;
+        }
+
+        effect SaveEdit() {
+            if !draft_edit.is_empty() {
+                let mut new_item = item;
+                new_item.text = draft_edit;
+                emit update(new_item);
+            }
+            transition Idle; // Go back to normal view
+        }
+
+        effect CancelEdit() {
+            transition Idle;
+        }
+    }
+}

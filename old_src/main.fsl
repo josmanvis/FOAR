@@ -1,0 +1,23 @@
+// My First FSL Script (FOAR Scripting Language)
+// This is a modernized version of LSL that uses cleaner syntax and compiles down to LSL.
+
+state default {
+    on_entry() {
+        print("System Initialized");
+    }
+
+    on_touch(integer total) {
+        print("Touched: " + total);
+        transition active;
+    }
+}
+
+state active {
+    on_entry() {
+        print("Active State Entered");
+    }
+
+    on_touch(integer total) {
+        transition default;
+    }
+}

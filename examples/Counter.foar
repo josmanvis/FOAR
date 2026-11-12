@@ -1,0 +1,73 @@
+// FOAR: A State-Machine UI Language
+// ----------------------------------
+// A fresh take: UIs are inherently state machines. 
+// Instead of complex boolean flags (isLoading, isError, isActive) like React, 
+// FOAR uses explicit topological states for UI components.
+
+view AsyncCounter {
+    // 1. Data Store (Persistent memory for the view)
+    store count: i32 = 0;
+    
+    // 2. Base Styling (Applied across all states)
+    style {
+        layout: vertical;
+        align: center;
+        gap: 16px;
+        font-family: system-ui;
+    }
+
+    // 3. State Machines!
+    // The view starts in the Initial state
+    state Initial {
+        render {
+            Button("Start Counting") -> on_click(TransitionToActive)
+        }
+        
+        effect TransitionToActive() {
+            transition Active;
+        }
+    }
+
+    // When active, the UI layout completely switches
+    state Active {
+        render {
+            Text("Current count: {count}")
+                // Scoped styling!
+                .style({ font-size: 24px; font-weight: bold; })
+
+            Row {
+                Button("-") -> on_click(Decrement)
+                Button("+") -> on_click(Increment)
+            }
+            
+            Button("Finish") -> on_click(FinishAndSave)
+                .style({ margin-top: 20px; background: red; })
+        }
+
+        effect Increment() {
+            count += 1;
+        }
+
+        effect Decrement() {
+            count -= 1;
+        }
+
+        effect FinishAndSave() {
+            // Data propagation via async effect
+            // 'api_save' is an external binding
+            api_save(count) -> transition(Saving);
+        }
+    }
+
+    state Saving {
+        render {
+            Spinner("Saving to server...")
+        }
+
+        // Implicit transition back to Initial when api_save resolves
+        on_exit {
+            count = 0; // Reset
+            transition Initial;
+        }
+    }
+}
