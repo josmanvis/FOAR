@@ -123,12 +123,12 @@ export async function createHost({ createI18n, getApp }) {
 
   async function createPassword(password, hint) {
     await lock.create(password, hint);
-    getApp()?.invokeEffect('root', 'PasswordCreated', true);
+    getApp()?.call('Vault.Opened', {});
   }
 
   async function unlockNotes(password) {
     if (!(await lock.unlock(password))) {
-      getApp()?.invokeEffect('root', 'UnlockFailed', true);
+      getApp()?.call('Vault.Failed');
       return;
     }
     const plain = {};
@@ -137,7 +137,7 @@ export async function createHost({ createI18n, getApp }) {
         plain[id] = await lock.decrypt(box);
       } catch {}
     }
-    getApp()?.invokeEffect('root', 'Unlocked', plain);
+    getApp()?.call('Vault.Opened', plain);
   }
 
   function closeLocked() {
@@ -157,7 +157,8 @@ export async function createHost({ createI18n, getApp }) {
       current_locale: () => i18n.locale,
       available_locales: () => LOCALES,
       set_locale: setLocale,
-      later: (effect, arg, ms = 0) => setTimeout(() => getApp()?.invokeEffect('root', effect, arg), ms),
+      // later("Toasts.Hide", id, 6000): run a context effect after a delay
+      later: (effect, arg, ms = 0) => setTimeout(() => getApp()?.call(effect, arg), ms),
       start_new_folder: () =>
         queueMicrotask(() => {
           const app = getApp();

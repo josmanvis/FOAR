@@ -9,7 +9,7 @@ import * as model from './model.js';
 let app = null;
 let mountEl = document.body;
 let uxCleanup = null;
-const root = () => app?.getSnapshot().find((i) => i.key === 'root');
+const selectedId = () => app?.getContext('Browse')?.selected ?? '';
 
 // ---- resizable panes ------------------------------------------------------------------
 const PANES = {
@@ -120,19 +120,17 @@ function installListKeys(on) {
     };
     if (moves[e.key]) {
       e.preventDefault();
-      app.invokeEffect('root', 'Nav', moves[e.key]);
+      app.call('Browse.Step', moves[e.key]);
       focusSelectedOption();
     } else if (e.key === 'Enter' && !e.repeat) {
       e.preventDefault();
-      const id = root()?.stores.selected_id;
-      if (inGallery) app.invokeEffect('root', 'OpenNote', id);
+      if (inGallery) app.call('Browse.Open', selectedId());
       requestAnimationFrame(() => document.querySelector('.f4-richtext[contenteditable=true]')?.focus());
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
-      const r = root();
-      const note = r?.stores.notes.find((n) => n.id === r.stores.selected_id);
+      const note = app.getContext('Library').notes.find((n) => n.id === selectedId());
       if (note && !note.deleted_at) {
         e.preventDefault();
-        app.invokeEffect('root', 'NoteAction', { kind: 'delete', id: note.id });
+        app.call('Library.Trash', note.id);
         focusSelectedOption();
       }
     }

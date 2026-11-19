@@ -65,6 +65,8 @@ pub struct Parser<'s> {
     cur_state: Option<String>,
     /// `-> on_x(Handler)` in render blocks: (view, state, handler, offset)
     handler_refs: Vec<(String, String, String, usize)>,
+    /// `-> on_x(Cart.Add)`: (view, "Cart", "Add", offset)
+    ctx_handler_refs: Vec<(String, String, String, usize)>,
     /// `-> on_x(...)` on a sub-view element: (target view, event, offset)
     view_event_refs: Vec<(String, String, usize)>,
     /// events each view emits (`emit name(...)` in any of its effects)
@@ -101,6 +103,7 @@ impl<'s> Parser<'s> {
             check_items: Vec::new(),
             cur_state: None,
             handler_refs: Vec::new(),
+            ctx_handler_refs: Vec::new(),
             view_event_refs: Vec::new(),
             emits: Default::default(),
             render_locals: Vec::new(),
@@ -232,6 +235,7 @@ impl<'s> Parser<'s> {
         // Static type check across the whole program (stores, lets, data literals,
         // field accesses, view props, effects, transitions, contexts, fns, and extern fns).
         self.check_view_events(&views)?;
+        self.check_context_handlers(&views, &contexts)?;
         crate::typecheck::check_program(self.src, &data_decls, &enums, &externs, &functions, &contexts, &views, &self.check_items)?;
         // `style A { @use B; }` then `.style(A)`: the element needs B's class too.
         // Done after parsing because named styles may be declared after their use.
@@ -937,8 +941,12 @@ impl<'s> Parser<'s> {
                     self.view_event_refs.push((tag.clone(), ev.clone(), ev_at));
                 }
                 if self.eat(".") {
+                    let effect = self.expect_ident()?;
+                    if let Some(v) = &self.cur_view {
+                        self.ctx_handler_refs.push((v.clone(), handler.clone(), effect.clone(), handler_at));
+                    }
                     handler.push('.');
-                    handler.push_str(&self.expect_ident()?);
+                    handler.push_str(&effect);
                 }
                 self.expect(")")?;
                 el.events.insert(ev, J::String(handler));
@@ -1052,6 +1060,26 @@ impl<'s> Parser<'s> {
             let all: Vec<&str> = states.iter().flat_map(|s| s.effects.iter().map(|e| e.name.as_str())).collect();
             let hint = crate::typecheck::did_you_mean(&handler, all.iter().copied());
             return Err(err_at(self.src, at, format!("State {} of {} has no effect '{}'{}", state, view, handler, hint)));
+        }
+        Ok(())
+    }
+
+    /// `-> on_click(Cart.Add)`: the context exists, the view `use`s it, and it has that effect.
+    fn check_context_handlers(&self, views: &[ViewDecl], contexts: &[ContextDecl]) -> PResult<()> {
+        for (view, ctx, effect, at) in &self.ctx_handler_refs {
+            let Some(c) = contexts.iter().find(|c| &c.name == ctx) else {
+                let hint = crate::typecheck::did_you_mean(ctx, contexts.iter().map(|c| c.name.as_str()));
+                return Err(err_at(self.src, *at, format!("There is no context '{}'{}", ctx, hint)));
+            };
+            if let Some(v) = views.iter().find(|v| &v.name == view) {
+                if !v.uses.iter().any(|u| u == ctx) {
+                    return Err(err_at(self.src, *at, format!("{} uses context {} without declaring it: add `use {};` to the view", view, ctx, ctx)));
+                }
+            }
+            if !c.effects.iter().any(|e| &e.name == effect) {
+                let hint = crate::typecheck::did_you_mean(effect, c.effects.iter().map(|e| e.name.as_str()));
+                return Err(err_at(self.src, *at, format!("Context {} has no effect '{}'{}", ctx, effect, hint)));
+            }
         }
         Ok(())
     }

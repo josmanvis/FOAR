@@ -1386,3 +1386,67 @@ view Badge(label: String, tone: String = "gray", count: i32 = 0) {
   const { html } = renderToString(ast, {});
   assert.ok(html.includes('a:gray:0') && html.includes('b:red:2'), html);
 });
+
+test('contexts as modules: cross-context lets, dependency order, host call/getContext, innermost hotkey', async () => {
+  // Shown is declared before Items but reads it: it must initialise after Items.
+  const src = `context Shown {
+    store query: String = "";
+    let matching = Items.all.filter(|i| i.includes(query));
+    effect Search(q: String) { query = q; }
+}
+context Items {
+    store all: Vec<String> = ["apple", "banana"];
+    effect Add(name: String) { all = [...all, name]; }
+}
+view App {
+    use Shown;
+    store closed: i32 = 0;
+    state S {
+        on_key("Escape") { closed = closed + 1; }
+        render {
+            Text(Shown.matching.len() + " of " + closed)
+            Popup()
+        }
+    }
+}
+view Popup {
+    store open: bool = true;
+    state S {
+        on_key("Escape") { open = false; transition Gone; }
+        render { Text("popup") }
+    }
+    state Gone { render { Text("gone") } }
+}`;
+  const ast = parseFoar(src);
+  const { window, container } = makeDom();
+  const app = createFoarRuntime(ast, container, {});
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+  const text = () => q(container, '.f4-text').map((e) => e.textContent);
+  assert.deepEqual(text(), ['2 of 0', 'popup'], 'Shown.matching sees Items at start');
+
+  // host API: call a context effect, read a context
+  app.call('Items.Add', 'apricot');
+  app.call('Shown.Search', 'ap');
+  await tick();
+  assert.deepEqual(app.getContext('Shown').matching, ['apple', 'apricot']);
+  assert.equal(text()[0], '2 of 0', "a let reading another context stays current");
+  app.call('Items.Add', 'grape');
+  await tick();
+  assert.equal(text()[0], '3 of 0', 'Items changed, Shown.matching follows');
+  assert.throws(() => app.call('Items.Nope'), /no context effect Items.Nope/);
+
+  // Escape: the popup (innermost) handles it first, then the app
+  const esc = () => window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  esc();
+  await tick();
+  assert.deepEqual(text(), ['3 of 0', 'gone']);
+  esc();
+  await tick();
+  assert.deepEqual(text(), ['3 of 1', 'gone']);
+  app.destroy();
+
+  // SSR: same order
+  const { html, state } = renderToString(ast, {});
+  assert.ok(html.includes('2 of 0'), html);
+  assert.deepEqual(state.contexts.Items.all, ['apple', 'banana']);
+});

@@ -8,6 +8,8 @@ view ContextMenu(at: any, items: Vec<any>, label: String) {
     style { position: fixed; z-index: 300; left: {at.x + "px"}; top: {at.y + "px"}; }
 
     state Showing {
+        on_key("Escape") { emit close(true); }
+
         render {
             Column(role: "menu", label: label) {
                 List(items) { it =>

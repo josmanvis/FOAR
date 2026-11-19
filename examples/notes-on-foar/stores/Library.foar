@@ -1,0 +1,119 @@
+// Library: every note and folder, and everything you can do to them.
+// Each change is saved (host/storage.js) as soon as it's made.
+import "models"
+import "./Toasts"
+
+context Library {
+    store notes: Vec<Note> = load_notes();
+    store folders: Vec<Folder> = load_folders();
+
+    let tags = all_tags(notes);
+    let deleted_count: i32 = count_in(notes, "deleted");
+
+    // ---- notes ----------------------------------------------------------------
+    effect Add(id: String, folder: String) {
+        let now = Date.now();
+        let home = folders.some(|f| f.id == folder) ? folder : "notes";
+        let note = Note { id: id, folder: home, title: "", html: "<h1><br></h1>", created: now, updated: now, pinned: false, deleted_at: 0, locked: false };
+        notes = [note, ...notes];
+        persist(notes);
+    }
+
+    effect Edit(id: String, html: String) {
+        notes = notes.map(|n| n.id == id ? { ...n, html: html, title: title_of(html), updated: Date.now() } : n);
+        persist(notes);
+    }
+
+    effect TogglePin(id: String) {
+        notes = notes.map(|n| n.id == id ? { ...n, pinned: !n.pinned } : n);
+        persist(notes);
+    }
+
+    effect Duplicate(id: String, copy_id: String) {
+        let now = Date.now();
+        let original = notes.find(|n| n.id == id);
+        notes = [{ ...original, id: copy_id, created: now, updated: now, pinned: false }, ...notes];
+        persist(notes);
+    }
+
+    // Moving a note out of Recently Deleted also recovers it.
+    effect Move(id: String, folder: String) {
+        let before = notes.find(|n| n.id == id);
+        notes = notes.map(|n| n.id == id ? { ...n, folder: folder, deleted_at: 0 } : n);
+        persist(notes);
+        if before.folder != folder {
+            Toasts.Show(t_key("toast.moved"), { folder: folder_name(folders, folder) }, before);
+        }
+    }
+
+    effect Trash(id: String) {
+        let before = notes.find(|n| n.id == id);
+        if before.deleted_at == 0 {
+            notes = notes.map(|n| n.id == id ? { ...n, deleted_at: Date.now(), pinned: false } : n);
+            persist(notes);
+            Toasts.Show(t_key("toast.deleted"), null, before);
+        }
+    }
+
+    // Back to its folder, or to Notes if that folder is gone.
+    effect Recover(id: String) {
+        notes = notes.map(|n| n.id == id ? { ...n, deleted_at: 0, folder: folders.some(|f| f.id == n.folder) ? n.folder : "notes" } : n);
+        persist(notes);
+    }
+
+    // Undo: put a note back exactly as it was.
+    effect Restore(before: Note) {
+        notes = notes.map(|n| n.id == before.id ? before : n);
+        persist(notes);
+    }
+
+    effect Purge(id: String) {
+        notes.retain(|n| n.id != id);
+        persist(notes);
+    }
+
+    effect EmptyTrash() {
+        notes.retain(|n| n.deleted_at == 0);
+        persist(notes);
+    }
+
+    // Print or export (Markdown, HTML): host/export.js
+    effect Export(kind: String, id: String) {
+        note_command(kind, notes.find(|n| n.id == id));
+    }
+
+    // ---- locked notes (see Vault) -----------------------------------------------
+    effect SetLocked(id: String, locked: bool) {
+        notes = notes.map(|n| n.id == id ? { ...n, locked: locked } : n);
+        persist(notes);
+    }
+
+    // The decrypted text of locked notes, by id.
+    effect Reveal(plain: any) {
+        notes = notes.map(|n| plain[n.id] !== undefined ? { ...n, html: plain[n.id] } : n);
+    }
+
+    effect HideLocked() {
+        notes = notes.map(|n| n.locked ? { ...n, html: "" } : n);
+    }
+
+    // ---- folders ----------------------------------------------------------------
+    effect AddFolder(id: String, name: String) {
+        folders = [...folders, Folder { id: id, name: unique_name(name, folders) }];
+        persist_folders(folders);
+    }
+
+    effect RenameFolder(id: String, name: String) {
+        folders = folders.map(|f| f.id == id ? { ...f, name: name } : f);
+        persist_folders(folders);
+    }
+
+    // Its notes go to Recently Deleted.
+    effect DeleteFolder(id: String) {
+        let now = Date.now();
+        notes = notes.map(|n| n.folder == id && n.deleted_at == 0 ? { ...n, deleted_at: now, pinned: false } : n);
+        folders.retain(|f| f.id != id);
+        persist(notes);
+        persist_folders(folders);
+    }
+}

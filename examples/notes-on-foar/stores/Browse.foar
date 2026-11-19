@@ -1,0 +1,49 @@
+// Browse: what you're looking at — a folder, a tag, Recently Deleted or a
+// search — and which note is selected.
+import "models"
+import "./Library"
+import "./Prefs"
+
+context Browse {
+    store view: String = "all";      // "all", "deleted", a folder id, or "tag:<name>"
+    store query: String = "";
+    store chosen: String = "";       // the note you picked ("" = the first one)
+    store fresh: String = "";        // a note just created: its editor takes focus
+    store gallery_open: bool = false;
+
+    // The notes shown, grouped by date (pinned first), and the selected one:
+    // the note you picked while it's shown, otherwise the first.
+    let groups = note_groups(Library.notes, view, query, Prefs.sort, Prefs.group_dates, Library.folders);
+    let shown = groups.flatMap(|g| g.notes);
+    let selected: String = shown.some(|n| n.id == chosen) ? chosen : (shown.len() > 0 ? shown[0].id : "");
+    let selected_notes = Library.notes.filter(|n| n.id == selected);
+    let in_trash: bool = view == "deleted";
+
+    effect Show(place: String) {
+        view = place;
+        query = "";
+        chosen = "";
+        gallery_open = false;
+    }
+
+    effect Search(text: String) { query = text; }
+    effect Select(id: String) { chosen = id; }
+    effect Open(id: String) { chosen = id; gallery_open = true; }
+    effect CloseNote() { gallery_open = false; }
+
+    // ↑/↓, Home/End, PageUp/PageDown in the list (host/ux.js)
+    effect Step(by: i32) {
+        chosen = neighbor_of(Library.notes, view, query, Prefs.sort, Prefs.group_dates, Library.folders, selected, by);
+    }
+
+    // A new note in the folder you're in (or Notes), selected and focused.
+    effect NewNote() {
+        let id = random_uuid();
+        Library.Add(id, view);
+        view = in_trash || view.startsWith("tag:") ? "all" : view;
+        query = "";
+        chosen = id;
+        fresh = id;
+        gallery_open = Prefs.layout == Layout.Gallery;
+    }
+}

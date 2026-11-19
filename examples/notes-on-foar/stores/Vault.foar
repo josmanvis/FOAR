@@ -1,0 +1,63 @@
+// Vault: the notes password. Locking needs it, reading a locked note needs it
+// entered. The crypto is in host/lock.js, which answers with Opened or Failed.
+import "models"
+import "./Library"
+
+context Vault {
+    store has_password: bool = password_exists();
+    store unlocked: bool = false;
+    store sheet: SheetMode = SheetMode.Closed;
+    store pending: String = "";      // the note to lock once the password is in
+    store error: String = "";
+
+    let hint: String = password_hint();
+
+    effect Lock(id: String) {
+        if unlocked {
+            Library.SetLocked(id, true);
+        } else {
+            pending = id;
+            sheet = has_password ? SheetMode.Enter : SheetMode.Create;
+        }
+    }
+
+    // From the password sheet: { password, hint }
+    effect Submit(form: any) {
+        error = "";
+        match sheet {
+            SheetMode.Create => create_password(form.password, form.hint),
+            SheetMode.Enter | SheetMode.Closed => unlock_notes(form.password),
+        }
+    }
+
+    // From a locked note's password field.
+    effect Unlock(password: String) {
+        error = "";
+        unlock_notes(password);
+    }
+
+    effect Opened(plain: any) {
+        Library.Reveal(plain);
+        Library.SetLocked(pending, true);   // no-op when nothing is pending
+        has_password = true;
+        unlocked = true;
+        sheet = SheetMode.Closed;
+        pending = "";
+        error = "";
+    }
+
+    effect Failed() { error = t("lock.errWrong"); }
+
+    effect Cancel() {
+        sheet = SheetMode.Closed;
+        pending = "";
+        error = "";
+    }
+
+    // Forget the password and hide every locked note again.
+    effect LockAll() {
+        close_locked();
+        Library.HideLocked();
+        unlocked = false;
+    }
+}

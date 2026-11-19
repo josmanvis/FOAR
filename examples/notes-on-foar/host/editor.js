@@ -20,7 +20,7 @@ const activeEditor = () =>
 const fireInput = (ed) => ed?.dispatchEvent(new Event('input', { bubbles: true }));
 // Marks a message key that is translated later, when the toast renders (see foar i18n).
 const t_key = (key) => key;
-const noteKey = () => app?.getSnapshot().find((i) => i.key === 'root')?.stores.selected_id ?? '';
+const noteKey = () => app?.getContext('Browse')?.selected ?? '';
 const checkpoint = (ed) => history.record(noteKey(), ed, 'op');
 
 function restore(range) {
@@ -491,8 +491,7 @@ async function pasteFromMenu(ed) {
 /** A toast without Undo (host-side messages): a message key, translated when shown. */
 export function notify(key, params = null) {
   if (!app) return;
-  const id = Math.random().toString(36).slice(2);
-  app.invokeEffect('root', 'ShowToast', { id, key, params });
+  app.call('Toasts.Show', key, params, null);
 }
 
 // ---- images -------------------------------------------------------------------
@@ -862,7 +861,7 @@ export function installEditor(foarApp, mountEl = document.body) {
       if (history.redo(noteKey(), inEditor)) fireInput(inEditor);
     } else if (e.altKey && key === 'n') {
       e.preventDefault();
-      app.invokeEffect('root', 'NewNote', true);
+      app.call('Browse.NewNote');
     } else if (e.shiftKey && key === 'n') {
       const nf = instanceOf('NewFolderRow');
       if (nf) {
@@ -899,19 +898,18 @@ export function installEditor(foarApp, mountEl = document.body) {
     else if (editable && !e.shiftKey && !e.altKey && ['b', 'i', 'u'].includes(key)) {
       fmtShortcut({ b: 'bold', i: 'italic', u: 'underline' }[key]);
     } else if (key === 'p') {
-      const sel = app.getSnapshot().find((i) => i.key === 'root')?.stores.selected_id;
+      const sel = noteKey();
       if (sel) {
         e.preventDefault();
-        app.invokeEffect('root', 'NoteAction', { kind: 'print', id: sel });
+        app.call('Library.Export', 'print', sel);
       }
     } else if ((e.key === 'Backspace' || e.key === 'Delete') && !inEditor && !e.target.closest('input, textarea')) {
-      const root = app.getSnapshot().find((i) => i.key === 'root');
-      const sel = root?.stores.selected_id;
-      const note = root?.stores.notes.find((n) => n.id === sel);
+      const sel = noteKey();
+      const note = app.getContext('Library').notes.find((n) => n.id === sel);
       // Moves to Recently Deleted only; permanent deletion always asks first (note menu).
       if (note && !note.deleted_at) {
         e.preventDefault();
-        app.invokeEffect('root', 'NoteAction', { kind: 'delete', id: sel });
+        app.call('Library.Trash', sel);
       }
     }
   });

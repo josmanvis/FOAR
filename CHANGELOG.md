@@ -10,6 +10,10 @@ All notable changes to FOAR are documented in this file.
 - Landing, docs and playground restyled to match; docs table of contents no longer double-escapes `&`.
 
 ### Language
+- **Contexts as the app's stores.** A context can read and call other contexts (type-checked); its `let`s stay current when the contexts they read change; contexts initialise in dependency order. A view must `use` the contexts it reads, and `-> on_click(Ctx.Effect)` is checked (context, `use`, effect name).
+- Hosts: `app.call('Library.Trash', id)` runs a context effect, `app.getContext('Library')` reads one.
+- `clics += 1` where the store is `clicks` is now a compile error ("isn't a store of view V (did you mean 'clicks'?)") instead of silently writing nowhere.
+- Hotkeys: the innermost `on_key` wins, so a menu or dialog handles Escape before the view around it.
 - **Prop defaults**: `view MenuItem(label: String, check: bool = false)`; a prop with a default (or of type `Option<T>`) is optional, the default is type-checked and applied on the client, on updates and in SSR.
 - The compiler now rejects: missing required props; an event handler that isn't an effect of the state it's in (it would silently do nothing) or doesn't exist; `-> on_x` on a component that never emits `x`; match arms of different types; views named like a built-in element (`view Row` used to be silently ignored in favour of the built-in).
 - Fixed: props named `label`, `title`, `role`, `id`… were not type-checked because built-in attribute names were checked first.

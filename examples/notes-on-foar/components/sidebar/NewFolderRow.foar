@@ -2,6 +2,9 @@
 import "styles/shared"
 
 view NewFolderRow {
+    use Library;
+    use Browse;
+
     store draft: String = "";
 
     state Idle {
@@ -22,7 +25,11 @@ view NewFolderRow {
         effect Draft(v: String) { draft = v; }
         effect Commit() {
             let name = draft.trim();
-            if name != "" { emit create(name); }
+            if name != "" {
+                let id = random_uuid();
+                Library.AddFolder(id, name);
+                Browse.Show(id);
+            }
             transition Idle;
         }
         effect Cancel() { transition Idle; }

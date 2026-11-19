@@ -1,7 +1,12 @@
 // Toast — bottom-centre notification with Undo (a live region).
 import "styles/shared"
 
-view Toast(toast: any) {
+// Shown while Toasts.current is set.
+view Toast {
+    use Toasts;
+
+    let toast = Toasts.current;
+
     style {
         position: fixed;
         left: 50%;
@@ -31,7 +36,7 @@ view Toast(toast: any) {
                 font-size: 13px;
             })
         }
-        effect Undo() { emit undo(toast.undo); }
-        effect Close() { emit close(true); }
+        effect Undo() { Toasts.Undo(); }
+        effect Close() { Toasts.Close(); }
     }
 }

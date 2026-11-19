@@ -1,0 +1,26 @@
+// Toasts: the message at the bottom of the window, with Undo.
+import "models"
+import "./Library"
+
+context Toasts {
+    store current: Option<ToastMessage> = None;
+
+    // `key` is translated when shown, so switching language re-translates it.
+    effect Show(key: String, params: any, undo: Option<Note>) {
+        let id = random_uuid();
+        current = ToastMessage { id: id, key: key, params: params, undo: undo };
+        later("Toasts.Hide", id, 6000);
+    }
+
+    // Hides the toast `id` (a newer one stays).
+    effect Hide(id: String) {
+        current = current != None && current.id == id ? None : current;
+    }
+
+    effect Close() { current = None; }
+
+    effect Undo() {
+        Library.Restore(current.undo);
+        current = None;
+    }
+}

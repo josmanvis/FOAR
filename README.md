@@ -74,10 +74,10 @@ article.foar:10:13: This match doesn't handle Status.Archived (add an arm for it
   view's subtree. Async transitions pass resolved values to `on_exit(res)` and
   rejections to `on_error(err)`, alongside `on_enter`, `on_unmount`, and
   state-scoped keyboard shortcuts (`on_key("Escape") { … }`).
-- **Shared reactive `context` & pure `fn`.** Declare singleton reactive state
-  with `context Cart { store ...; let ...; effect ... }`, subscribe via
-  `use Cart;`, and write reusable typed pure FOAR functions (`fn format_usd(c: i32) -> String { … }`)
-  that work across views and SSR without external JS.
+- **Contexts: your app's stores, one per file.** `context Library { store ...; let ...; effect ... }`
+  holds a slice of app data and every operation on it; views `use Library;` and call
+  `Library.Trash(id)` directly, contexts call each other, and all of it is type-checked.
+  Plus typed pure functions (`fn format_usd(c: i32) -> String { … }`) that run the same in SSR.
 - **Tagged-union ADTs, generics & exhaustive `match`.** `enum LoadState<T> { Idle, Ready(T), Failed(String) }`
   and generic `data<T>` / `view<T>`. No fall-through and no `break`; payload
   destructuring (`Ready(user) => …`), literals, `a | b`, ranges, and guards work

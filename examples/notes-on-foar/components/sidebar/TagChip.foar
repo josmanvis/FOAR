@@ -1,6 +1,8 @@
 // TagChip — a #tag filter in the sidebar.
 
 view TagChip(tag: any, selected: bool) {
+    use Browse;
+
     state Idle {
         render {
             Button("#" + tag.name, aria: { pressed: selected }, title: t("list.count", { count: tag.count })) -> on_click(Pick)
@@ -15,9 +17,6 @@ view TagChip(tag: any, selected: bool) {
                     @hover { filter: brightness(0.95); }
                 })
         }
-        effect Pick() {
-            let v = "tag:" + tag.name;
-            emit pick(v);
-        }
+        effect Pick() { Browse.Show("tag:" + tag.name); }
     }
 }

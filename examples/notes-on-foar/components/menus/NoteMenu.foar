@@ -2,9 +2,14 @@
 import "styles/shared"
 import "./MenuItem"
 
-view NoteMenu(note: Note, folders: Vec<Folder>, unlocked: bool, at: any) {
+// Each item does its thing and emits `done`, so the menu's owner closes it.
+view NoteMenu(note: Note, at: any) {
+    use Library;
+    use Browse;
+    use Vault;
+
     let is_deleted: bool = note.deleted_at > 0;
-    let can_read: bool = !note.locked || unlocked;
+    let can_read: bool = !note.locked || Vault.unlocked;
 
     style {
         position: {at ? "fixed" : ""};
@@ -17,29 +22,40 @@ view NoteMenu(note: Note, folders: Vec<Folder>, unlocked: bool, at: any) {
         render {
             Column(role: "menu", label: t("note.menuLabel")) {
                 If(is_deleted) {
-                    MenuItem(label: t("note.recover"), value: "recover") -> on_pick(Act)
+                    MenuItem(label: t("note.recover"), value: "recover") -> on_pick(Recover)
                     MenuItem(label: t("note.purge"), value: "purge", danger: true) -> on_pick(AskPurge)
                 } Else {
-                    MenuItem(label: note.pinned ? t("note.unpin") : t("note.pin"), value: "pin") -> on_pick(Act)
+                    MenuItem(label: note.pinned ? t("note.unpin") : t("note.pin"), value: "pin") -> on_pick(Pin)
                     If(!note.locked) {
-                        MenuItem(label: t("note.lock"), value: "lock") -> on_pick(Act)
-                    } Else If(unlocked) {
-                        MenuItem(label: t("note.removeLock"), value: "remove_lock") -> on_pick(Act)
+                        MenuItem(label: t("note.lock"), value: "lock") -> on_pick(Lock)
+                    } Else If(Vault.unlocked) {
+                        MenuItem(label: t("note.removeLock"), value: "remove_lock") -> on_pick(RemoveLock)
                     }
                     MenuItem(label: t("note.moveTo"), value: "move") -> on_pick(StartMove)
                     If(can_read) {
-                        MenuItem(label: t("note.duplicate"), value: "duplicate") -> on_pick(Act)
+                        MenuItem(label: t("note.duplicate"), value: "duplicate") -> on_pick(Duplicate)
                         Text("", role: "separator").style(MenuSep)
-                        MenuItem(label: t("note.exportMd"), value: "export_md") -> on_pick(Act)
-                        MenuItem(label: t("note.exportHtml"), value: "export_html") -> on_pick(Act)
-                        MenuItem(label: t("note.print"), value: "print", hint: "Ctrl/⌘ P") -> on_pick(Act)
+                        MenuItem(label: t("note.exportMd"), value: "export_md") -> on_pick(Export)
+                        MenuItem(label: t("note.exportHtml"), value: "export_html") -> on_pick(Export)
+                        MenuItem(label: t("note.print"), value: "print", hint: "Ctrl/⌘ P") -> on_pick(Export)
                     }
                     Text("", role: "separator").style(MenuSep)
-                    MenuItem(label: t("note.delete"), value: "delete", danger: true, hint: "Ctrl/⌘ ⌫") -> on_pick(Act)
+                    MenuItem(label: t("note.delete"), value: "delete", danger: true, hint: "Ctrl/⌘ ⌫") -> on_pick(Trash)
                 }
             }.style(Menu, { position: at ? static : absolute; })
         }
-        effect Act(kind: String) { emit action({ kind: kind, id: note.id }); }
+        effect Pin(x: any) { Library.TogglePin(note.id); emit done(true); }
+        effect Lock(x: any) { Vault.Lock(note.id); emit done(true); }
+        effect RemoveLock(x: any) { Library.SetLocked(note.id, false); emit done(true); }
+        effect Export(kind: String) { Library.Export(kind, note.id); emit done(true); }
+        effect Trash(x: any) { Library.Trash(note.id); emit done(true); }
+        effect Recover(x: any) { Library.Recover(note.id); emit done(true); }
+        effect Duplicate(x: any) {
+            let copy_id = random_uuid();
+            Library.Duplicate(note.id, copy_id);
+            Browse.Select(copy_id);
+            emit done(true);
+        }
         effect StartMove(x: any) { transition Moving; }
         effect AskPurge(x: any) { transition ConfirmPurge; }
     }
@@ -50,12 +66,12 @@ view NoteMenu(note: Note, folders: Vec<Folder>, unlocked: bool, at: any) {
         render {
             Column(role: "menu", label: t("note.moveTitle")) {
                 Text(t("note.moveTitle"), aria: { hidden: true }).style(MenuTitle)
-                List(by_name(folders)) { f =>
+                List(by_name(Library.folders)) { f =>
                     MenuItem(label: f.name, value: f.id, check: f.id == note.folder) -> on_pick(MoveTo)
                 }
             }.style(Menu, { position: at ? static : absolute; })
         }
-        effect MoveTo(fid: String) { emit action({ kind: "move", id: note.id, folder: fid }); }
+        effect MoveTo(folder: String) { Library.Move(note.id, folder); emit done(true); }
     }
 
     state ConfirmPurge {
@@ -72,6 +88,6 @@ view NoteMenu(note: Note, folders: Vec<Folder>, unlocked: bool, at: any) {
             }.style(Menu, { width: 250px; position: at ? static : absolute; })
         }
         effect Back() { transition Main; }
-        effect Purge() { emit action({ kind: "purge", id: note.id }); }
+        effect Purge() { Library.Purge(note.id); emit done(true); }
     }
 }

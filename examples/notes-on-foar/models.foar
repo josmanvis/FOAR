@@ -33,3 +33,12 @@ data Folder {
     id: String,
     name: String,
 }
+
+// A message at the bottom of the window. `undo` is the note as it was
+// before the change, so Undo just puts it back.
+data ToastMessage {
+    id: String,
+    key: String,
+    params: any,
+    undo: Option<Note>,
+}

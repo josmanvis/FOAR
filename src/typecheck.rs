@@ -830,6 +830,16 @@ impl<'a> Checker<'a> {
                         self.check_state_exists(target, stmt[arrow + 3].start)?;
                     }
                 } else if let Some((eq_pos, op)) = self.find_top_level_assign(stmt) {
+                    // `count = …` must name a store (or a local): a typo would
+                    // otherwise silently write nowhere
+                    if eq_pos == 1 && stmt[0].kind == Kind::Ident {
+                        let name = self.text(&stmt[0]);
+                        if !self.scope.contains_key(name) {
+                            let owner = self.view.strip_prefix("@ctx:").map_or(format!("view {}", self.view), |c| format!("context {}", c));
+                            let hint = closest(name, self.scope.keys().map(|s| s.as_str())).map(|s| format!(" (did you mean '{}'?)", s)).unwrap_or_default();
+                            return self.err(stmt[0].start, format!("'{}' isn't a store of {}{}: declare it with `store {}: Type = …;`", name, owner, hint, name));
+                        }
+                    }
                     let lhs_ty = self.check_expr(&stmt[..eq_pos], None)?;
                     let rhs_ty = self.check_expr(&stmt[eq_pos + 1..], if op == "=" { Some(&lhs_ty) } else { None })?;
                     if op == "=" {
@@ -1164,6 +1174,13 @@ impl<'a> Checker<'a> {
         if first.kind == Kind::Ident {
             if let Some(ty) = self.scope.get(text) {
                 return Ok((ty.clone(), 1));
+            }
+            // contexts: other contexts may use them freely; views declare them with `use`
+            if self.env.contexts.contains_key(text) {
+                if self.view.starts_with("@ctx:") {
+                    return Ok((Ty::Context(text.to_string()), 1));
+                }
+                return self.err(first.start, format!("{} uses context {} without declaring it: add `use {};` to the view", self.view, text, text));
             }
             if text == "Date" || text == "Math" || text == "JSON" || text == "Object" || text == "Array" || text == "window" || text == "console" {
                 return Ok((Ty::Any, 1));
@@ -2074,5 +2091,24 @@ mod tests {
         // match arms must agree on a type (string enums count as String)
         assert!(err(r#"view A { store n: i32 = 1; let s = match n { 1 => "a", _ => 2 }; state S { render { Text("x") } } }"#).contains("Match arms produce different types"));
         assert!(compile("enum K { A, B }\nview A { store k: K = K.A; let s = match k { K.A => \"first\", other => other }; state S { render { Text(s) } } }").is_ok());
+    }
+
+    #[test]
+    fn contexts_are_checked_like_modules() {
+        let err = |src: &str| compile(src).unwrap_err().message;
+        let a = "context A { store n: i32 = 0; effect Inc(by: i32) { n += by; } }\n";
+        // one context calling another is type-checked
+        assert!(err(&format!("{}context B {{ store k: i32 = 0; effect Go() {{ A.Inc(\"x\"); }} }}\nview V {{ use B; state S {{ render {{ Button(\"b\") -> on_click(B.Go) }} }} }}", a)).contains("Argument 1 ('by') of 'A.Inc' expects number, got String"));
+        // views declare the contexts they read
+        assert!(err(&format!("{}view V {{ state S {{ render {{ Text(A.n) }} }} }}", a)).contains("V uses context A without declaring it: add `use A;` to the view"));
+        assert!(err(&format!("{}view V {{ state S {{ render {{ Button(\"b\") -> on_click(A.Inc) }} }} }}", a)).contains("add `use A;`"));
+        // handlers name real contexts and effects
+        assert!(err(&format!("{}view V {{ use A; state S {{ render {{ Button(\"b\") -> on_click(A.Incr) }} }} }}", a)).contains("Context A has no effect 'Incr' (did you mean 'Inc'?)"));
+        assert!(err(&format!("{}view V {{ state S {{ render {{ Button(\"b\") -> on_click(B.Inc) }} }} }}", a)).contains("There is no context 'B'"));
+        // assigning to something that isn't a store is a typo, not a new variable
+        assert!(err(r#"view V { store clicks: i32 = 0; state S { render { Button("b") -> on_click(Go) } effect Go() { clics += 1; } } }"#).contains("'clics' isn't a store of view V (did you mean 'clicks'?)"));
+        assert!(err("context C { store n: i32 = 0; effect Go() { m = 1; } }\nview V { state S { render { Text(\"x\") } } }").contains("'m' isn't a store of context C"));
+        assert!(compile(r#"view V { store n: i32 = 0; state S { render { Button("b") -> on_click(Go) } effect Go(by: i32) { let k = by; k = k + 1; n = k; for i in 0..3 { n += i; } } } }"#).is_ok());
+        assert!(compile(&format!("{}context B {{ let twice: i32 = A.n * 2; effect Go() {{ A.Inc(2); }} }}\nview V {{ use A; use B; state S {{ render {{ Text(B.twice) Button(\"b\") -> on_click(B.Go) }} }} }}", a)).is_ok());
     }
 }

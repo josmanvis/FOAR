@@ -79,6 +79,8 @@ async function mountProject(project, hostUrl) {
     ...hostOpts,
   });
   activeHost?.attach?.(currentRuntime, mountEl);
+  // for the browser console: foarApp.getContext('Library'), foarApp.getSnapshot()
+  window.foarApp = currentRuntime;
 }
 
 async function boot() {

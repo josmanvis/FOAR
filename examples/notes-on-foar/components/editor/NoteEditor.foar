@@ -4,16 +4,19 @@ import "./FormatBar"
 import "components/menus/NoteMenu"
 import "components/menus/ContextMenu"
 
-view NoteEditor(note: Note, unlocked: bool, folders: Vec<Folder>, gallery: bool, fresh: bool, lock_error: String) {
+view NoteEditor(note: Note, gallery: bool, fresh: bool) {
+    use Library;
+    use Browse;
+    use Vault;
+
     store menu: bool = false;
     store pw: String = "";
     store edit_at: any = null;
     store edit_items: Vec<any> = [];
 
     let is_deleted: bool = note.deleted_at > 0;
-    let is_locked_screen: bool = note.locked && !unlocked;
+    let is_locked_screen: bool = note.locked && !Vault.unlocked;
     let can_edit: bool = !is_deleted && !is_locked_screen;
-    let pw_hint: String = password_hint();
 
     style { layout: vertical; flex: 1; min-height: 0; min-width: 0; }
 
@@ -27,14 +30,14 @@ view NoteEditor(note: Note, unlocked: bool, folders: Vec<Folder>, gallery: bool,
                 If(can_edit) { FormatBar() }
                 Text("").style({ flex: 1; })
                 If(!is_deleted) {
-                    Button(note.locked && unlocked ? "🔓" : "🔒", title: lock_title(note, unlocked))
+                    Button(note.locked && Vault.unlocked ? "🔓" : "🔒", title: lock_title(note, Vault.unlocked))
                         -> on_click(LockButton)
                         .style(IconButton, { opacity: note.locked ? 1 : 0.55; })
                 }
                 Button("⋯", title: t("editor.more"), aria: { haspopup: "menu", expanded: menu })
                     -> on_click(OpenMenu).style(IconButton, { font-weight: 700; })
                 If(menu) {
-                    NoteMenu(note: note, folders: folders, unlocked: unlocked, at: null) -> on_action(Act)
+                    NoteMenu(note: note, at: null) -> on_done(CloseMenu)
                 }
             }.style(EditorToolbar)
 
@@ -46,8 +49,8 @@ view NoteEditor(note: Note, unlocked: bool, folders: Vec<Folder>, gallery: bool,
                     Input(value: pw, secure: true, placeholder: t("lock.password"), label: t("lock.password"), autofocus: true)
                         -> on_input(Pw) -> on_enter(Unlock)
                         .style(Field, { width: 240px; text-align: center; })
-                    If(lock_error != "") { Text(lock_error, role: "alert").style({ color: var(--danger); font-size: 12px; }) }
-                    If(pw_hint != "") { Text(t("lock.hint", { hint: pw_hint })).style({ color: var(--muted); font-size: 12px; }) }
+                    If(Vault.error != "") { Text(Vault.error, role: "alert").style({ color: var(--danger); font-size: 12px; }) }
+                    If(Vault.hint != "") { Text(t("lock.hint", { hint: Vault.hint })).style({ color: var(--muted); font-size: 12px; }) }
                 }.style({ flex: 1; align-items: center; justify-content: center; gap: 6px; padding-bottom: 80px; animation: fade-in 0.2s; })
             } Else {
                 If(is_deleted) {
@@ -72,25 +75,25 @@ view NoteEditor(note: Note, unlocked: bool, folders: Vec<Folder>, gallery: bool,
             }
         }
 
-        effect Edit(h: String) { emit edit({ id: note.id, html: h }); }
-        effect Back() { emit back(true); }
+        effect Edit(html: String) { Library.Edit(note.id, html); }
+        effect Back() { Browse.CloseNote(); }
+        // 🔒 locks this note; 🔓 (an unlocked locked note) locks them all again
         effect LockButton() {
             if note.locked {
-                if unlocked { emit close_locked(true); }
+                Vault.LockAll();
             } else {
-                emit action({ kind: "lock", id: note.id });
+                Vault.Lock(note.id);
             }
         }
         effect OpenMenu() { menu = !menu; }
-        effect Act(a: any) { menu = false; emit action(a); }
+        effect CloseMenu(x: any) { menu = false; }
         effect Dismiss() { menu = false; edit_at = null; }
         effect Pw(v: String) { pw = v; }
         effect Unlock() {
-            let p = pw;
+            Vault.Unlock(pw);
             pw = "";
-            emit unlock(p);
         }
-        effect Recover() { emit action({ kind: "recover", id: note.id }); }
+        effect Recover() { Library.Recover(note.id); }
 
         // Right-click in the text: clipboard, styles, lists, and table/checklist
         // commands when the caret is in one.

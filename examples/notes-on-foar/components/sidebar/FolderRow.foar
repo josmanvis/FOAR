@@ -3,6 +3,9 @@ import "styles/shared"
 import "components/menus/MenuItem"
 
 view FolderRow(folder: Folder, count: i32, selected: bool, removable: bool) {
+    use Library;
+    use Browse;
+
     store draft: String = folder.name;
     store at: any = null;
     style { position: relative; }
@@ -16,10 +19,10 @@ view FolderRow(folder: Folder, count: i32, selected: bool, removable: bool) {
             } -> on_click(Pick) -> on_double_click(StartRename) -> on_context_menu(OpenMenu) -> on_drop(DropNote)
                 .style(SidebarItem, { background: selected ? var(--sidebar-selection) : transparent; })
         }
-        effect Pick() { emit pick(folder.id); }
+        effect Pick() { Browse.Show(folder.id); }
         effect StartRename() { draft = folder.name; transition Renaming; }
         effect OpenMenu(p: any) { at = p; transition Menu; }
-        effect DropNote(id: any) { emit drop_note({ id: id, folder: folder.id }); }
+        effect DropNote(id: String) { Library.Move(id, folder.id); }
     }
 
     state Menu {
@@ -37,11 +40,9 @@ view FolderRow(folder: Folder, count: i32, selected: bool, removable: bool) {
             }.style(Menu, { position: fixed; left: {at.x + "px"}; top: {at.y + "px"}; z-index: 200; })
         }
         effect Choose(v: String) {
-            if v == "rename" {
-                draft = folder.name;
-                transition Renaming;
-            } else {
-                transition ConfirmDelete;
+            match v {
+                "rename" => { draft = folder.name; transition Renaming; }
+                _ => { transition ConfirmDelete; }
             }
         }
         effect Dismiss() { transition Idle; }
@@ -58,7 +59,7 @@ view FolderRow(folder: Folder, count: i32, selected: bool, removable: bool) {
         effect Draft(v: String) { draft = v; }
         effect Commit() {
             let name = draft.trim();
-            if name != "" && name != folder.name { emit rename({ id: folder.id, name: name }); }
+            if name != "" && name != folder.name { Library.RenameFolder(folder.id, name); }
             transition Idle;
         }
         effect Cancel() { transition Idle; }
@@ -80,7 +81,10 @@ view FolderRow(folder: Folder, count: i32, selected: bool, removable: bool) {
                 }.style({ gap: 6px; padding: 0 4px 4px; })
             }.style(Menu, { width: 240px; })
         }
-        effect Confirm() { emit delete(folder.id); }
+        effect Confirm() {
+            Library.DeleteFolder(folder.id);
+            if selected { Browse.Show("all"); }
+        }
         effect Dismiss() { transition Idle; }
         effect Cancel() { transition Idle; }
     }

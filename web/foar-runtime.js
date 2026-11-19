@@ -306,6 +306,28 @@ function matchesKeyCombo(e, combo) {
   return evKey === key || (key === 'esc' && evKey === 'escape') || (key === 'space' && evKey === ' ');
 }
 
+/**
+ * Contexts in dependency order: one whose stores or lets read `Other.x` comes
+ * after Other, so its initial values see Other's. Cycles keep source order.
+ */
+function contextsInOrder(list = []) {
+  const byName = new Map(list.map((c) => [c.name, c]));
+  const reads = (c) => {
+    const text = [...c.stores.map((s) => s.initExpr), ...(c.derived || []).map((d) => d.expr)].join('\n');
+    return list.filter((o) => o !== c && new RegExp(`\\b${o.name}\\.`).test(text)).map((o) => o.name);
+  };
+  const out = [];
+  const state = new Map();
+  const visit = (c) => {
+    if (state.get(c.name)) return;
+    state.set(c.name, 'visiting');
+    for (const dep of reads(c)) if (!state.get(dep)) visit(byName.get(dep));
+    out.push(c);
+  };
+  for (const c of list) visit(c);
+  return out;
+}
+
 export function createFoarRuntime(ast, container, callbacks = {}) {
   const rootViewDecl = ast.views[0];
   if (!rootViewDecl) {
@@ -447,7 +469,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   // ---- shared reactive contexts (`context Name { store ...; let ...; effect ... }`) ----
   const contexts = new Map();
   const initialContexts = initialState?.contexts || null;
-  for (const ctxDecl of ast.contexts || []) {
+  for (const ctxDecl of contextsInOrder(ast.contexts)) {
     const storeNames = ctxDecl.stores.map((s) => s.name);
     const derivedNames = (ctxDecl.derived || []).map((d) => d.name);
     const varNames = dedupe([...storeNames, ...derivedNames]);
@@ -1842,6 +1864,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   function flush() {
     scheduled = false;
     if (destroyed) return;
+    // a context's `let` may read other contexts: bring them all up to date
+    for (const ctx of contexts.values()) recomputeContext(ctx);
     updateInstance(rootInst);
     callbacks.onRender?.(getSnapshot());
   }
@@ -1948,7 +1972,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   const hasKeyHandlers = ast.views.some((v) => v.states.some((s) => s.keyHandlers && s.keyHandlers.length));
   function onDocKeyDown(e) {
     if (destroyed) return;
-    for (const inst of [...instances.values()]) {
+    // innermost first: a menu or sheet handles Escape before the view around it
+    for (const inst of [...instances.values()].reverse()) {
       if (inst.disposed) continue;
       const st = inst.meta.states.get(inst.state);
       if (!st || !st.decl.keyHandlers || !st.decl.keyHandlers.length) continue;
@@ -2000,6 +2025,21 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     invokeEffect(instanceKey, effectName, arg) {
       const inst = instances.get(instanceKey);
       if (inst) invokeEffect(inst, effectName, arg);
+    },
+    /** Run a context effect from host code: `app.call('Library.Trash', id)`. */
+    call(name, ...args) {
+      const [ctxName, efName] = String(name).split('.');
+      const fn = contexts.get(ctxName)?.obj[efName];
+      if (typeof fn !== 'function') throw new Error(`FOAR: no context effect ${name}`);
+      fn(...args);
+    },
+    /** A context's stores and lets (read-only copy): `app.getContext('Library').notes`. */
+    getContext(name) {
+      const ctx = contexts.get(name);
+      if (!ctx) return undefined;
+      const out = {};
+      for (const n of ctx.varNames) out[n] = ctx.obj[n];
+      return out;
     },
     /** Switch language: every t() re-evaluates in one flush. */
     setLocale(next) {
@@ -2150,7 +2190,7 @@ export function renderToString(ast, options = {}) {
     externs[ctxDecl.name] = {};
   }
   const externNames = Object.keys(externs).filter((n) => /^[A-Za-z_$][\w$]*$/.test(n));
-  for (const ctxDecl of ast.contexts || []) {
+  for (const ctxDecl of contextsInOrder(ast.contexts)) {
     const storeNames = ctxDecl.stores.map((s) => s.name);
     const derivedNames = (ctxDecl.derived || []).map((d) => d.name);
     const varNames = dedupe([...storeNames, ...derivedNames]);

@@ -1,0 +1,22 @@
+// Prefs: how notes are shown. Saved, so they survive a reload.
+import "models"
+import "./Browse"
+
+context Prefs {
+    store sort: SortBy = load_pref("sort", SortBy.Edited);
+    store group_dates: bool = load_pref("group_dates", true);
+    store layout: Layout = load_pref("layout", Layout.List);
+    store sidebar: bool = load_pref("sidebar", true);
+    store locale: String = current_locale();
+
+    effect SetSort(s: SortBy) { sort = s; save_pref("sort", s); }
+    effect ToggleGroup() { group_dates = !group_dates; save_pref("group_dates", group_dates); }
+    effect ToggleSidebar() { sidebar = !sidebar; save_pref("sidebar", sidebar); }
+    effect SetLocale(code: String) { locale = code; set_locale(code); }
+
+    effect SetLayout(l: Layout) {
+        layout = l;
+        save_pref("layout", l);
+        Browse.CloseNote();
+    }
+}

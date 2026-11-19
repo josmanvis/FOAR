@@ -390,7 +390,8 @@ emitting output:
   `title`);
 - event wiring: `-> on_x(Effect)` names an effect of the current state, and on
   a component, `on_x` is an event it emits (`emit x(…)`) or a DOM event;
-- assignments and operators in `effect` blocks, enum comparisons, `match` arm
+- assignments and operators in `effect` blocks (assigning to a name that
+  isn't a store or local is an error, with "did you mean"), enum comparisons, `match` arm
   types (all arms of a value-producing match agree; plain enums count as
   strings), prop defaults, and `transition` target state names.
 
@@ -435,49 +436,96 @@ Column {
   and `route.hash`, and effects can call `navigate("/path")` or
   `replace("/path")`.
 
-## Shared Contexts & Pure Functions
+## Contexts: stores for your app's data
 
-Declare shared singleton reactive state with `context` and subscribe from any
-view with `use`:
+A `context` is a shared store: one instance for the whole app, with its own
+`store`s, derived `let`s and `effect`s. Give each part of your data its own
+context, in its own file, and every view that needs it calls it directly.
+No props threaded through five components, no events bubbled back up.
+
+```foar
+// stores/Library.foar
+import "models"
+
+context Library {
+    store notes: Vec<Note> = load_notes();
+
+    let pinned_count: i32 = notes.filter(|n| n.pinned).len();
+
+    effect TogglePin(id: String) {
+        notes = notes.map(|n| n.id == id ? { ...n, pinned: !n.pinned } : n);
+        persist(notes);
+    }
+
+    effect Trash(id: String) {
+        let before = notes.find(|n| n.id == id);
+        notes = notes.map(|n| n.id == id ? { ...n, deleted_at: Date.now() } : n);
+        Toasts.Show("Moved to Recently Deleted", before);   // one context calls another
+    }
+}
+```
+
+```foar
+// components/NoteMenu.foar
+import "stores/Library"
+
+view NoteMenu(note: Note) {
+    use Library;                       // the contexts a view reads are declared
+
+    state Open {
+        render {
+            Button(note.pinned ? "Unpin" : "Pin") -> on_click(Pin)
+            Button("Delete") -> on_click(Delete)
+        }
+        effect Pin() { Library.TogglePin(note.id); }
+        effect Delete() { Library.Trash(note.id); }
+    }
+}
+```
+
+| | |
+|---|---|
+| `use Name;` | a view reads `Name.field` and calls `Name.Effect(…)`; using a context without it is a compile error |
+| `-> on_click(Name.Effect)` | wire an event straight to a context effect |
+| `Other.x` in a context | contexts read and call each other freely (no `use` needed) |
+| `let` | recomputed whenever anything changes, including the other contexts it reads |
+| order | contexts initialise in dependency order: one whose values read `Other.x` starts after `Other` |
+
+Everything is type-checked: fields, effect names (with "did you mean"),
+argument types, including calls from one context into another.
+
+**Host code** reaches contexts through the runtime:
+
+```js
+app.call('Library.Trash', id);            // run a context effect
+app.getContext('Library').notes;          // read its stores and lets
+```
+
+Context stores are serialized during server rendering and restored by
+`hydrate()`.
+
+The [Notes example](../playground/?example=notes-on-foar) is built this way:
+`stores/Library.foar` (notes and folders), `Browse.foar` (what's shown and
+selected), `Prefs.foar`, `Vault.foar` (the password for locked notes) and
+`Toasts.foar`, with `app.foar` left as the window's layout.
+
+## Pure functions
 
 ```foar
 fn format_usd(cents: i32) -> String {
     return "$" + (cents / 100).toFixed(2);
 }
-
-context Cart {
-    store cents: i32 = 0;
-    let label: String = format_usd(cents);
-
-    effect Add(delta: i32) { cents += delta; }
-    effect Clear() { cents = 0; }
-}
-
-view Navbar {
-    use Cart;
-    state Ready {
-        render {
-            Row {
-                Text(Cart.label)
-                Button("Clear", disabled: Cart.cents == 0) -> on_click(Cart.Clear)
-            }
-        }
-    }
-}
 ```
 
-- Pure top-level `fn` declarations are statically checked at declaration and
-  call sites and run identically on client and server (SSR) without JS host
-  bindings.
-- Context stores serialize into `__foar_state__` on SSR and restore on
-  `hydrate()`.
+Top-level `fn`s are statically checked at declaration and call sites and run
+the same on the client and the server, without host bindings.
 
 ## Composition: Slots, Portals, Forms, Hotkeys & Error Boundaries
 
 - **Slots (`Slot()` / `Slot(name: "header")`)**: project caller children into a reusable child view while keeping them bound to the caller's reactive scope and events. Provide fallback content inside `Slot() { Text("Empty") }`, and assign named slots with `slot: "header"`.
 - **Portals (`Portal(target: "#modal-root") { … }`)**: render modals, popovers, and toasts into another DOM container (default `document.body`) with full delegated FOAR events and automatic cleanup on unmount.
 - **Native forms & universal props**: `Form { … } -> on_submit(Save)` (auto-`preventDefault()`), `Select(value: x) { Option(value: "a", "Alpha") } -> on_change(Pick)`, `Slider(value: v, min: 0, max: 100, step: 1) -> on_input(Set)`, `Progress(value: v, max: 100)`, plus reactive `disabled:`, `class:`, and `id:` on any element.
-- **Lifecycle hooks, async results & state-scoped hotkeys**: states support `on_enter { … }`, `on_exit(res: Type) { … }` (receives the resolved async transition value), `on_error(err: String) { … }` (handles rejections), `on_unmount { … }`, and `on_key("Escape") { … }` / `on_key("Mod+K") { … }` shortcuts active only while in that state. Views also support view-level `on_unmount { … }`.
+- **Lifecycle hooks, async results & state-scoped hotkeys**: states support `on_enter { … }`, `on_exit(res: Type) { … }` (receives the resolved async transition value), `on_error(err: String) { … }` (handles rejections), `on_unmount { … }`, and `on_key("Escape") { … }` / `on_key("Mod+K") { … }` shortcuts active only while in that state. When several views handle the same key, the innermost one wins: an open menu or dialog closes itself before the view around it sees Escape. Views also support view-level `on_unmount { … }`.
 - **Error boundaries (`Catch { … } Fallback { err => … }`)**: isolate runtime and SSR errors in a subtree without crashing sibling views. The `err` binding has typed `CatchError` fields (`err.message` and `err.view`), and `callbacks.onError(errObj, rawErr)` notifies host telemetry.
 - **Partial Islands (`Island(client: "visible" | "idle" | "load") { … }`)**: emit island hydration markers during SSR so `hydrateIslands(document, program)` hydrates only interactive islands while leaving static server HTML untouched.
 

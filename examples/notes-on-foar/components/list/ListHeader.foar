@@ -3,7 +3,14 @@ import "styles/shared"
 import "./HeaderBar"
 import "components/menus/MenuItem"
 
-view ListHeader(title: String, count: i32, sort: SortBy, group_dates: bool, layout: Layout, in_trash: bool, sidebar: bool, locale: String) {
+view ListHeader(title: String, count: i32) {
+    use Library;
+    use Browse;
+    use Prefs;
+
+    let in_trash: bool = Browse.in_trash;
+    let sidebar: bool = Prefs.sidebar;
+
     style { position: relative; flex-shrink: 0; }
 
     state Idle {
@@ -11,8 +18,8 @@ view ListHeader(title: String, count: i32, sort: SortBy, group_dates: bool, layo
             HeaderBar(title: title, count: count, in_trash: in_trash, sidebar: sidebar, open: false)
                 -> on_sidebar(Sidebar) -> on_options(Options) -> on_new(New) -> on_empty(Empty)
         }
-        effect Sidebar(x: any) { emit sidebar(true); }
-        effect New(x: any) { emit new(true); }
+        effect Sidebar(x: any) { Prefs.ToggleSidebar(); }
+        effect New(x: any) { Browse.NewNote(); }
         effect Options(x: any) { transition Options; }
         effect Empty(x: any) { transition ConfirmEmpty; }
     }
@@ -25,28 +32,28 @@ view ListHeader(title: String, count: i32, sort: SortBy, group_dates: bool, layo
                 -> on_sidebar(Sidebar) -> on_options(Close) -> on_new(New) -> on_empty(Empty)
             Column(role: "menu", label: t("header.viewOptions")) {
                 Text(t("view.viewAs"), aria: { hidden: true }).style(MenuTitle)
-                MenuItem(label: t("view.list"), value: Layout.List, check: layout == Layout.List) -> on_pick(PickLayout)
-                MenuItem(label: t("view.gallery"), value: Layout.Gallery, check: layout == Layout.Gallery) -> on_pick(PickLayout)
+                MenuItem(label: t("view.list"), value: Layout.List, check: Prefs.layout == Layout.List) -> on_pick(PickLayout)
+                MenuItem(label: t("view.gallery"), value: Layout.Gallery, check: Prefs.layout == Layout.Gallery) -> on_pick(PickLayout)
                 Text("", role: "separator").style(MenuSep)
                 Text(t("view.sortBy"), aria: { hidden: true }).style(MenuTitle)
-                MenuItem(label: t("sort.edited"), value: SortBy.Edited, check: sort == SortBy.Edited) -> on_pick(PickSort)
-                MenuItem(label: t("sort.created"), value: SortBy.Created, check: sort == SortBy.Created) -> on_pick(PickSort)
-                MenuItem(label: t("sort.title"), value: SortBy.Title, check: sort == SortBy.Title) -> on_pick(PickSort)
+                MenuItem(label: t("sort.edited"), value: SortBy.Edited, check: Prefs.sort == SortBy.Edited) -> on_pick(PickSort)
+                MenuItem(label: t("sort.created"), value: SortBy.Created, check: Prefs.sort == SortBy.Created) -> on_pick(PickSort)
+                MenuItem(label: t("sort.title"), value: SortBy.Title, check: Prefs.sort == SortBy.Title) -> on_pick(PickSort)
                 Text("", role: "separator").style(MenuSep)
-                MenuItem(label: t("view.group"), value: "group", check: group_dates) -> on_pick(Group)
+                MenuItem(label: t("view.group"), value: "group", check: Prefs.group_dates) -> on_pick(Group)
                 Text("", role: "separator").style(MenuSep)
                 Text(t("view.language"), aria: { hidden: true }).style(MenuTitle)
                 List(available_locales()) { l =>
-                    MenuItem(label: l.name, value: l.code, check: locale == l.code) -> on_pick(Locale)
+                    MenuItem(label: l.name, value: l.code, check: Prefs.locale == l.code) -> on_pick(Locale)
                 }
             }.style(Menu, { left: auto; right: 10px; top: 46px; })
         }
-        effect PickLayout(v: any) { emit layout(v); transition Idle; }
-        effect PickSort(v: any) { emit sort(v); transition Idle; }
-        effect Group(v: String) { emit group(true); transition Idle; }
-        effect Locale(v: String) { emit locale(v); transition Idle; }
-        effect Sidebar(x: any) { emit sidebar(true); transition Idle; }
-        effect New(x: any) { emit new(true); transition Idle; }
+        effect PickLayout(v: Layout) { Prefs.SetLayout(v); transition Idle; }
+        effect PickSort(v: SortBy) { Prefs.SetSort(v); transition Idle; }
+        effect Group(v: String) { Prefs.ToggleGroup(); transition Idle; }
+        effect Locale(code: String) { Prefs.SetLocale(code); transition Idle; }
+        effect Sidebar(x: any) { Prefs.ToggleSidebar(); transition Idle; }
+        effect New(x: any) { Browse.NewNote(); transition Idle; }
         effect Empty(x: any) { transition ConfirmEmpty; }
         effect Close(x: any) { transition Idle; }
         effect Dismiss() { transition Idle; }
@@ -67,8 +74,12 @@ view ListHeader(title: String, count: i32, sort: SortBy, group_dates: bool, layo
                 }.style({ gap: 6px; padding: 0 4px 4px; })
             }.style(Menu, { left: auto; right: 10px; top: 46px; width: 270px; })
         }
-        effect Confirm() { emit empty(true); transition Idle; }
-        effect Sidebar(x: any) { emit sidebar(true); transition Idle; }
+        effect Confirm() {
+            Library.EmptyTrash();
+            Browse.Show("all");
+            transition Idle;
+        }
+        effect Sidebar(x: any) { Prefs.ToggleSidebar(); transition Idle; }
         effect Close(x: any) { transition Idle; }
         effect Dismiss() { transition Idle; }
         effect Cancel() { transition Idle; }
