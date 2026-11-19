@@ -257,7 +257,7 @@ view Meter {
 reusable style, `@hover`/`@focus`/`@media`/`@dark` nest like SCSS, and
 `@state Full { … }` applies while the view is in that state.
 
-## Multiple files
+## Multiple files and packages
 
 Real apps are split into files. The entry file's first view is the root;
 other files join the program with `import`:
@@ -267,37 +267,60 @@ other files join the program with `import`:
 import "models"
 import "components/TodoRow"
 import "./theme.foar"
+import "@ui/Badge"       // resolved through foar.toml [dependencies]
 ```
 
-Views, data types, enums and styles are global by name. An import only says
-that a file is part of the program. Errors point at the right file and line.
-Look at the [todo](../examples/todo) and [orders](../examples/orders) examples.
-The largest FOAR app so far, a macOS Notes clone, is 21 files: one view per
-file under `components/`, plus `models.foar` and `styles/`.
+Views, data types, enums, `extern fn` declarations and styles are global by
+name. An import says that a file (or `@package` module declared in `foar.toml`)
+is part of the program. Errors point at the right file and line. Look at the
+[todo](../examples/todo), [orders](../examples/orders),
+[router](../examples/router), and [notes-on-foar](../examples/notes-on-foar)
+examples.
 
-## Host code
+## Routing
 
-FOAR talks to JavaScript through named functions you pass in. They are
-callable from any expression or effect:
-
-```js
-import { mount, createI18n } from './dist/app.js'; // built with `foar build app.foar --format js`
-mount(document.getElementById('app'), {
-  bindings: {
-    load_notes: () => JSON.parse(localStorage.notes ?? '[]'),
-    save_notes: (notes) => { localStorage.notes = JSON.stringify(notes); },
-    api_save: async (n) => fetch('/save', { method: 'POST', body: String(n) }),
-  },
-});
-```
+Declare routes right in `render` with `Router`, `Route`, and `Link`:
 
 ```foar
+view App {
+    state Ready {
+        render {
+            Column {
+                Row {
+                    Link("/", "Overview")
+                    Link("/orders/42", "Order 42")
+                }
+                Router {
+                    Route("/") { Text("Home") }
+                    Route("/orders/:id") { params => OrderDetail(id: params.id) }
+                    Route("*") { Text("Not found: {route.path}") }
+                }
+            }
+        }
+        effect OpenOrder(id: String) { navigate("/orders/{id}"); }
+    }
+}
+```
+
+`Link` renders a real `<a href>` with `aria-current="page"` when active,
+`route` exposes `{ path, params, query, hash }` everywhere, and staying on the
+same `Route` updates `params` in place without remounting its view.
+
+## Typed host code and SSR
+
+Declare JavaScript host bindings with `extern fn` so the compiler checks every
+call's argument count, argument types, and return type:
+
+```foar
+extern fn load_notes() -> Vec<Note>;
+extern fn api_save(count: i32) -> Promise<bool>;
+
 view Notes {
-    store notes: Vec<any> = load_notes();
+    store notes: Vec<Note> = load_notes();
 
     state Idle {
         render { Button("Save") -> on_click(Save) }
-        effect Save() { api_save(notes.length) -> transition(Saving); }
+        effect Save() { api_save(notes.len()) -> transition(Saving); }
     }
     state Saving {
         render { Spinner("Saving…") }
@@ -309,6 +332,20 @@ view Notes {
 `api(args) -> transition(State);` moves to `State` right away, calls the async
 function, and runs that state's `on_exit` when it settles. Loading states are
 states, not flags.
+
+Build with `foar build app.foar --format js -o dist/app.js`, then mount on the
+client or render on the server (Node / Edge, zero DOM dependency) and hydrate
+in place:
+
+```js
+// Server (Node / Deno / Bun / Edge)
+import { renderToString } from './dist/app.js';
+const { html, head } = renderToString({ url: req.url, bindings: { load_notes, api_save } });
+
+// Client (adopts server DOM nodes with zero elements recreated)
+import { hydrate } from './dist/app.js';
+hydrate(document.getElementById('app'), { bindings: { load_notes, api_save } });
+```
 
 ## Where next
 

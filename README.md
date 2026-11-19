@@ -123,6 +123,7 @@ mount(document.getElementById('app'), {
 | [Tooling](docs/tooling.md) | the CLI, the playground and its keys, dev servers, tests |
 | [Why FOAR](docs/why.md) | the design, how it compares, and its current limits |
 | [Examples](examples/README.md) | starter, counter, todo, orders, router, notes-on-foar |
+| [Changelog](CHANGELOG.md) | release notes and recent milestones |
 
 ## Repository
 
