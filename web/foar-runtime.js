@@ -23,13 +23,15 @@
 //              asyncDelay: ms,                      // simulated latency when no binding
 //              badges: true }                       // render dev-only state badges per view
 
-const EVENT_TYPES = ['click', 'dblclick', 'input', 'change', 'keydown'];
+const EVENT_TYPES = ['click', 'dblclick', 'input', 'change', 'keydown', 'contextmenu', 'focusout'];
 const EVENT_MAP = {
   on_click: 'click',
   on_double_click: 'dblclick',
   on_input: 'input',
   on_change: 'change',
   on_enter: 'keydown',
+  on_context_menu: 'contextmenu',
+  on_blur: 'focusout',
 };
 const EMPTY = Object.freeze({});
 const UNSET = Symbol('unset');
@@ -185,6 +187,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       propNames,
       storeNames,
       varNames: dedupe([...propNames, ...storeNames]),
+      // host functions visible in this view: its own props/stores win on a name clash
+      externNames: externNames.filter((n) => !propNames.includes(n) && !storeNames.includes(n)),
       states,
       firstState: decl.states[0] || null,
       hostStyle: compileStyle(decl.style),
@@ -244,7 +248,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     inst.helpers = makeHelpers(inst);
     const initLocals = externs;
     for (const st of decl.stores) {
-      const fn = compileExpr(st.initExpr, meta.varNames, externNames);
+      const fn = compileExpr(st.initExpr, meta.varNames, meta.externNames);
       vars[st.name] = safeEval(fn, vars, initLocals, st.initExpr);
     }
     instances.set(key, inst);
@@ -362,7 +366,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     }
     inst.host = host;
     inst.hostBindings = meta.hostStyle.dynamic.map((d) => ({
-      fn: compileExpr(d.expr, meta.varNames, externNames),
+      fn: compileExpr(d.expr, meta.varNames, inst.meta.externNames),
       expr: d.expr,
       last: UNSET,
       apply: (v) => applyInlineStyle(host, d.key, v),
@@ -377,7 +381,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     inst.mountedState = inst.state;
     inst.host.dataset.stateName = inst.state;
     if (inst.badgeState) inst.badgeState.textContent = inst.state;
-    inst.blocks = st ? st.decl.render.map((node, i) => mountNode(node, inst, externNames, externs, String(i))) : [];
+    inst.blocks = st ? st.decl.render.map((node, i) => mountNode(node, inst, inst.meta.externNames, externs, String(i))) : [];
     for (const b of inst.blocks) inst.host.appendChild(b.el);
   }
 
@@ -412,6 +416,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   function mountNode(node, inst, localNames, locals, path) {
     if (viewMap.has(node.tag)) return mountSubView(node, inst, localNames, locals, path);
     if (node.tag === 'List') return mountList(node, inst, localNames, locals, path);
+    if (node.tag === 'If') return mountIf(node, inst, localNames, locals, path);
     return mountElement(node, inst, localNames, locals, path);
   }
 
@@ -423,7 +428,17 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       map = map || {};
       switch (evName) {
         case 'on_input':
-          map.input = (e) => invokeEffect(inst, handlerName, e.target.value);
+          // RichText reports its HTML; form controls their value.
+          map.input = () => invokeEffect(inst, handlerName, node.tag === 'RichText' ? el.innerHTML : el.value);
+          break;
+        case 'on_blur':
+          map.focusout = () => invokeEffect(inst, handlerName, el.value);
+          break;
+        case 'on_context_menu':
+          map.contextmenu = (e) => {
+            e.preventDefault();
+            invokeEffect(inst, handlerName);
+          };
           break;
         case 'on_change':
           map.change = (e) => invokeEffect(inst, handlerName, e.target.checked);
@@ -473,7 +488,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'Input': {
         el = doc.createElement('input');
         el.className = 'f4-input';
-        el.type = 'text';
+        el.type = node.namedArgs.secure !== undefined ? 'password' : 'text';
         const valueExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
         if (valueExpr !== undefined) {
           bind(valueExpr, (v) => {
@@ -513,6 +528,48 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         }
         break;
       }
+      case 'RichText': {
+        // contenteditable editor; `value` is HTML. Live binding: only written
+        // when the store differs from the DOM, so typing never resets the caret.
+        el = doc.createElement('div');
+        el.className = 'f4-richtext';
+        el.contentEditable = 'true';
+        el.spellcheck = true;
+        const valueExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
+        if (valueExpr !== undefined) {
+          bind(valueExpr, (v) => {
+            const s = v == null ? '' : String(v);
+            if (el.innerHTML !== s) el.innerHTML = s;
+          }, true);
+        }
+        if (node.namedArgs.placeholder !== undefined) {
+          bind(node.namedArgs.placeholder, (v) => { el.dataset.placeholder = v ?? ''; });
+        }
+        if (node.namedArgs.editable !== undefined) {
+          bind(node.namedArgs.editable, (v) => { el.contentEditable = v ? 'true' : 'false'; });
+        }
+        break;
+      }
+      case 'Image': {
+        el = doc.createElement('img');
+        el.className = 'f4-image';
+        el.decoding = 'async';
+        el.loading = 'lazy';
+        const srcExpr = node.namedArgs.src !== undefined ? node.namedArgs.src : node.args[0];
+        if (srcExpr !== undefined) {
+          bind(srcExpr, (v) => {
+            if (v) {
+              el.src = v;
+              el.hidden = false;
+            } else {
+              el.removeAttribute('src');
+              el.hidden = true;
+            }
+          });
+        }
+        if (node.namedArgs.alt !== undefined) bind(node.namedArgs.alt, (v) => { el.alt = v ?? ''; });
+        break;
+      }
       case 'Spinner': {
         el = doc.createElement('div');
         el.className = 'f4-spinner-wrap';
@@ -541,12 +598,19 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const sc = compileStyle(node.style);
     addClasses(el, sc.cls);
     for (const d of sc.dynamic) bind(d.expr, (v) => applyInlineStyle(el, d.key, v));
+    if (node.namedArgs.title !== undefined && node.tag !== 'Image') {
+      bind(node.namedArgs.title, (v) => { if (v) el.title = v; else el.removeAttribute('title'); });
+    }
     registerEvents(el, node, inst);
     runBindings(bindings, inst.vars, locals);
     if (node.namedArgs.autofocus !== undefined) {
       const af = compileExpr(node.namedArgs.autofocus, vn, localNames);
       if (safeEval(af, inst.vars, locals, node.namedArgs.autofocus)) {
-        queueMicrotask(() => { if (el.isConnected) el.focus(); });
+        queueMicrotask(() => {
+          if (!el.isConnected) return;
+          el.focus();
+          if (node.tag === 'Input' && el.value) el.select(); // rename-style: select existing text
+        });
       }
     }
 
@@ -606,6 +670,41 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     }
     if (typeof item === 'string' || typeof item === 'number') return `v:${item}`;
     return `n:${index}`;
+  }
+
+  // If(cond) { children }: mounts children while cond is truthy. The wrapper
+  // is `display: contents`, so it does not affect layout.
+  function mountIf(node, inst, localNames, locals, path) {
+    const el = doc.createElement('div');
+    el.className = 'f4-if';
+    el.style.display = 'contents';
+    const expr = node.args[0] !== undefined ? node.args[0] : 'false';
+    const fn = compileExpr(expr, inst.meta.varNames, localNames);
+    let blocks = null;
+    function update() {
+      const on = Boolean(safeEval(fn, inst.vars, locals, expr));
+      if (on && !blocks) {
+        blocks = node.children.map((c, i) => mountNode(c, inst, localNames, locals, `${path}/if${i}`));
+        for (const b of blocks) el.appendChild(b.el);
+      } else if (!on && blocks) {
+        for (const b of blocks) {
+          b.dispose();
+          b.el.remove();
+        }
+        blocks = null;
+      } else if (on) {
+        for (const b of blocks) b.update();
+      }
+    }
+    update();
+    return {
+      el,
+      update,
+      dispose() {
+        if (blocks) for (const b of blocks) b.dispose();
+        blocks = null;
+      },
+    };
   }
 
   function mountList(node, inst, localNames, locals, path) {
@@ -735,9 +834,12 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     let t = e.target;
     while (t && t !== container) {
       const h = handlers.get(t);
-      if (h) {
-        const fn = h[e.type];
-        if (fn) fn(e);
+      const fn = h && h[e.type];
+      if (fn) {
+        // Innermost handler wins: a button inside a clickable row must not
+        // also trigger the row.
+        fn(e);
+        return;
       }
       t = t.parentNode;
     }

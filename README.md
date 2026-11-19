@@ -56,15 +56,24 @@ WASM runtime driving the DOM is slower, not faster.
 
 | Element | Arguments | Events |
 |---|---|---|
-| `Text(expr)` | | `on_click`, `on_double_click` |
-| `Button(label)` | | `on_click` |
-| `Input(value:, placeholder:, autofocus:)` | | `on_input(text)`, `on_enter` |
-| `TextArea(value:, placeholder:, autofocus:)` | | `on_input(text)` |
+| `Text(expr)` | | `on_click`, `on_double_click`, `on_context_menu` |
+| `Button(label)` | | `on_click`, … |
+| `Input(value:, placeholder:, autofocus:, secure:)` | `secure: true` = password field | `on_input(text)`, `on_enter`, `on_blur(text)` |
+| `TextArea(value:, placeholder:, autofocus:)` | | `on_input(text)`, `on_blur(text)` |
+| `RichText(value:, placeholder:, editable:, autofocus:)` | contenteditable; `value` is HTML | `on_input(html)` |
+| `Image(src:, alt:)` | hidden while `src` is empty | `on_click`, … |
 | `Checkbox(checked:)` | | `on_change(bool)` |
 | `Spinner(label)` | | |
-| `Row { … }`, `Column { … }` | | `on_click`, … |
+| `Row { … }`, `Column { … }` | | `on_click`, `on_double_click`, `on_context_menu` |
+| `If(cond) { … }` | mounts children while `cond` is truthy | |
 | `List(items, empty: "…") { item => … }` | keyed by `item.id` / `item.key` | |
 | `SomeView(prop: expr)` | sub-view | `on_<emitted event>` |
+
+Every element also accepts `title:` (tooltip). Events are delegated and the
+**innermost handler wins**: a button inside a clickable row does not also
+trigger the row. `on_context_menu` suppresses the browser menu.
+
+Inside a view, its own props and stores shadow host functions of the same name.
 
 See [notes-on-foar](../notes-on-foar) for a complete app.
 

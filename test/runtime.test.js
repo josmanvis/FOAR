@@ -280,3 +280,88 @@ test('externs: host functions callable from store init, expressions and effects'
   assert.deepEqual(saved, [[{ id: 'a', text: 'yo\nthere' }]]);
   rt.destroy();
 });
+
+test('If, RichText, Image, context menu, blur, title, innermost handler wins', async () => {
+  const src = `
+    view P {
+      store open: bool = false;
+      store html: String = "<p>hi</p>";
+      store log: Vec<String> = [];
+      store img: String = "";
+      store a: bool = false;
+      store b: bool = false;
+      state S {
+        render {
+          Row {
+            Button("toggle", title: "Toggle panel") -> on_click(Toggle)
+          } -> on_click(RowClick) -> on_context_menu(Menu)
+          If(open) { Text("panel") Child() }
+          RichText(value: html, placeholder: "Write…", editable: !open) -> on_input(Edit)
+          Image(src: img, alt: "pic")
+          Input(value: "x") -> on_blur(Blurred)
+          Text(a || b || open ? "any" : "none")
+        }
+        effect Toggle() { open = !open; log = [...log, "toggle"]; }
+        effect RowClick() { log = [...log, "row"]; }
+        effect Menu() { log = [...log, "menu"]; img = "data:image/gif;base64,R0lGODlhAQABAAAAACw="; }
+        effect Edit(h: String) { html = h; }
+        effect Blurred(v: String) { log = [...log, "blur:" + v]; }
+      }
+    }
+    view Child { store n: i32 = 1; state S { render { Text("child") } } }`;
+  const { window, container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(src), container, {});
+  const snap = () => rt.getSnapshot().find((s) => s.key === 'root').stores;
+  const btn = q(container, '.f4-button')[0];
+  assert.equal(btn.title, 'Toggle panel');
+  assert.equal(q(container, '.f4-if')[0].childNodes.length, 0);
+  assert.equal(q(container, '.f4-text').at(-1).textContent, 'none', '`a || b || open` must not become a closure');
+
+  fire(window, btn, 'click'); await tick();
+  assert.deepEqual(snap().log, ['toggle'], 'button click must not bubble to the row handler');
+  assert.equal(q(container, '.f4-if .f4-text')[0].textContent, 'panel');
+  assert.equal(rt.getSnapshot().length, 2, 'child view mounted inside If');
+  assert.equal(q(container, '.f4-text').at(-1).textContent, 'any');
+
+  const rte = q(container, '.f4-richtext')[0];
+  assert.equal(rte.innerHTML, '<p>hi</p>');
+  assert.equal(rte.contentEditable, 'false', 'editable: binding');
+  assert.equal(rte.dataset.placeholder, 'Write…');
+  rte.innerHTML = '<p>hi <b>there</b></p>'; fire(window, rte, 'input'); await tick();
+  assert.equal(snap().html, '<p>hi <b>there</b></p>');
+  assert.equal(q(container, '.f4-richtext')[0], rte, 'editor kept');
+
+  fire(window, btn, 'click'); await tick();
+  assert.equal(q(container, '.f4-if')[0].childNodes.length, 0, 'If unmounts');
+  assert.equal(rt.getSnapshot().length, 1, 'child instance disposed');
+  assert.equal(rte.contentEditable, 'true');
+
+  const img = q(container, '.f4-image')[0];
+  assert.equal(img.hidden, true);
+  const ev = new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+  q(container, '.f4-row')[0].dispatchEvent(ev); await tick();
+  assert.equal(ev.defaultPrevented, true, 'native menu suppressed');
+  assert.equal(img.hidden, false);
+  assert.equal(img.alt, 'pic');
+
+  const inp = q(container, '.f4-input')[0];
+  inp.dispatchEvent(new window.FocusEvent('focusout', { bubbles: true })); await tick();
+  assert.deepEqual(snap().log, ['toggle', 'toggle', 'menu', 'blur:x']);
+  rt.destroy();
+});
+
+test('props and stores shadow host functions with the same name', async () => {
+  const src = `
+    view Root { state S { render { Row(label: "from prop") Text(label("x")) } } }
+    view Row(label: String) {
+      store title: String = "from store";
+      state S { render { Text(label) Text(title) } }
+    }`;
+  const { container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(src), container, {
+    bindings: { label: (x) => `host ${x}`, title: () => 'host title' },
+  });
+  const texts = q(container, '.f4-text').map((e) => e.textContent);
+  assert.deepEqual(texts, ['from prop', 'from store', 'host x']);
+  rt.destroy();
+});

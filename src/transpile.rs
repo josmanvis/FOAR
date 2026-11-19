@@ -22,7 +22,8 @@ fn rules() -> &'static Rules {
     R.get_or_init(|| Rules {
         if_let_find: Regex::new(r"if[ \t\r\n]+let[ \t\r\n]+Some[ \t\r\n]*\([ \t\r\n]*([a-zA-Z0-9_]+)[ \t\r\n]*\)[ \t\r\n]*=[ \t\r\n]*([a-zA-Z0-9_.]+)[ \t\r\n]*\.[ \t\r\n]*find_index[ \t\r\n]*\([ \t\r\n]*\|[ \t\r\n]*([a-zA-Z0-9_]+)[ \t\r\n]*\|[ \t\r\n]*([^)]+)\)").unwrap(),
         retain: Regex::new(r"([a-zA-Z0-9_]+)[ \t\r\n]*\.[ \t\r\n]*retain[ \t\r\n]*\([ \t\r\n]*\|[ \t\r\n]*([a-zA-Z0-9_]+)[ \t\r\n]*\|[ \t\r\n]*([^)]+)\)").unwrap(),
-        closure: Regex::new(r"\|[ \t\r\n]*([a-zA-Z0-9_,[ \t\r\n]]+?)[ \t\r\n]*\|[ \t\r\n]*").unwrap(),
+        // only after `(`, `,`, `=` or `[` so that `a || b || c` is left alone
+        closure: Regex::new(r"([(,=\[][ \t\r\n]*)\|[ \t\r\n]*([a-zA-Z0-9_,[ \t\r\n]]+?)[ \t\r\n]*\|[ \t\r\n]*").unwrap(),
         contains: Regex::new(r"\.contains[ \t\r\n]*\(([^)]+)\)").unwrap(),
         is_empty: Regex::new(r"([a-zA-Z0-9_.]+)\.is_empty[ \t\r\n]*\([ \t\r\n]*\)").unwrap(),
         struct_lit: Regex::new(r"([=(,\[])[ \t\r\n]*[A-Z][a-zA-Z0-9_]*[ \t\r\n]*\{").unwrap(),
@@ -40,7 +41,7 @@ pub fn rust_idioms_to_js(code: &str) -> String {
     let mut out = code.to_string();
     out = r.if_let_find.replace_all(&out, "const ${1} = ${2}.findIndex((${3}) => ${4}); if (${1} !== -1)").into_owned();
     out = r.retain.replace_all(&out, "${1} = ${1}.filter((${2}) => ${3})").into_owned();
-    out = r.closure.replace_all(&out, "(${1}) => ").into_owned();
+    out = r.closure.replace_all(&out, "${1}(${2}) => ").into_owned();
     out = r.contains.replace_all(&out, ".toLowerCase().includes(String(${1}).toLowerCase())").into_owned();
     out = r.is_empty.replace_all(&out, "(${1}.trim().length === 0)").into_owned();
     out = r.struct_lit.replace_all(&out, "${1} {").into_owned();
@@ -77,6 +78,9 @@ mod tests {
         assert_eq!(rust_idioms_to_js("if !x.is_empty() { a; }"), "if (!(x.trim().length === 0)) { a; }");
         assert_eq!(rust_idioms_to_js("let mut n = item;"), "let n = structuredClone(item);");
         assert_eq!(rust_idioms_to_js("x = [Todo { id: 1 }, Todo { id: 2 }];"), "x = [ { id: 1 }, { id: 2 }];");
+        assert_eq!(rust_idioms_to_js("a || b || c"), "a || b || c");
+        assert_eq!(rust_idioms_to_js("xs.sort(|a, b| a.x || b.x)"), "xs.sort((a, b) => a.x || b.x)");
+        assert_eq!(rust_idioms_to_js("let f = |n| n + 1;"), "let f = (n) => n + 1;");
         assert_eq!(rust_idioms_to_js("todos.filter(|t| t.text.contains(q))"), "todos.filter((t) => t.text.toLowerCase().includes(String(q).toLowerCase()))");
     }
     #[test]
