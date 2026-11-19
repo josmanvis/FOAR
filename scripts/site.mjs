@@ -35,8 +35,10 @@ function markdown(src) {
     gfm: true,
     renderer: {
       code({ text, lang }) {
-        const body = lang === 'foar' ? highlightFoar(text) : esc(text);
-        return `<pre class="code${lang ? ` lang-${esc(lang)}` : ''}"><code>${body}</code></pre>\n`;
+        const cleanLang = (lang || '').trim();
+        const body = cleanLang === 'foar' ? highlightFoar(text) : esc(text);
+        const label = cleanLang || 'text';
+        return `<div class="code-block-wrap"><div class="code-block-head"><span>${esc(label)}</span><button class="copy-btn" type="button" data-copy>Copy</button></div><pre class="code${cleanLang ? ` lang-${esc(cleanLang)}` : ''}"><code>${body}</code></pre></div>\n`;
       },
       heading({ tokens, depth }) {
         const html = this.parser.parseInline(tokens);
@@ -48,7 +50,7 @@ function markdown(src) {
         const text = this.parser.parseInline(tokens);
         // docs link to each other as ./name.md (readable on GitHub); the site serves .html
         let h = href.replace(/^\.\/(\w+)\.md(#.*)?$/, (_, n, hash) => `${n === 'guide' ? 'index' : n}.html${hash ?? ''}`);
-        h = h.replace(/^\.\.\/examples\/(\w+)\/?$/, '../playground/?example=$1');
+        h = h.replace(/^\.\.\/examples\/([\w-]+)\/?$/, '../playground/?example=$1');
         const ext = /^https?:/.test(h);
         return `<a href="${esc(h)}"${title ? ` title="${esc(title)}"` : ''}${ext ? ' rel="noopener"' : ''}>${text}</a>`;
       },
@@ -59,37 +61,100 @@ function markdown(src) {
 
 /** A docs page as a complete HTML document. */
 export function renderDoc(name) {
-  const page = PAGES.find((p) => p.name === name);
-  if (!page) return null;
+  const idx = PAGES.findIndex((p) => p.name === name);
+  if (idx === -1) return null;
+  const page = PAGES[idx];
+  const prev = idx > 0 ? PAGES[idx - 1] : null;
+  const next = idx < PAGES.length - 1 ? PAGES[idx + 1] : null;
+
   const { html, toc } = markdown(fs.readFileSync(path.join(DOCS, page.file), 'utf8'));
   const title = /<h1[^>]*>(?:<a[^>]*>#<\/a>)?(.*?)<\/h1>/.exec(html)?.[1]?.replace(/<[^>]+>/g, '') ?? page.title;
   const nav = PAGES.map((p) => `<a href="${p.name}.html"${p.name === name ? ' aria-current="page"' : ''}>${esc(p.title)}</a>`).join('');
   const onPage = toc.map((t) => `<a class="toc-${t.depth}" href="#${t.id}">${esc(t.text)}</a>`).join('');
+
+  const pager = (prev || next)
+    ? `<nav class="docs-pager" aria-label="Page navigation">
+        ${prev ? `<a class="pager-link" href="${prev.name}.html"><span class="pager-dir">Previous</span><span class="pager-title">${esc(prev.title)}</span></a>` : ''}
+        ${next ? `<a class="pager-link is-next" href="${next.name}.html"><span class="pager-dir">Next</span><span class="pager-title">${esc(next.title)}</span></a>` : ''}
+      </nav>`
+    : '';
+
   return `<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · FOAR</title>
-<meta name="description" content="FOAR: a UI language where every component is an explicit state machine.">
-<link rel="icon" href="../favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="../site.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${esc(title)} — FOAR</title>
+  <meta name="description" content="FOAR documentation: a UI programming language where every component is an explicit state machine.">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    try {
+      const t = localStorage.getItem('foar-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+    } catch {}
+  </script>
+  <link rel="stylesheet" href="../site.css">
 </head>
 <body class="docs">
+<a class="skip" href="#main">Skip to content</a>
+
 <header class="site-nav">
-  <a class="logo" href="../" aria-label="FOAR home"><img src="../favicon.svg" alt="" width="24" height="24"> <span>FOAR</span></a>
-  <nav aria-label="Site"><a href="./" aria-current="page">Docs</a><a href="../playground/">Playground</a><a class="hide-sm" href="../#examples">Examples</a><a href="https://github.com/josmanvis/FOAR" rel="noopener">GitHub</a></nav>
+  <div class="site-nav-inner">
+    <a class="logo" href="../" aria-label="FOAR home">
+      <img src="../favicon.svg" alt="" width="28" height="28">
+      <span class="logo-wordmark">FOAR</span>
+    </a>
+    <nav aria-label="Site">
+      <a href="./" aria-current="page">Docs</a>
+      <a href="../playground/">Playground</a>
+      <a class="hide-sm" href="../#examples">Examples</a>
+      <a href="https://github.com/josmanvis/FOAR" rel="noopener">GitHub</a>
+    </nav>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme"></button>
+  </div>
 </header>
+
 <div class="docs-layout">
   <aside class="docs-side" aria-label="Documentation">
+    <p class="docs-group-label">Documentation</p>
     <nav class="docs-pages">${nav}</nav>
-    <nav class="docs-toc" aria-label="On this page">${onPage}</nav>
+    ${onPage ? `<div class="docs-toc-wrap"><p class="docs-group-label">On this page</p><nav class="docs-toc" aria-label="On this page">${onPage}</nav></div>` : ''}
+    <div class="docs-side-cta">
+      <a href="../playground/">
+        Open the playground
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+      </a>
+    </div>
   </aside>
+
   <main class="prose" id="main">
 ${html}
+${pager}
     <p class="edit"><a href="https://github.com/josmanvis/FOAR/blob/main/docs/${page.file}" rel="noopener">Edit this page on GitHub</a></p>
   </main>
 </div>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <div class="footer-brand">
+      <img src="../favicon.svg" alt="" width="22" height="22">
+      <span>FOAR — Interfaces as state machines. MIT License.</span>
+    </div>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="./">Guide</a>
+      <a href="language.html">Language</a>
+      <a href="tooling.html">Tooling</a>
+      <a href="why.html">Why FOAR</a>
+      <a href="../playground/">Playground</a>
+      <a href="https://github.com/josmanvis/FOAR" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+<script type="module" src="../site.js"></script>
 </body>
 </html>
 `;
@@ -110,7 +175,7 @@ export function examplesIndex() {
     const [title, description = ''] = first.split(/\s+—\s+/);
     out.push({ id: e.name, title: title.replace(/^FOAR\s+/, ''), description, entry: 'app.foar', files });
   }
-  const order = ['starter', 'counter', 'todo', 'orders'];
+  const order = ['starter', 'counter', 'todo', 'orders', 'notes-on-foar'];
   return out.sort((a, b) => (order.indexOf(a.id) + 1 || 99) - (order.indexOf(b.id) + 1 || 99) || a.id.localeCompare(b.id));
 }
 

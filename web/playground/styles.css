@@ -10,7 +10,7 @@
   --success: #3fb950;
   --warning: #d29922;
   --danger: #f85149;
-  --purple: #bc8cff;
+  --signal: #f09436;
 }
 
 * {
@@ -49,15 +49,13 @@ body {
 }
 
 .brand-logo {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 18px;
-  box-shadow: 0 2px 10px rgba(124, 58, 237, 0.35);
 }
 
 .brand-title {
@@ -640,8 +638,8 @@ select:hover {
 }
 
 .tr-via {
-  color: var(--purple);
-  background: rgba(188, 140, 255, 0.1);
+  color: var(--signal);
+  background: rgba(240, 148, 54, 0.14);
   padding: 1px 6px;
   border-radius: 4px;
 }
@@ -704,16 +702,16 @@ select:hover {
 }
 
 .log-tag-emit {
-  color: var(--purple);
+  color: var(--signal);
 }
 
 .code-output {
   flex: 1;
   padding: 14px;
-  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-family: "IBM Plex Mono", "JetBrains Mono", "Fira Code", monospace;
   font-size: 12px;
   line-height: 1.5;
-  color: #d2a8ff;
+  color: #dce3eb;
   overflow: auto;
 }
 
@@ -1059,10 +1057,10 @@ select:hover {
 /* token colours (no weight/style changes: the overlay must keep glyph widths) */
 .hl-comment { color: #8b949e; }
 .hl-keyword { color: #ff7b72; }
-.hl-decl { color: #d2a8ff; }
+.hl-decl { color: #67d4b4; }
 .hl-component { color: #7ee787; }
-.hl-state { color: #ffa657; }
-.hl-fn { color: #d2a8ff; }
+.hl-state { color: #f09436; }
+.hl-fn { color: #67d4b4; }
 .hl-event { color: #f2cc60; }
 .hl-prop { color: #79c0ff; }
 .hl-cssvar { color: #ffa657; }
@@ -1388,7 +1386,7 @@ button.sb-item:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
 .pal-file, .pal-kind { display: inline-block; width: 16px; margin-right: 6px; text-align: center; color: var(--text-muted); }
 .pal-kind.k-view { color: #7ee787; }
 .pal-kind.k-state { color: #ffa657; }
-.pal-kind.k-effect { color: #d2a8ff; }
+.pal-kind.k-effect { color: #67d4b4; }
 .pal-kind.k-style, .pal-kind.k-theme, .pal-kind.k-keyframes { color: #79c0ff; }
 .pal-kind.k-data, .pal-kind.k-store { color: #f2cc60; }
 
@@ -1499,7 +1497,7 @@ button.sb-item:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
 .ls-icon.k-keyword, .ls-icon.k-snippet { color: #ff7b72; }
 .ls-icon.k-prop, .ls-icon.k-arg { color: #79c0ff; }
 .ls-icon.k-state, .ls-icon.k-cssvar, .ls-icon.k-type { color: #ffa657; }
-.ls-icon.k-effect, .ls-icon.k-fn { color: #d2a8ff; }
+.ls-icon.k-effect, .ls-icon.k-fn { color: #67d4b4; }
 .ls-icon.k-event { color: #f2cc60; }
 .ls-icon.k-style { color: #a5d6ff; }
 .ls-doc {

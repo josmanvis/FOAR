@@ -3,120 +3,138 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FOAR: interfaces as state machines</title>
-  <meta name="description" content="FOAR is a UI language where every component is an explicit state machine, with exhaustive match and enums, compiled by a Rust compiler (native and WebAssembly) to a 13 KB retained-DOM runtime.">
-  <meta property="og:title" content="FOAR: interfaces as state machines">
-  <meta property="og:description" content="A UI language with explicit states, exhaustive match, and a Rust → WebAssembly compiler. Try it in the browser.">
+  <title>FOAR — Interfaces as state machines</title>
+  <meta name="description" content="FOAR is a UI programming language where every component is an explicit state machine, with exhaustive match and enums, compiled by a Rust compiler (native and WebAssembly) to a 13 KB retained-DOM runtime.">
+  <meta property="og:title" content="FOAR — Interfaces as state machines">
+  <meta property="og:description" content="A UI language with explicit states, exhaustive match, and a Rust to WebAssembly compiler. Try it in the browser.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    try {
+      const t = localStorage.getItem('foar-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+    } catch {}
+  </script>
   <link rel="stylesheet" href="site.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
+
 <header class="site-nav">
-  <a class="logo" href="./" aria-label="FOAR home"><img src="favicon.svg" alt="" width="26" height="26"> <span>FOAR</span></a>
-  <nav aria-label="Site">
-    <a href="docs/">Docs</a>
-    <a href="playground/">Playground</a>
-    <a class="hide-sm" href="#examples">Examples</a>
-    <a href="https://github.com/josmanvis/FOAR" rel="noopener">GitHub</a>
-  </nav>
+  <div class="site-nav-inner">
+    <a class="logo" href="./" aria-label="FOAR home">
+      <img src="favicon.svg" alt="" width="28" height="28">
+      <span class="logo-wordmark">FOAR</span>
+    </a>
+    <nav aria-label="Site">
+      <a href="docs/">Docs</a>
+      <a href="playground/">Playground</a>
+      <a class="hide-sm" href="#examples">Examples</a>
+      <a href="https://github.com/josmanvis/FOAR" rel="noopener">GitHub</a>
+    </nav>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme"></button>
+  </div>
 </header>
 
 <main id="main">
-  <!-- hero -->
+  <!-- Hero: Asymmetric copy + live interactive FOAR state machine -->
   <section class="hero">
     <div class="wrap">
-      <div class="hero-copy">
-        <span class="eyebrow">A UI language · Rust → WebAssembly</span>
-        <h1>Interfaces are state machines. <span class="grad">Write them that way.</span></h1>
-        <p class="lede">
-          Declare each view's states, what it renders, and how it responds. FOAR catches
-          impossible transitions and missing cases, then compiles to a small runtime that
-          updates the DOM in place.
-        </p>
-        <div class="cta">
-          <a class="btn primary" href="playground/">Try FOAR in the playground</a>
-          <a class="btn ghost" href="docs/">Read the guide</a>
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <h1>Interfaces are state machines. Write them that way.</h1>
+          <p class="lede">
+            Declare each view's states, what it renders, and the effects it accepts.
+            FOAR catches impossible transitions and missing cases at compile time,
+            then updates the DOM in place without a virtual DOM.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="playground/">
+              Open the playground
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+            </a>
+            <a class="btn btn-secondary" href="docs/">Read the guide</a>
+          </div>
+          <dl class="hero-specs">
+            <div class="hero-spec">
+              <dt>13 KB</dt>
+              <dd>Gzipped retained-DOM runtime, zero dependencies</dd>
+            </div>
+            <div class="hero-spec">
+              <dt>Rust + WASM</dt>
+              <dd>Native CLI and 210 KB in-browser compiler</dd>
+            </div>
+            <div class="hero-spec">
+              <dt>Exhaustive</dt>
+              <dd>Enums and <code>match</code> checked before runtime</dd>
+            </div>
+          </dl>
+        </div>
+
+        <!-- Signature interactive demonstration -->
+        <div id="hero-machine" class="machine-console" aria-label="Interactive Note.foar state machine">
+          <div class="machine-header">
+            <span class="machine-file">Note.foar</span>
+            <div class="state-rail" role="tablist" aria-label="Active state">
+              <button class="state-tab" type="button" role="tab" aria-selected="true" data-state-tab="Viewing"><span class="detent-dot" aria-hidden="true"></span>Viewing</button>
+              <button class="state-tab" type="button" role="tab" aria-selected="false" data-state-tab="Editing"><span class="detent-dot" aria-hidden="true"></span>Editing</button>
+              <button class="state-tab" type="button" role="tab" aria-selected="false" data-state-tab="Saving"><span class="detent-dot" aria-hidden="true"></span>Saving</button>
+            </div>
+          </div>
+
+          <div class="machine-stage" data-stage aria-live="polite"></div>
+
+          <div class="machine-source">
+            <div class="source-shell"><code class="foar">view Note {
+  store text: String = "Explicit states, not flags.";</code></div>
+            <div class="state-block is-active" data-state-block="Viewing"><code class="foar">  state Viewing {
+    render {
+      Text(text)
+      Button("Edit") -> on_click(Edit)
+    }
+    effect Edit() { transition Editing; }
+  }</code></div>
+            <div class="state-block" data-state-block="Editing"><code class="foar">  state Editing {
+    render {
+      Input(value: text) -> on_input(Type)
+      Button("Save") -> on_click(Save)
+    }
+    effect Type(t: String) { text = t; }
+    effect Save() { save_note(text) -> transition(Saving); }
+  }</code></div>
+            <div class="state-block" data-state-block="Saving"><code class="foar">  state Saving {
+    render { Spinner("Saving…") }
+    on_exit { transition Viewing; }
+  }</code></div>
+            <div class="source-shell"><code class="foar">}</code></div>
+          </div>
+
+          <div class="machine-footer">
+            <span class="trace-badge"><span class="trace-led" aria-hidden="true"></span><span data-trace>state: Viewing</span></span>
+            <span>Click Edit or Save above</span>
+          </div>
         </div>
       </div>
-      <div class="hero-demo" aria-label="Example FOAR state machine for editing and saving a note">
-        <div class="demo-top"><span>NOTE.FOAR</span><span>VIEW · NOTE</span></div>
-        <div class="demo-code"><span class="demo-key">state</span> <span class="demo-state">Editing</span> {<br>
-          &nbsp;&nbsp;render { <span class="demo-node">Editor</span>(text) }<br>
-          &nbsp;&nbsp;effect <span class="demo-event">Save</span>() {<br>
-          &nbsp;&nbsp;&nbsp;&nbsp;save_note(text) -&gt; <span class="demo-key">transition</span> <span class="demo-state">Saving</span>;<br>
-          &nbsp;&nbsp;}<br>
-        }</div>
-        <div class="demo-transition"><span class="state-chip active">Editing</span><span class="transition-line">Save →</span><span class="state-chip">Saving</span></div>
-        <div class="demo-foot"><span><i></i> Compiler checked</span><span>3 states · 2 transitions</span></div>
-      </div>
-    </div>
-    <div class="wrap hero-facts"><span>13 KB runtime · gzip</span><span>Rust compiler · native + WASM</span><span>No virtual DOM</span><span>Browser IDE included</span></div>
-  </section>
-
-  <!-- states -->
-  <section>
-    <div class="wrap split">
-      <div class="window">
-        <div class="window-bar"><i></i><i></i><i></i><span>Note.foar</span></div>
-<pre><code class="foar">view Note {
-    store text: String = "";
-
-    state Viewing {
-        render {
-            Text(text)
-            Button("Edit") -> on_click(Edit)
-        }
-        effect Edit() { transition Editing; }
-    }
-
-    state Editing {
-        render {
-            Input(value: text) -> on_input(Type)
-            Button("Save") -> on_click(Save)
-        }
-        effect Type(t: String) { text = t; }
-        effect Save() { save_note(text) -> transition(Saving); }
-    }
-
-    state Saving {
-        render { Spinner("Saving…") }
-        on_exit { transition Viewing; }
-    }
-}</code></pre>
-      </div>
-      <div>
-        <span class="eyebrow">States, not flags</span>
-        <h2>One state at a time, and the code says which.</h2>
-        <p class="lede">A view is always in exactly one state. Each state lists what it renders and the events it handles, so <em>save while saving</em> isn't a bug you guard against: it has no handler. Loading is a state you enter and leave, not a flag you set in one place and forget to clear in another.</p>
-        <div class="diagram" role="img" aria-label="State diagram: Viewing goes to Editing on Edit, Editing goes to Saving on Save, Saving returns to Viewing when the save finishes">
-          <svg viewBox="0 0 420 150">
-            <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color: var(--muted)"/></marker></defs>
-            <rect class="node on" x="10" y="20" width="110" height="40" rx="20"/><text x="65" y="45" text-anchor="middle">Viewing</text>
-            <rect class="node" x="155" y="20" width="110" height="40" rx="20"/><text x="210" y="45" text-anchor="middle">Editing</text>
-            <rect class="node" x="300" y="20" width="110" height="40" rx="20"/><text x="355" y="45" text-anchor="middle">Saving</text>
-            <path class="edge" d="M120 40 H153"/><text class="edge-label" x="137" y="14" text-anchor="middle">Edit</text>
-            <path class="edge" d="M265 40 H298"/><text class="edge-label" x="282" y="14" text-anchor="middle">Save</text>
-            <path class="edge" d="M355 62 C355 120 65 120 65 63"/><text class="edge-label" x="210" y="134" text-anchor="middle">save_note resolves → on_exit</text>
-          </svg>
-        </div>
-        <p class="caption">The playground draws this from the source and shows each component's live state.</p>
-      </div>
     </div>
   </section>
 
-  <!-- flags vs states -->
-  <section>
+  <!-- Band 2: Flags vs explicit states (Recessed specification band) -->
+  <section class="band band-recessed">
     <div class="wrap">
-      <div class="center">
-        <span class="eyebrow">The problem</span>
+      <div class="section-head">
         <h2>Four booleans, sixteen combinations, three that make sense.</h2>
-        <p class="lede">Flags describe states indirectly, and every combination nobody designed is a bug waiting for the right order of clicks.</p>
+        <p>Flags describe states indirectly, and every combination nobody designed is a bug waiting for the right sequence of clicks. In FOAR, each state owns its view and its handlers.</p>
       </div>
-      <div class="split even" style="margin-top: 40px">
+
+      <div class="compare-grid">
         <div>
-          <div class="window">
-            <div class="window-bar"><i></i><i></i><i></i><span>Note.jsx</span></div>
+          <div class="code-frame">
+            <div class="code-bar">
+              <span>Note.jsx</span>
+              <span class="code-tag">Implicit boolean flags</span>
+            </div>
 <pre><code><span class="js-kw">const</span> [editing, setEditing] = <span class="js-fn">useState</span>(<span class="js-kw">false</span>);
 <span class="js-kw">const</span> [saving, setSaving] = <span class="js-fn">useState</span>(<span class="js-kw">false</span>);
 <span class="js-kw">const</span> [error, setError] = <span class="js-fn">useState</span>(<span class="js-kw">null</span>);
@@ -133,12 +151,21 @@
   : editing ? &lt;<span class="js-fn">Editor</span> … /&gt;
   : &lt;<span class="js-fn">Viewer</span> … /&gt;;</code></pre>
           </div>
-          <p class="caption">The real state is reconstructed from flags on every render, and every handler guards against combinations it can't handle.</p>
+          <p class="code-caption">The actual state is reconstructed from flags on every render, and every handler has to guard against combinations it cannot handle.</p>
         </div>
+
         <div>
-          <div class="window">
-            <div class="window-bar"><i></i><i></i><i></i><span>Note.foar</span></div>
-<pre><code class="foar">state Editing {
+          <div class="code-frame is-highlight">
+            <div class="code-bar">
+              <span>Note.foar</span>
+              <span class="code-tag">Explicit states</span>
+            </div>
+<pre><code class="foar">state Viewing {
+    render { Viewer(text: text) -> on_edit(Edit) }
+    effect Edit() { transition Editing; }
+}
+
+state Editing {
     render { Editor(text: text) -> on_save(Save) }
     effect Save() {
         save_note(text) -> transition(Saving);
@@ -148,32 +175,59 @@
 state Saving {
     render { Spinner("Saving…") }
     on_exit { transition Viewing; }
-}
-
-state Viewing {
-    render { Viewer(text: text) -> on_edit(Edit) }
-    effect Edit() { transition Editing; }
 }</code></pre>
           </div>
-          <p class="caption">Each state is written once. Impossible combinations can't be expressed, so there's nothing to guard.</p>
+          <p class="code-caption">A view is always in exactly one state. Saving while saving is not guarded with an <code>if</code>: the <code>Saving</code> state has no <code>Save</code> handler.</p>
+        </div>
+      </div>
+
+      <div class="diagram-strip">
+        <div role="img" aria-label="State diagram: Viewing transitions to Editing on Edit, Editing transitions to Saving on Save, Saving returns to Viewing on exit">
+          <svg viewBox="0 0 460 132">
+            <defs>
+              <marker id="foar-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0 1L9 5L0 9z" fill="currentColor" style="color: var(--ink-muted)"/>
+              </marker>
+            </defs>
+            <rect class="node is-on" data-diagram-node="Viewing" x="12" y="22" width="114" height="38" rx="6"/>
+            <text x="69" y="45" text-anchor="middle">Viewing</text>
+            <rect class="node" data-diagram-node="Editing" x="173" y="22" width="114" height="38" rx="6"/>
+            <text x="230" y="45" text-anchor="middle">Editing</text>
+            <rect class="node" data-diagram-node="Saving" x="334" y="22" width="114" height="38" rx="6"/>
+            <text x="391" y="45" text-anchor="middle">Saving</text>
+            <path class="edge" d="M126 41 H170"/>
+            <text class="edge-label" x="148" y="16" text-anchor="middle">Edit</text>
+            <path class="edge" d="M287 41 H331"/>
+            <text class="edge-label" x="309" y="16" text-anchor="middle">Save</text>
+            <path class="edge" d="M391 60 V102 H69 V64"/>
+            <text class="edge-label" x="230" y="120" text-anchor="middle">save_note resolves, on_exit transitions to Viewing</text>
+          </svg>
+        </div>
+        <div class="diagram-copy">
+          <h3>Live topology from your source</h3>
+          <p>Because states and transitions are syntax, the playground draws every component's state graph automatically and highlights live transitions as you interact with your app.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- match -->
-  <section>
-    <div class="wrap split">
-      <div>
-        <span class="eyebrow">Enums &amp; exhaustive match</span>
-        <h2>A better <code>switch</code>: the compiler checks every case.</h2>
-        <p class="lede"><code>match</code> has no fall-through and no <code>break</code>. It must handle every variant of an enum, or <code>true</code> and <code>false</code>, or have a <code>_</code> arm, and arms that can never run are errors. Add a variant and every match that forgets it stops compiling, with a message saying which.</p>
-        <p>Patterns cover literals, <code>a | b</code>, ranges like <code>1..=9</code>, and <code>name if guard</code>. A match is a value, a statement, or, as <code>Match(…)</code>, a piece of UI that swaps only when the arm changes. Enum values compile to plain strings, so the safety costs nothing at runtime or in your JSON.</p>
-      </div>
-      <div style="display: grid; gap: 14px">
-        <div class="window">
-          <div class="window-bar"><i></i><i></i><i></i><span>checkout.foar</span></div>
-<pre><code class="foar">enum Payment { Card, Transfer, Invoice }
+  <!-- Band 3: Exhaustive match (Asymmetric 5/7 split + live compiler diagnostic toggle) -->
+  <section class="band">
+    <div class="wrap">
+      <div class="split-asymmetric">
+        <div>
+          <h2>Exhaustive <code>match</code>, checked before anything runs.</h2>
+          <p><code>match</code> has no fall-through and no <code>break</code>. It must cover every variant of an enum, both <code>true</code> and <code>false</code>, or a <code>_</code> arm, and arms that can never run are compile errors. Add a variant and every match that forgets it stops compiling, naming what is missing.</p>
+          <p>Patterns support literals, <code>a | b</code>, inclusive ranges like <code>1..=9</code>, and bindings with <code>if</code> guards. Use <code>match</code> as a value, a statement, or as <code>Match(…)</code> in <code>render</code> so the DOM swaps only when the active arm changes. Enum values compile to plain strings, costing nothing in JSON or at runtime.</p>
+        </div>
+
+        <div class="match-stack" id="match-demo">
+          <div class="code-frame">
+            <div class="code-bar">
+              <span>checkout.foar</span>
+              <button id="match-fix-toggle" class="bar-btn" type="button">Add Invoice arm</button>
+            </div>
+<pre><code id="match-code" class="foar">enum Payment { Card, Transfer, Invoice }
 
 let fee = match method {
     Payment.Card => 0.29,
@@ -183,131 +237,347 @@ let fee = match method {
 Match(cart.len()) {
     0 => Text("Your cart is empty"),
     1..=9 => CartList(items: cart),
-    n => Text("{n} items · showing the first 9"),
+    n => Text("{n} items, showing the first 9"),
 }</code></pre>
-        </div>
-        <div class="window terminal">
-          <div class="window-bar"><i></i><i></i><i></i><span>foar check</span></div>
-<pre><span class="dim">$</span> foar check app.foar
+          </div>
+
+          <div class="code-frame terminal-frame">
+            <div class="code-bar">
+              <span>foar check</span>
+              <span class="code-tag">Compiler diagnostic</span>
+            </div>
+<pre id="match-terminal"><span class="dim">$</span> foar check checkout.foar
 <span class="err">checkout.foar:3:11: This match doesn't handle Payment.Invoice
 (add an arm for it or `_ => …`)</span></pre>
+          </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- features -->
-  <section>
+  <!-- Band 4: Specification Ledger (Swiss 2-col technical architecture overview) -->
+  <section class="band band-divided">
     <div class="wrap">
-      <div class="center">
-        <span class="eyebrow">What's in the box</span>
+      <div class="section-head">
         <h2>One small language for the whole interface.</h2>
+        <p>State transitions, exhaustive branching, fine-grained DOM updates, styling, and translations live in the same compiler.</p>
       </div>
-      <div class="grid">
-        <div class="card"><div class="ico" aria-hidden="true">⇄</div><h3>Explicit state machines</h3><p>Views declare states, effects belong to states, transitions are one statement. Async work is a state with an <code>on_exit</code>.</p></div>
-        <div class="card"><div class="ico" aria-hidden="true">✓</div><h3>Checked at compile time</h3><p>Exhaustive <code>match</code> on enums. Unknown views, states, effects, styles, variants and imports are reported with file, line and a "did you mean".</p></div>
-        <div class="card"><div class="ico" aria-hidden="true">⚡</div><h3>No virtual DOM</h3><p>Elements compile to blocks with bindings. Updates write only changed values, keyed lists reuse rows, and inputs keep focus and selection.</p></div>
-        <div class="card"><div class="ico" aria-hidden="true">🎨</div><h3>Styling built in</h3><p>Scoped CSS with themes, dark mode, nested <code>@hover</code>/<code>@media</code>, and <code>@state Editing { … }</code>: styles that follow the state machine.</p></div>
-        <div class="card"><div class="ico" aria-hidden="true">🌍</div><h3>i18n &amp; accessibility</h3><p><code>t(key, params)</code> with plurals and right-to-left, plus a catalog checker. <code>label:</code>, <code>role:</code>, <code>aria:</code> everywhere, and keyboard-operable by default.</p></div>
-        <div class="card"><div class="ico" aria-hidden="true">🦀</div><h3>Rust compiler, browser IDE</h3><p>One Rust compiler builds a native CLI and WebAssembly. The playground has completions, hover docs, live errors, rename, references and a formatter.</p></div>
+
+      <div class="spec-ledger">
+        <div class="spec-item">
+          <div class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>
+          </div>
+          <div>
+            <h3>Explicit state machines</h3>
+            <p>Views declare states, effects belong to states, and transitions are a single statement. Async work is a state with an <code>on_exit</code> hook.</p>
+          </div>
+        </div>
+
+        <div class="spec-item">
+          <div class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+          </div>
+          <div>
+            <h3>Checked at compile time</h3>
+            <p>Exhaustive <code>match</code> on enums. Unknown views, states, effects, styles, variants, and imports report file, line, column, and suggestions.</p>
+          </div>
+        </div>
+
+        <div class="spec-item">
+          <div class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+          </div>
+          <div>
+            <h3>Retained DOM, no virtual DOM</h3>
+            <p>Elements compile to blocks with direct bindings. Updates patch only changed values, keyed lists reuse rows, and inputs keep focus and selection.</p>
+          </div>
+        </div>
+
+        <div class="spec-item">
+          <div class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M14 3h7v7"/><path d="m21 3-9 9"/></svg>
+          </div>
+          <div>
+            <h3>State-aware styling</h3>
+            <p>Scoped CSS with design tokens, dark mode, nested <code>@hover</code> and <code>@media</code> rules, and <code>@state Editing { … }</code> blocks that track the machine.</p>
+          </div>
+        </div>
+
+        <div class="spec-item">
+          <div class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+          </div>
+          <div>
+            <h3>Built-in i18n and accessibility</h3>
+            <p><code>t(key, params)</code> with pluralization, RTL support, and a catalog checker. First-class <code>label:</code>, <code>role:</code>, and <code>aria:</code> props on every element.</p>
+          </div>
+        </div>
+
+        <div class="spec-item">
+          <div class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          </div>
+          <div>
+            <h3>Rust compiler and browser IDE</h3>
+            <p>One Rust codebase builds both the native CLI and WebAssembly. The browser playground includes completions, hover docs, rename, diagnostics, and formatting.</p>
+          </div>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- numbers -->
-  <section>
+  <!-- Band 5: Measured performance & comparison matrix -->
+  <section class="band band-recessed">
     <div class="wrap">
-      <span class="eyebrow">By the numbers</span>
-      <h2>Small, and fast by construction.</h2>
-      <div class="stats">
-        <div class="stat"><b>13 KB</b><span>gzipped runtime, one ES module, zero dependencies</span></div>
-        <div class="stat"><b>32 ms</b><span>to compile a 21-file, 2,000-line app, natively or as WebAssembly in the browser</span></div>
-        <div class="stat"><b>0</b><span>elements created per keystroke when filtering a 500-row list that keeps the same rows</span></div>
-        <div class="stat"><b>≈2 ms</b><span>per keystroke or checkbox toggle with 500 rows, measured in happy-dom</span></div>
+      <div class="section-head">
+        <h2>Measured numbers, honest limits.</h2>
+        <p>Every figure below comes directly from running <code>pnpm bench</code> and building the 21-file Notes app in this repository.</p>
       </div>
-      <p class="note">Measured with <code>pnpm bench</code> and the Notes app in this repository. happy-dom is a JavaScript DOM without layout or paint, much slower than a browser's, so treat its times as relative; "elements created" is the real work metric.</p>
+
+      <div class="metrics-bar">
+        <div class="metric">
+          <span class="metric-value">13 KB</span>
+          <span class="metric-desc">Gzipped runtime as a single ES module with zero dependencies.</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value">32 ms</span>
+          <span class="metric-desc">Compile time for a 21-file, 2,000-line app natively or in WebAssembly.</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value">0</span>
+          <span class="metric-desc">DOM elements created per keystroke when filtering a 500-row keyed list.</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value">~2 ms</span>
+          <span class="metric-desc">Per keystroke or checkbox toggle across 500 rows in happy-dom.</span>
+        </div>
+      </div>
+      <p class="note">happy-dom is a pure-JS DOM without layout or paint and is much slower than a browser engine, so treat millisecond timings as relative; DOM elements created is the invariant work metric.</p>
+
+      <div class="compare-subsection">
+        <h3>How FOAR compares</h3>
+        <p class="lede">FOAR brings Elm's exhaustive matching, Svelte's compiled updates, and XState's statecharts directly into the syntax.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Dimension</th>
+                <th>React</th>
+                <th>Svelte</th>
+                <th>Elm</th>
+                <th class="col-foar">FOAR</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Component state</td>
+                <td>Flags in hooks</td>
+                <td>Mutable variables</td>
+                <td>Single model + messages</td>
+                <td class="col-foar">Explicit states per view</td>
+              </tr>
+              <tr>
+                <td>Exhaustive branching</td>
+                <td>Opt-in via TypeScript</td>
+                <td>No</td>
+                <td>Yes</td>
+                <td class="col-foar">Yes: enums, bools, guards</td>
+              </tr>
+              <tr>
+                <td>Derived values</td>
+                <td><code>useMemo</code> + dependency list</td>
+                <td><code>$derived</code></td>
+                <td>Functions of the model</td>
+                <td class="col-foar"><code>let</code>, no dependency list</td>
+              </tr>
+              <tr>
+                <td>DOM updates</td>
+                <td>Virtual DOM diff</td>
+                <td>Compiled, fine-grained</td>
+                <td>Virtual DOM diff</td>
+                <td class="col-foar">Compiled bindings, retained DOM</td>
+              </tr>
+              <tr>
+                <td>Styling</td>
+                <td>External or CSS-in-JS</td>
+                <td>Scoped <code>&lt;style&gt;</code></td>
+                <td>External or elm-css</td>
+                <td class="col-foar">In the language, state-aware</td>
+              </tr>
+              <tr>
+                <td>Compiler</td>
+                <td>JS (Babel / TS)</td>
+                <td>JS</td>
+                <td>Haskell</td>
+                <td class="col-foar">Rust: native and WebAssembly</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">FOAR is early: there is no router, no server-side rendering, and no package ecosystem yet, and effect code compiles to JavaScript without a full type checker. <a href="docs/why.html#what-foar-is-not-yet">Read the full list of trade-offs.</a></p>
+      </div>
     </div>
   </section>
 
-  <!-- compare -->
-  <section>
+  <!-- Band 6: Dark Instrument Showcase (Notes on FOAR) -->
+  <section class="band band-instrument">
     <div class="wrap">
-      <span class="eyebrow">How it compares</span>
-      <h2>The best ideas, in one language.</h2>
-      <p class="lede">FOAR takes Elm's exhaustive pattern matching, Svelte's compiled updates, and the statechart idea behind XState, and makes them the syntax.</p>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th></th><th>React</th><th>Svelte</th><th>Elm</th><th class="foar">FOAR</th></tr></thead>
-          <tbody>
-            <tr><td>Component state</td><td>flags in hooks</td><td>variables</td><td>one model + messages</td><td class="foar">explicit states per view</td></tr>
-            <tr><td>Exhaustive branching</td><td>opt-in via TypeScript</td><td>no</td><td>yes</td><td class="foar">yes: enums, bools, guards</td></tr>
-            <tr><td>Derived values</td><td><code>useMemo</code> + dependency list</td><td><code>$derived</code></td><td>functions of the model</td><td class="foar"><code>let</code>, no dependency list</td></tr>
-            <tr><td>Updates</td><td>virtual DOM diff</td><td>compiled, fine-grained</td><td>virtual DOM diff</td><td class="foar">compiled bindings, retained DOM</td></tr>
-            <tr><td>Styling</td><td>external / CSS-in-JS</td><td>scoped <code>&lt;style&gt;</code></td><td>external / elm-css</td><td class="foar">in the language, state-aware</td></tr>
-            <tr><td>Compiler</td><td>JS (Babel/TS)</td><td>JS</td><td>Haskell</td><td class="foar">Rust: native + WebAssembly</td></tr>
-          </tbody>
-        </table>
+      <div class="showcase-grid">
+        <div class="showcase-frame">
+          <img src="assets/notes.png" alt="Notes on FOAR: a macOS Notes-style desktop interface built in 21 FOAR files with folders, note list, and rich-text editor" width="1280" height="800" loading="lazy">
+        </div>
+        <div class="showcase-copy">
+          <h2>A full Notes app in 21 files.</h2>
+          <p>Folders, tags, pinned and encrypted locked notes, a rich-text editor with checklists and tables, drag and drop, context menus, keyboard navigation, three languages, and dark mode.</p>
+          <p>Every popup, sheet, and inline editor is an explicit view state: a folder row moves through <code>Idle</code>, <code>Menu</code>, <code>Renaming</code>, and <code>ConfirmDelete</code>; the formatting bar moves through <code>Idle</code>, <code>Styles</code>, <code>Colors</code>, <code>Table</code>, and <code>Linking</code>.</p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="playground/?example=notes-on-foar">
+              Inspect Notes in the playground
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+            </a>
+          </div>
+        </div>
       </div>
-      <p class="note">FOAR is young: no router, no server-side rendering, and no package ecosystem yet, and effect code compiles to JavaScript without a full type checker. <a href="docs/why.html#what-foar-is-not-yet">Read the trade-offs.</a></p>
     </div>
   </section>
 
-  <!-- examples -->
-  <section id="examples">
+  <!-- Band 7: Interactive Examples Index -->
+  <section class="band" id="examples">
     <div class="wrap">
-      <span class="eyebrow">Try it</span>
-      <h2>Open an example in the browser.</h2>
-      <p class="lede">Each one opens in the playground: edit it, and the app updates as you type.</p>
-      <div class="grid">
-        <a class="card" href="playground/?example=starter"><div class="ico" aria-hidden="true">✦</div><h3>Starter</h3><p>The smallest multi-file app: a root view and a component.</p><div class="go">Open →</div></a>
-        <a class="card" href="playground/?example=counter"><div class="ico" aria-hidden="true">⏱</div><h3>Counter</h3><p>Three states and an async transition with <code>on_exit</code>.</p><div class="go">Open →</div></a>
-        <a class="card" href="playground/?example=todo"><div class="ico" aria-hidden="true">☑</div><h3>Todo</h3><p>Components with their own state machines, keyed lists, a filter enum and derived values.</p><div class="go">Open →</div></a>
-        <a class="card" href="playground/?example=orders"><div class="ico" aria-hidden="true">📦</div><h3>Orders</h3><p>An order status enum drives badges, colours and actions through exhaustive matches.</p><div class="go">Open →</div></a>
+      <div class="section-head">
+        <h2>Open an example in the browser.</h2>
+        <p>Every project opens directly in the WebAssembly playground. Edit any file and watch the compiled app and state graph update as you type.</p>
+      </div>
+
+      <div class="examples-grid">
+        <a class="example-tile" href="playground/?example=starter">
+          <div>
+            <div class="example-head">
+              <h3>Starter</h3>
+              <svg class="example-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+            </div>
+            <p>The smallest multi-file FOAR project: a root view importing a child component.</p>
+          </div>
+          <div class="example-meta">
+            <span class="example-pill">2 files</span>
+            <span class="example-pill">imports</span>
+            <span class="example-pill">scoped styles</span>
+          </div>
+        </a>
+
+        <a class="example-tile" href="playground/?example=counter">
+          <div>
+            <div class="example-head">
+              <h3>Counter</h3>
+              <svg class="example-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+            </div>
+            <p>Three explicit states and an asynchronous transition resolved through <code>on_exit</code>.</p>
+          </div>
+          <div class="example-meta">
+            <span class="example-pill">3 states</span>
+            <span class="example-pill">async on_exit</span>
+            <span class="example-pill">@state CSS</span>
+          </div>
+        </a>
+
+        <a class="example-tile" href="playground/?example=todo">
+          <div>
+            <div class="example-head">
+              <h3>Todo</h3>
+              <svg class="example-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+            </div>
+            <p>Child components with their own state machines, keyed lists, a filter enum, and derived <code>let</code> values.</p>
+          </div>
+          <div class="example-meta">
+            <span class="example-pill">enum Filter</span>
+            <span class="example-pill">keyed lists</span>
+            <span class="example-pill">derived let</span>
+          </div>
+        </a>
+
+        <a class="example-tile" href="playground/?example=orders">
+          <div>
+            <div class="example-head">
+              <h3>Orders</h3>
+              <svg class="example-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+            </div>
+            <p>An order status enum drives badges, colours, and available actions through exhaustive matches.</p>
+          </div>
+          <div class="example-meta">
+            <span class="example-pill">enum Status</span>
+            <span class="example-pill">exhaustive match</span>
+            <span class="example-pill">Match(…) UI</span>
+          </div>
+        </a>
       </div>
     </div>
   </section>
 
-  <!-- real app -->
-  <section>
-    <div class="wrap split">
-      <img class="shot" src="assets/notes.png" alt="A macOS Notes-style app written in FOAR: folders, a note list and a rich-text editor" width="1280" height="800" loading="lazy">
-      <div>
-        <span class="eyebrow">Built with FOAR</span>
-        <h2>A full Notes app in 21 files.</h2>
-        <p class="lede">Folders, tags, pinned and locked notes, a rich-text editor with checklists and tables, drag and drop, context menus, keyboard navigation, three languages and dark mode.</p>
-        <p>Every popup, sheet and inline editor is a state: a folder row is <code>Idle → Menu → Renaming / ConfirmDelete</code>, the formatting bar is <code>Idle → Styles / Colors / Table / Linking</code>.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- get started -->
-  <section>
+  <!-- Band 8: Get Started -->
+  <section class="band band-divided">
     <div class="wrap">
-      <span class="eyebrow">Get started</span>
-      <h2>Try it in the browser, or run it locally.</h2>
-      <ol class="steps">
-        <li><div><strong>No install:</strong> open the <a href="playground/">playground</a>. The Rust compiler runs there as WebAssembly.</div></li>
-        <li><div><strong>Locally:</strong> you need Rust and Node.
-<pre class="cmd">git clone https://github.com/josmanvis/FOAR && cd FOAR
-pnpm install && pnpm dev        # http://localhost:3000</pre></div></li>
-        <li><div><strong>Build an app:</strong>
-<pre class="cmd">foar build app.foar --format js -o dist/app.js</pre>
-          Then <code>mount(element, { bindings })</code>. See the <a href="docs/">guide</a>.</div></li>
-      </ol>
+      <div class="start-grid">
+        <div>
+          <h2>Start in the browser or run locally.</h2>
+          <p class="lede">The Rust compiler runs directly in your browser via WebAssembly, or natively from the command line.</p>
+        </div>
+
+        <ol class="steps">
+          <li>
+            <div class="steps-body">
+              <p><strong>No install:</strong> open the <a href="playground/">playground</a> and compile FOAR right in this tab.</p>
+            </div>
+          </li>
+          <li>
+            <div class="steps-body">
+              <p><strong>Run locally:</strong> requires Rust and Node.</p>
+              <div class="cmd-box">
+                <pre id="cmd-local">git clone https://github.com/josmanvis/FOAR &amp;&amp; cd FOAR
+pnpm install &amp;&amp; pnpm dev</pre>
+                <button class="copy-btn" type="button" data-copy="cmd-local">Copy</button>
+              </div>
+            </div>
+          </li>
+          <li>
+            <div class="steps-body">
+              <p><strong>Compile a standalone bundle:</strong></p>
+              <div class="cmd-box">
+                <pre id="cmd-build">foar build app.foar --format js -o dist/app.js</pre>
+                <button class="copy-btn" type="button" data-copy="cmd-build">Copy</button>
+              </div>
+              <p style="margin-top: 8px;">Mount with <code>mount(element, { bindings })</code>. See the <a href="docs/">guide</a> for host bindings and theming.</p>
+            </div>
+          </li>
+        </ol>
+      </div>
     </div>
   </section>
 </main>
 
-<footer>
-  <div class="wrap">
-    <span>FOAR: interfaces as state machines.</span>
-    <span><a href="docs/">Docs</a> · <a href="playground/">Playground</a> · <a href="https://github.com/josmanvis/FOAR" rel="noopener">GitHub</a></span>
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <div class="footer-brand">
+      <img src="favicon.svg" alt="" width="22" height="22">
+      <span>FOAR — Interfaces as state machines. MIT License.</span>
+    </div>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="docs/">Guide</a>
+      <a href="docs/language.html">Language</a>
+      <a href="docs/tooling.html">Tooling</a>
+      <a href="docs/why.html">Why FOAR</a>
+      <a href="playground/">Playground</a>
+      <a href="https://github.com/josmanvis/FOAR" rel="noopener">GitHub</a>
+    </nav>
   </div>
 </footer>
 
 <script type="module">
   import { highlightFoar } from './playground/language/highlight.js';
-  for (const el of document.querySelectorAll('code.foar')) el.innerHTML = highlightFoar(el.textContent);
+  for (const el of document.querySelectorAll('code.foar')) {
+    el.innerHTML = highlightFoar(el.textContent);
+  }
 </script>
+<script type="module" src="site.js"></script>
 </body>
 </html>
