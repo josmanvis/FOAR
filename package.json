@@ -5,7 +5,12 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "dev": "cargo build --release && node server.js",
+    "build": "cargo build --release",
+    "build:wasm": "cargo build --release --lib --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/foar.wasm web/foar.wasm",
+    "test": "cargo test --release && cargo build --release && node --test test/runtime.test.js",
+    "bench": "cargo build --release && node bench/bench.js"
   },
   "keywords": [],
   "author": "",
@@ -16,6 +21,7 @@
     "peggy": "^5.1.0",
     "ts-node": "^10.9.2",
     "ts-pegjs": "^4.2.2",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "happy-dom": "^15.11.7"
   }
 }

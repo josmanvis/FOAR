@@ -1,8 +1,27 @@
 [package]
-name = "FOAR"
-version = "0.1.0"
-edition = "2024"
+name = "foar"
+version = "0.2.0"
+edition = "2021"
+description = "FOAR state-machine UI language compiler (native CLI + WebAssembly)"
+
+[lib]
+name = "foar"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "foar"
+path = "src/main.rs"
 
 [dependencies]
-chumsky = "0.13.0"
-logos = "0.16.1"
+logos = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+regex = { version = "1", default-features = false, features = ["std"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

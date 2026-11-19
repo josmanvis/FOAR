@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FOAR Playground — State-Machine UI Language</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-logo">⚡</div>
+      <div>
+        <div class="brand-title">FOAR Playground</div>
+        <div class="brand-subtitle">Topological State-Machine UI Compiler &amp; Browser Runtime</div>
+      </div>
+    </div>
+
+    <div class="topbar-controls">
+      <div class="control-group">
+        <label for="example-select">Example:</label>
+        <select id="example-select">
+          <option value="TodoApp.foar">TodoApp.foar (Sub-views &amp; Item State Machines)</option>
+          <option value="Counter.foar">Counter.foar (Async Counter State Machine)</option>
+        </select>
+      </div>
+
+      <label class="toggle-pill" title="Show live state machine badges on rendered DOM views">
+        <input type="checkbox" id="toggle-badges" checked />
+        <span>Topology Badges</span>
+      </label>
+
+      <button id="btn-reset" class="btn-secondary" title="Reset view state and stores">
+        ↺ Reset State
+      </button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <!-- Left Pane: .foar Code Editor -->
+    <section class="pane editor-pane">
+      <div class="pane-header">
+        <div class="pane-title">
+          <span class="file-icon">📄</span>
+          <span id="current-filename">examples/TodoApp.foar</span>
+        </div>
+        <div id="compiler-status" class="status-pill status-ok">
+          ● Compiled
+        </div>
+      </div>
+
+      <div class="editor-container">
+        <div id="line-numbers" class="line-numbers">1</div>
+        <textarea
+          id="code-editor"
+          class="code-editor"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="off"
+        ></textarea>
+      </div>
+
+      <div id="error-banner" class="error-banner hidden"></div>
+    </section>
+
+    <!-- Right Pane: Live DOM Preview + State Machine Visualizer & Compiler Output -->
+    <section class="pane right-column">
+      <!-- Top-Right: Live Rendered UI -->
+      <div class="preview-section">
+        <div class="pane-header">
+          <div class="pane-title">
+            <span>🌐 Live Browser DOM Preview</span>
+          </div>
+          <div id="active-states-summary" class="active-states-summary"></div>
+        </div>
+
+        <div class="preview-stage">
+          <div id="f4-mount" class="f4-mount show-badges"></div>
+        </div>
+      </div>
+
+      <!-- Bottom-Right: State Machine Graph, Live Stores, Compiled JS, AST -->
+      <div class="inspector-section">
+        <div class="pane-header inspector-tabs-header">
+          <div class="tabs">
+            <button class="tab-btn active" data-tab="tab-machines">
+              🔀 State Machine &amp; Store Inspector
+            </button>
+            <button class="tab-btn" data-tab="tab-js">
+              ⚙️ Compiled JS
+            </button>
+            <button class="tab-btn" data-tab="tab-ast">
+              🌳 AST
+            </button>
+          </div>
+          <button id="btn-clear-log" class="btn-tiny">Clear Log</button>
+        </div>
+
+        <div class="inspector-body">
+          <!-- Tab 1: State Machine & Store Inspector -->
+          <div id="tab-machines" class="tab-panel active">
+            <div class="machines-layout">
+              <div class="machines-graph-col">
+                <div class="subpanel-title">Topological State Machines (Click a state node to force transition)</div>
+                <div id="machines-visualizer" class="machines-visualizer"></div>
+              </div>
+              <div class="machines-state-col">
+                <div class="subpanel-title">Live Mounted View Stores</div>
+                <div id="stores-inspector" class="stores-inspector"></div>
+                <div class="subpanel-title" style="margin-top: 10px;">Effect &amp; Transition Trace</div>
+                <div id="event-log" class="event-log"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 2: Compiled JS -->
+          <div id="tab-js" class="tab-panel">
+            <pre id="compiled-js-output" class="code-output"></pre>
+          </div>
+
+          <!-- Tab 3: AST -->
+          <div id="tab-ast" class="tab-panel">
+            <pre id="ast-output" class="code-output"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/playground.js"></script>
+</body>
+</html>
