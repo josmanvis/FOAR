@@ -27,17 +27,19 @@ export const ICONS = {
   preview: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.2"/><rect class="fill" x="9.6" y="3.1" width="4.3" height="5.4" fill="currentColor"/><path d="M9.5 2.5v11M9.5 8.5h5" stroke="currentColor" stroke-width="1.2"/></svg>',
   tools: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.2"/><rect class="fill" x="9.6" y="8.6" width="4.3" height="4.3" fill="currentColor"/><path d="M9.5 2.5v11M9.5 8.5h5" stroke="currentColor" stroke-width="1.2"/></svg>',
   zen: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
+  exitZen: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2v4H2M10 2v4h4M10 14v-4h4M6 14v-4H2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
 };
 
 export function createLayout({ ws, search, palette }) {
   let state = { ...DEFAULTS };
   let problems = { errors: 0, warnings: 0 };
   try {
-    state = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') };
+    // Never restore zen: true on a fresh page load so users cannot stay trapped across reloads.
+    state = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}'), zen: false };
   } catch {}
   const save = () => {
     try {
-      localStorage.setItem(KEY, JSON.stringify(state));
+      localStorage.setItem(KEY, JSON.stringify({ ...state, zen: false }));
     } catch {}
   };
 
@@ -93,6 +95,23 @@ export function createLayout({ ws, search, palette }) {
   const tPreview = toggleBtn('preview', 'Toggle preview', 'Ctrl+Alt+B');
   const tTools = toggleBtn('tools', 'Toggle tools', 'Ctrl+J');
   const tZen = h('button', { class: 'layout-btn', type: 'button', title: 'Zen mode (Ctrl+K Z)', 'aria-label': 'Zen mode', 'aria-pressed': 'false', html: ICONS.zen, onclick: () => toggle('zen') });
+  const zenExitBtn = h(
+    'button',
+    {
+      class: 'zen-exit-btn',
+      type: 'button',
+      title: 'Exit Zen Mode (Esc or Ctrl+K Z)',
+      'aria-label': 'Exit Zen Mode',
+      hidden: true,
+      onclick: () => toggle('zen', false),
+    },
+    h('span', { class: 'zen-exit-ico', html: ICONS.exitZen }),
+    h('span', { text: 'Exit Zen Mode' }),
+    h('kbd', { text: 'Esc' })
+  );
+  const editorHeader = editorPane.querySelector('.pane-header');
+  if (editorHeader) editorHeader.append(zenExitBtn);
+  else document.body.append(zenExitBtn);
   const center = h(
     'button',
     { class: 'command-center', type: 'button', 'aria-label': 'Search files (Ctrl+P)', onclick: () => palette.open('') },
@@ -110,6 +129,7 @@ export function createLayout({ ws, search, palette }) {
     project: h('button', { class: 'sb-item', type: 'button', title: 'Switch project', onclick: () => palette.run('project.open') }),
     save: h('span', { class: 'sb-item' }),
     errors: h('button', { class: 'sb-item', type: 'button', title: 'Problems (Ctrl+Shift+M) · next: F8', onclick: () => palette.run('view.problems') }),
+    zen: h('button', { class: 'sb-item sb-zen', type: 'button', title: 'Exit Zen Mode (Esc)', text: 'Exit Zen Mode (Esc)', hidden: true, onclick: () => toggle('zen', false) }),
     pos: h('button', { class: 'sb-item', type: 'button', title: 'Go to line (Ctrl+G)', onclick: () => palette.open(':') }),
     indent: h('span', { class: 'sb-item', text: 'Spaces: 4' }),
     lang: h('span', { class: 'sb-item', text: 'FOAR' }),
@@ -121,6 +141,7 @@ export function createLayout({ ws, search, palette }) {
     sb.project,
     sb.save,
     sb.errors,
+    sb.zen,
     h('span', { class: 'spacer' }),
     sb.pos,
     sb.indent,
@@ -128,6 +149,17 @@ export function createLayout({ ws, search, palette }) {
     sb.compile
   );
   document.body.append(statusbar);
+
+  // Esc exits Zen Mode when no overlay (command palette, find bar, autocomplete, rename, menu) is visible.
+  document.addEventListener('keydown', (e) => {
+    if (!state.zen || e.key !== 'Escape' || e.defaultPrevented) return;
+    const overlays = document.querySelectorAll('.palette-scrim, .findbar, .ls-suggest, .lang-rename, .ws-menu');
+    for (const el of overlays) {
+      if (!el.hidden && !el.classList.contains('hidden') && getComputedStyle(el).display !== 'none') return;
+    }
+    e.preventDefault();
+    toggle('zen', false);
+  });
 
   function updateStatus() {
     sb.project.textContent = `⎇ ${ws.name || 'project'}`;
@@ -188,6 +220,8 @@ export function createLayout({ ws, search, palette }) {
     tPreview.setAttribute('aria-pressed', String(state.preview));
     tTools.setAttribute('aria-pressed', String(state.tools));
     tZen.setAttribute('aria-pressed', String(zen));
+    zenExitBtn.hidden = !zen;
+    sb.zen.hidden = !zen;
     for (const [el, v] of [[sideSplit, state.sidebarW], [mainSplit, state.editorW], [rightSplit, state.previewH]]) el.setAttribute('aria-valuenow', String(Math.round(v)));
     save();
   }
