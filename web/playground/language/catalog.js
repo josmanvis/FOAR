@@ -209,7 +209,7 @@ export const SNIPPETS = {
     ['view (with params)', 'view ${1:Name}(${2:label}: ${3:String}) {\n    state ${4:Idle} {\n        render {\n            $0\n        }\n    }\n}', 'A view that takes parameters'],
     ['data', 'data ${1:Name} {\n    id: String,\n    $0\n}', 'A data type'],
     ['style', 'style ${1:Name} {\n    $0\n}', 'A named style'],
-    ['theme', 'theme {\n    --${1:accent}: ${2:#4f46e5};\n    @dark { --$1: ${3:#818cf8}; }\n}', 'Design tokens with a dark variant'],
+    ['theme', 'theme {\n    --${1:accent}: ${2:#2c3b34};\n    @dark { --$1: ${3:#9fd3b5}; }\n}', 'Design tokens with a dark variant'],
     ['import', 'import "${1:components/Name}"', 'Make another file part of the program'],
     ['@keyframes', '@keyframes ${1:name} {\n    from { $2 }\n    to { $0 }\n}', 'A CSS animation'],
     ['css', 'css {\n    $0\n}', 'Raw CSS'],

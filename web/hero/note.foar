@@ -1,0 +1,39 @@
+// The panel at the top of the FOAR website is this component, compiled by
+// the FOAR compiler and running on the FOAR runtime. The page's script only
+// draws the track diagram from the runtime's transition events.
+view Note {
+    store text: String = "Write down the states. Skip the flags.";
+    store draft: String = "";
+
+    state Viewing {
+        render {
+            Text(text)
+            Button("Edit") -> on_click(Edit)
+        }
+        effect Edit() {
+            draft = text;
+            transition Editing;
+        }
+    }
+
+    state Editing {
+        render {
+            Input(value: draft, autofocus: true, label: "Note text") -> on_input(Type) -> on_enter(Save)
+            Row {
+                Button("Save") -> on_click(Save)
+                Button("Cancel") -> on_click(Cancel)
+            }
+        }
+        effect Type(t: String) { draft = t; }
+        effect Save() {
+            text = draft;
+            save_note(text) -> transition(Saving);
+        }
+        effect Cancel() { transition Viewing; }
+    }
+
+    state Saving {
+        render { Spinner("Saving…") }
+        on_exit { transition Viewing; }
+    }
+}

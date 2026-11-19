@@ -8,6 +8,30 @@ import { Marked } from 'marked';
 import { highlightFoar } from '../web/playground/language/highlight.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
+
+/**
+ * The landing page's hero panel is a real FOAR component (web/hero/note.foar),
+ * compiled here with the WebAssembly compiler into program JSON that the page
+ * mounts with the runtime. Returns the JSON text.
+ */
+let wasmExports = null;
+export async function compileHero() {
+  if (!wasmExports) {
+    const { instance } = await WebAssembly.instantiate(fs.readFileSync(path.join(ROOT, 'web', 'foar.wasm')), {});
+    wasmExports = instance.exports;
+  }
+  const x = wasmExports;
+  const bytes = new TextEncoder().encode(fs.readFileSync(path.join(ROOT, 'web', 'hero', 'note.foar'), 'utf8'));
+  const ptr = x.f4_alloc(bytes.length);
+  new Uint8Array(x.memory.buffer, ptr, bytes.length).set(bytes);
+  const out = x.f4_compile(ptr, bytes.length);
+  x.f4_free(ptr, bytes.length);
+  const len = new DataView(x.memory.buffer).getUint32(out, true);
+  const json = new TextDecoder().decode(new Uint8Array(x.memory.buffer, out + 4, len).slice());
+  x.f4_free(out, len + 4);
+  if (JSON.parse(json).error) throw new Error(`web/hero/note.foar: ${json}`);
+  return json;
+}
 const DOCS = path.join(ROOT, 'docs');
 const EXAMPLES = path.join(ROOT, 'examples');
 
@@ -71,7 +95,8 @@ export function renderDoc(name) {
   const { html, toc } = markdown(fs.readFileSync(path.join(DOCS, page.file), 'utf8'));
   const title = /<h1[^>]*>(?:<a[^>]*>#<\/a>)?(.*?)<\/h1>/.exec(html)?.[1]?.replace(/<[^>]+>/g, '') ?? page.title;
   const nav = PAGES.map((p) => `<a href="${p.name}.html"${p.name === name ? ' aria-current="page"' : ''}>${esc(p.title)}</a>`).join('');
-  const onPage = toc.map((t) => `<a class="toc-${t.depth}" href="#${t.id}">${esc(t.text)}</a>`).join('');
+  const unescape = (t) => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  const onPage = toc.map((t) => `<a class="toc-${t.depth}" href="#${t.id}">${esc(unescape(t.text))}</a>`).join('');
 
   const pager = (prev || next)
     ? `<nav class="docs-pager" aria-label="Page navigation">
@@ -85,12 +110,12 @@ export function renderDoc(name) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${esc(title)} — FOAR</title>
+  <title>${esc(title)} · FOAR docs</title>
   <meta name="description" content="FOAR documentation: a UI programming language where every component is an explicit state machine.">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Overpass:ital,wght@0,300..900;1,300..900&family=Overpass+Mono:wght@400..700&display=swap" rel="stylesheet">
   <script>
     try {
       const t = localStorage.getItem('foar-theme');
@@ -120,15 +145,9 @@ export function renderDoc(name) {
 
 <div class="docs-layout">
   <aside class="docs-side" aria-label="Documentation">
-    <p class="docs-group-label">Documentation</p>
-    <nav class="docs-pages">${nav}</nav>
+    <nav class="docs-pages" aria-label="Documentation pages">${nav}</nav>
     ${onPage ? `<div class="docs-toc-wrap"><p class="docs-group-label">On this page</p><nav class="docs-toc" aria-label="On this page">${onPage}</nav></div>` : ''}
-    <div class="docs-side-cta">
-      <a href="../playground/">
-        Open the playground
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
-      </a>
-    </div>
+    <p class="docs-side-cta"><a href="../playground/">Try it in the playground</a></p>
   </aside>
 
   <main class="prose" id="main">
@@ -142,7 +161,7 @@ ${pager}
   <div class="wrap footer-inner">
     <div class="footer-brand">
       <img src="../favicon.svg" alt="" width="22" height="22">
-      <span>FOAR — Interfaces as state machines. MIT License.</span>
+      <span>FOAR is open source under the MIT license.</span>
     </div>
     <nav class="footer-links" aria-label="Footer">
       <a href="./">Guide</a>
@@ -189,7 +208,7 @@ export function examplesIndex() {
 }
 
 /** Writes the static site into `out`. */
-export function buildSite(out) {
+export async function buildSite(out) {
   fs.rmSync(out, { recursive: true, force: true });
   fs.mkdirSync(out, { recursive: true });
   const web = path.join(ROOT, 'web');
@@ -207,12 +226,13 @@ export function buildSite(out) {
       if (fs.existsSync(from)) fs.cpSync(from, path.join(out, 'examples', e.name, asset), { recursive: true });
     }
   }
+  fs.writeFileSync(path.join(out, 'hero', 'note.json'), await compileHero());
   fs.writeFileSync(path.join(out, '.nojekyll'), '');
   return out;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const out = path.resolve(process.argv[2] ?? path.join(ROOT, '_site'));
-  buildSite(out);
+  await buildSite(out);
   console.log(`✓ site built in ${path.relative(process.cwd(), out) || '.'}`);
 }

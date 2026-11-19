@@ -1,24 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <defs>
-    <linearGradient id="bg" x1="8" y1="4" x2="56" y2="62" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#134272"/>
-      <stop offset="1" stop-color="#091D34"/>
-    </linearGradient>
-    <linearGradient id="pillar" x1="36" y1="13" x2="45" y2="51" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#F7B359"/>
-      <stop offset="1" stop-color="#DC7116"/>
-    </linearGradient>
-    <linearGradient id="fold" x1="40.5" y1="43.5" x2="40.5" y2="48.5" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#091D34" stop-opacity="0.45"/>
-      <stop offset="1" stop-color="#091D34" stop-opacity="0"/>
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
-  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="13.25" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="1.5"/>
-  <!-- Vertical state monolith -->
-  <path d="M36 13H45V51H36V13Z" fill="url(#pillar)"/>
-  <!-- Fold shadow cast by the crossing rail -->
-  <rect x="36" y="43.5" width="9" height="5" fill="url(#fold)"/>
-  <!-- Constant-weight folded geometric ribbon forming 4 -->
-  <path d="M36 13L13 38V43.5H51V35H27.3L36 25.6V13Z" fill="#FFFFFF"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- FOAR: a railway turnout. A main line, a route diverging from it, and the
+       lamp of the route that is set: one state, one transition, nothing else. -->
+  <rect width="64" height="64" rx="12" fill="#2C3B34"/>
+  <path d="M22 57V9" stroke="#F3F4F1" stroke-width="6.5" stroke-linecap="round" fill="none"/>
+  <path d="M22 44c0-11 20-13 20-26" stroke="#F3F4F1" stroke-width="6.5" stroke-linecap="round" fill="none"/>
+  <circle cx="42" cy="13" r="7.5" fill="#F2B33D"/>
 </svg>

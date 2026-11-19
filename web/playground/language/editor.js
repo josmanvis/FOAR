@@ -4,6 +4,7 @@
 // definition (F12, Ctrl+click), references (Shift+F12), format (Shift+Alt+F).
 import { createLanguageService, formatFoar } from './service.js';
 import { fuzzy } from '../workbench/palette.js';
+import { formatFoarSource } from '../../foar-compiler.js';
 
 const KIND_ICON = {
   keyword: ['⌘', 'k-keyword'], element: ['◻', 'k-element'], view: ['◇', 'k-view'], property: ['¶', 'k-prop'], value: ['=', 'k-value'],
@@ -311,11 +312,24 @@ export function createLanguageFeatures({ ws, palette, notify }) {
     const out = [];
     const err = ws.error;
     const files = ws.project().files;
+    let compilerAt = null;
     if (err?.file && files[err.file] != null) {
-      const ls0 = files[err.file].split('\n').slice(0, err.line - 1).join('\n').length + (err.line > 1 ? 1 : 0);
-      out.push({ path: err.file, s: ls0 + err.col - 1, e: ls0 + err.col, severity: 'error', message: err.message, source: 'compiler' });
+      const src = files[err.file];
+      const ls0 = src.split('\n').slice(0, err.line - 1).join('\n').length + (err.line > 1 ? 1 : 0);
+      const s0 = ls0 + err.col - 1;
+      // the compiler points at a character: underline (and select) the whole word there
+      let e0 = s0 + 1;
+      while (e0 < src.length && /[\w$]/.test(src[e0]) && /[\w$]/.test(src[s0])) e0++;
+      out.push({ path: err.file, s: s0, e: e0, severity: 'error', message: err.message, source: 'compiler' });
+      compilerAt = `${err.file}:${s0}`;
     }
-    for (const [path, list] of diagnostics) for (const d of list) out.push({ path, ...d });
+    for (const [path, list] of diagnostics) {
+      for (const d of list) {
+        // the compiler already reports this spot: don't list it twice
+        if (`${path}:${d.s}` === compilerAt) continue;
+        out.push({ path, ...d });
+      }
+    }
     const text = (p) => files[p] ?? '';
     for (const p of out) p.line = text(p.path).slice(0, p.s).split('\n').length;
     return out.sort((a, b) => a.path.localeCompare(b.path) || a.s - b.s);
@@ -482,7 +496,8 @@ export function createLanguageFeatures({ ws, palette, notify }) {
       if (!ae) return;
       const r = ae.ta.getBoundingClientRect();
       const c = ae.ed.coords(ae.ta.selectionStart);
-      const visible = c.top >= r.top - 2 && c.bottom <= r.bottom + 2 && c.left >= r.left && c.left <= r.right;
+      // only vertical: popups are clamped to the window horizontally anyway
+      const visible = c.top >= r.top - 2 && c.bottom <= r.bottom + 2;
       if (!visible) {
         closeSuggest();
         hide(sigEl);
@@ -569,11 +584,13 @@ export function createLanguageFeatures({ ws, palette, notify }) {
     });
   }
 
-  function formatDocument() {
+  async function formatDocument() {
     const ae = active();
     if (!ae) return;
     const before = ae.ta.value;
-    const after = formatFoar(before);
+    // the compiler's formatter (identical to `foar fmt`); the JS port only as a fallback
+    const after = (await formatFoarSource(before).catch(() => null)) ?? formatFoar(before);
+    if (ae.ta.value !== before) return; // edited while formatting
     if (after === before) return notify?.('Already formatted');
     const line = before.slice(0, ae.ta.selectionStart).split('\n').length;
     ws.applyEdit(ae.path, after);

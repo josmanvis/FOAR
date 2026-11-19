@@ -94,7 +94,7 @@ const viewNameFor = (path) => {
 
 const template = (path) => {
   const name = viewNameFor(path);
-  return `// ${name}\n\nview ${name}(label: String) {\n    state Idle {\n        render {\n            Text(label).style({\n                padding: 8px 12px;\n                border-radius: 8px;\n                background: #eef2ff;\n            })\n        }\n    }\n}\n`;
+  return `// ${name}\n\nview ${name}(label: String) {\n    state Idle {\n        render {\n            Text(label).style({\n                padding: 8px 12px;\n                border-radius: 8px;\n                background: #e9ebe6;\n            })\n        }\n    }\n}\n`;
 };
 
 const VALID = /^[A-Za-z0-9_][A-Za-z0-9_. -]*(?:\/[A-Za-z0-9_][A-Za-z0-9_. -]*)*\.foar$/;

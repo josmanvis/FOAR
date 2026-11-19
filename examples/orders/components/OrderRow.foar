@@ -17,7 +17,7 @@ view OrderRow(order: Order) {
     let tone = match order.status {
         Status.Pending => "#9a6700",
         Status.Paid => "#0969da",
-        Status.Shipped => "#8250df",
+        Status.Shipped => "#1f6f8b",
         Status.Delivered => "#1a7f37",
         Status.Cancelled => "#cf222e",
     };

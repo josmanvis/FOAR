@@ -75,6 +75,13 @@ const server = http.createServer((req, res) => {
   if (pathname === '/' && (url.searchParams.has('src') || url.searchParams.has('example'))) return send(res, 302, 'text/plain', '', { Location: `/playground/${url.search}` });
   if (pathname === '/playground' || pathname === '/docs') return send(res, 301, 'text/plain', '', { Location: `${pathname}/${url.search}` });
   if (pathname === '/examples/index.json') return send(res, 200, MIME_TYPES['.json'], JSON.stringify(site.examplesIndex()));
+  if (pathname === '/hero/note.json') {
+    site.compileHero().then(
+      (json) => send(res, 200, MIME_TYPES['.json'], json),
+      (err) => send(res, 500, 'text/plain', String(err.message ?? err)),
+    );
+    return;
+  }
   const doc = /^\/docs\/(?:([\w-]+)\.html)?$/.exec(pathname);
   if (doc) {
     const html = site.renderDoc(doc[1] ?? 'index');

@@ -2,6 +2,17 @@
 
 All notable changes to FOAR are documented in this file.
 
+## Unreleased
+
+### Website & identity
+- New identity built on railway interlocking (a signal box makes conflicting routes impossible to set, as FOAR does for UI states): a turnout logo, Overpass type, a green-grey panel colour, one amber lamp for "the current state", signal red only for compiler errors. No purple, no gradients.
+- The landing page's hero is now a real FOAR component (`web/hero/note.foar`), compiled at build time with the WebAssembly compiler and mounted on the runtime; a track diagram lights the current state and the transition that just ran.
+- Landing, docs and playground restyled to match; docs table of contents no longer double-escapes `&`.
+
+### Tooling
+- `foar fmt` indents continuation lines (`.style(…)`, `-> on_click(…)`) and multi-line call arguments instead of flattening them, and tracks `(` as well as `{`/`[`. The playground's Format Document now uses the same formatter through WebAssembly (`f4_format`).
+- Playground: compiler errors underline the whole word, the Problems list no longer shows a compiler error twice, and suggestions stay open for long lines.
+
 ## [0.2.0] — 2026-11-19
 
 ### Language & Compiler (Rust native + WebAssembly)

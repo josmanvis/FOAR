@@ -85,6 +85,25 @@ export async function compileFoarProject(project, { wasmUrl = DEFAULT_WASM, apiU
   return result;
 }
 
+/**
+ * Formats .foar source with the compiler's formatter (the same rules as
+ * `foar fmt`), or resolves to null when the WebAssembly compiler isn't available.
+ */
+export async function formatFoarSource(source, { wasmUrl = DEFAULT_WASM } = {}) {
+  if (!wasmPromise) wasmPromise = loadWasm(wasmUrl).catch(() => null);
+  const wasm = await wasmPromise;
+  if (!wasm?.f4_format) return null;
+  const bytes = new TextEncoder().encode(source);
+  const ptr = wasm.f4_alloc(bytes.length);
+  new Uint8Array(wasm.memory.buffer, ptr, bytes.length).set(bytes);
+  const out = wasm.f4_format(ptr, bytes.length);
+  wasm.f4_free(ptr, bytes.length);
+  const len = new DataView(wasm.memory.buffer).getUint32(out, true);
+  const text = new TextDecoder().decode(new Uint8Array(wasm.memory.buffer, out + 4, len).slice());
+  wasm.f4_free(out, len + 4);
+  return text;
+}
+
 export function extractStateMachines(ast) {
   return ast.views.map((view) => {
     const states = view.states.map((s) => s.name);

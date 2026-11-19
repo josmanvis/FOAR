@@ -38,3 +38,11 @@ pub extern "C" fn f4_compile_project(ptr: *const u8, len: usize) -> *mut u8 {
     let input = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) };
     into_buffer(crate::project::compile_project_json(input))
 }
+
+/// Formats `.foar` source (crate::fmt, the same rules as `foar fmt`).
+/// Same buffer protocol as `f4_compile`; the buffer holds the formatted text.
+#[no_mangle]
+pub extern "C" fn f4_format(ptr: *const u8, len: usize) -> *mut u8 {
+    let src = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) };
+    into_buffer(crate::fmt::format_source(src))
+}

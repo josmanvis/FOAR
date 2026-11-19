@@ -6,7 +6,7 @@ view Greeting(label: String) {
             Text(label).style({
                 font-size: 22px;
                 font-weight: 700;
-                color: #4f46e5;
+                color: #1f5e46;
             })
         }
     }
