@@ -264,13 +264,19 @@ async function loadExample(filename) {
   }
 }
 
+// "src:<url>" options open a running app's source (remote mode); the others are
+// bundled examples. Switching between the two modes reloads the page.
+const NOTES_SRC = 'http://localhost:4400/app.foar';
 exampleSelect.addEventListener('change', () => {
-  if (!exampleSelect.value) return;
-  if (remoteSrc) {
-    location.search = ''; // leave remote mode for the bundled examples
-    return;
+  const v = exampleSelect.value;
+  if (!v) return;
+  if (v.startsWith('src:')) {
+    location.search = `?src=${encodeURIComponent(v.slice(4))}`;
+  } else if (remoteSrc) {
+    location.search = `?example=${encodeURIComponent(v)}`; // leave remote mode
+  } else {
+    loadExample(v);
   }
-  loadExample(exampleSelect.value);
 });
 
 codeEditor.addEventListener('input', () => {
@@ -340,12 +346,34 @@ async function loadRemote(url) {
 
 // Initial boot
 if (remoteSrc) {
-  const opt = document.createElement('option');
-  opt.value = '';
-  opt.textContent = remoteSrc.split('/').pop() + ' (remote)';
-  exampleSelect.prepend(opt);
-  exampleSelect.value = '';
+  const listed = [...exampleSelect.options].find((o) => o.value === `src:${remoteSrc}`);
+  if (listed) {
+    exampleSelect.value = listed.value;
+  } else {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = remoteSrc.split('/').pop() + ' (remote)';
+    exampleSelect.prepend(opt);
+    exampleSelect.value = '';
+  }
   loadRemote(remoteSrc);
 } else {
-  loadExample(exampleSelect.value);
+  const example = params.get('example');
+  const bundled = [...exampleSelect.options].filter((o) => !o.value.startsWith('src:')).map((o) => o.value);
+  if (example && bundled.includes(example)) {
+    exampleSelect.value = example;
+    loadExample(example);
+  } else {
+    // Plain visit: open the Notes app when its dev server is running,
+    // otherwise the first bundled example.
+    fetch(NOTES_SRC, { method: 'HEAD', signal: AbortSignal.timeout(800) })
+      .then((r) => {
+        if (!r.ok) throw new Error();
+        location.replace(`?src=${encodeURIComponent(NOTES_SRC)}`);
+      })
+      .catch(() => {
+        exampleSelect.value = bundled[0];
+        loadExample(bundled[0]);
+      });
+  }
 }

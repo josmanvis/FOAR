@@ -272,5 +272,9 @@ is shown running from its origin (or `&app=<url>`), and if that app posts its
 runtime events to a localhost parent (as notes-on-foar does), the state
 machine and store inspector follow it live.
 
+The Example menu lists Notes on FOAR (`localhost:4400`) under Apps, and a plain
+visit to the playground opens it when its dev server is running; otherwise the
+bundled examples load (`?example=Counter.foar` picks one).
+
 Without `web/foar.wasm` the playground compiles through the dev server, which
 runs the native `foar` binary. Both paths use the same Rust compiler.
