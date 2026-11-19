@@ -14,11 +14,16 @@
     "build:site": "node scripts/site.mjs _site"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Jose Viscasillas",
+  "license": "MIT",
   "packageManager": "pnpm@10.33.0",
   "devDependencies": {
     "happy-dom": "^15.11.7",
     "marked": "15.0.12"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/josmanvis/FOAR.git"
+  },
+  "homepage": "https://josmanvis.github.io/FOAR/"
 }

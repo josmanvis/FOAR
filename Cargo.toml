@@ -3,6 +3,8 @@ name = "foar"
 version = "0.2.0"
 edition = "2021"
 description = "FOAR state-machine UI language compiler (native CLI + WebAssembly)"
+license = "MIT"
+repository = "https://github.com/josmanvis/FOAR"
 
 [lib]
 name = "foar"

@@ -140,3 +140,7 @@ pnpm build:site    # the static website in _site/ (deployed to GitHub Pages)
 FOAR is young: no router, no server-side rendering and no package ecosystem
 yet, and effect code compiles to JavaScript without a full type checker. See
 [what FOAR is not (yet)](docs/why.md#what-foar-is-not-yet).
+
+## License
+
+[MIT](LICENSE)
