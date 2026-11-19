@@ -26,26 +26,32 @@
   <!-- hero -->
   <section class="hero">
     <div class="wrap">
-      <span class="eyebrow">A UI language · Rust → WebAssembly compiler</span>
-      <h1>Interfaces are state machines. <span class="grad">Write them that way.</span></h1>
-      <p class="lede">
-        In FOAR every component declares its states, what each state shows, and which events
-        it handles. No boolean flags that disagree, no dependency arrays, no forgotten
-        <code>switch</code> cases: the compiler checks them. It compiles to a tiny runtime that
-        updates the DOM in place.
-      </p>
-      <div class="cta">
-        <a class="btn primary" href="playground/">Open the playground →</a>
-        <a class="btn ghost" href="docs/">Read the guide</a>
-        <a class="btn ghost" href="https://github.com/josmanvis/FOAR" rel="noopener">GitHub</a>
+      <div class="hero-copy">
+        <span class="eyebrow">A UI language · Rust → WebAssembly</span>
+        <h1>Interfaces are state machines. <span class="grad">Write them that way.</span></h1>
+        <p class="lede">
+          Declare each view's states, what it renders, and how it responds. FOAR catches
+          impossible transitions and missing cases, then compiles to a small runtime that
+          updates the DOM in place.
+        </p>
+        <div class="cta">
+          <a class="btn primary" href="playground/">Try FOAR in the playground</a>
+          <a class="btn ghost" href="docs/">Read the guide</a>
+        </div>
       </div>
-      <ul class="facts">
-        <li>13 KB runtime (gzip), no dependencies</li>
-        <li>Rust compiler: native CLI and 210 KB WebAssembly</li>
-        <li>No virtual DOM</li>
-        <li>In-browser IDE with a full language service</li>
-      </ul>
+      <div class="hero-demo" aria-label="Example FOAR state machine for editing and saving a note">
+        <div class="demo-top"><span>NOTE.FOAR</span><span>VIEW · NOTE</span></div>
+        <div class="demo-code"><span class="demo-key">state</span> <span class="demo-state">Editing</span> {<br>
+          &nbsp;&nbsp;render { <span class="demo-node">Editor</span>(text) }<br>
+          &nbsp;&nbsp;effect <span class="demo-event">Save</span>() {<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;save_note(text) -&gt; <span class="demo-key">transition</span> <span class="demo-state">Saving</span>;<br>
+          &nbsp;&nbsp;}<br>
+        }</div>
+        <div class="demo-transition"><span class="state-chip active">Editing</span><span class="transition-line">Save →</span><span class="state-chip">Saving</span></div>
+        <div class="demo-foot"><span><i></i> Compiler checked</span><span>3 states · 2 transitions</span></div>
+      </div>
     </div>
+    <div class="wrap hero-facts"><span>13 KB runtime · gzip</span><span>Rust compiler · native + WASM</span><span>No virtual DOM</span><span>Browser IDE included</span></div>
   </section>
 
   <!-- states -->
