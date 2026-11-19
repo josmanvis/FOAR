@@ -18,7 +18,7 @@ FOAR is a language for user interfaces. Every component declares its
 compiler**, native or WebAssembly, turns it into a 13 KB runtime that updates
 the DOM in place, with no virtual DOM.
 
-```foar
+```rust
 enum Status { Draft, Review, Published }
 
 view Article {

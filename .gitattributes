@@ -1,0 +1,3 @@
+# Give .foar files syntax highlighting in GitHub's file viewer until a
+# dedicated FOAR grammar is registered in github-linguist/linguist.
+*.foar linguist-language=Rust
