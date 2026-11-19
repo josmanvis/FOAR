@@ -365,3 +365,155 @@ test('props and stores shadow host functions with the same name', async () => {
   assert.deepEqual(texts, ['from prop', 'from store', 'host x']);
   rt.destroy();
 });
+
+test('i18n: t() with placeholders, plurals, fallback, and live setLocale', async () => {
+  const src = `
+    view Root {
+      store n: i32 = 1;
+      state S {
+        render {
+          Text(t("hello", { name: "Ana" }))
+          Text(t("notes", { count: n }))
+          Text(t("only.en"))
+          Text(t(t_key("add")))
+          Button(t("add")) -> on_click(Add)
+        }
+        effect Add() { n = n + 1; }
+      }
+    }`;
+  const { window, container } = makeDom();
+  const messages = {
+    en: { hello: 'Hello, {name}!', notes: { zero: 'No notes', one: '{count} note', other: '{count} notes' }, 'only.en': 'English only', add: 'Add' },
+    es: { hello: '¡Hola, {name}!', notes: { one: '{count} nota', other: '{count} notas' }, add: 'Añadir' },
+  };
+  const rt = createFoarRuntime(parseFoar(src), container, { i18n: { locale: 'en', messages } });
+  const texts = () => q(container, '.f4-text, .f4-button').map((e) => e.textContent);
+  assert.deepEqual(texts(), ['Hello, Ana!', '1 note', 'English only', 'Add', 'Add']);
+  assert.equal(container.lang, 'en');
+  fire(window, q(container, '.f4-button')[0], 'click'); await tick();
+  assert.equal(texts()[1], '2 notes');
+  const button = q(container, '.f4-button')[0];
+  rt.setLocale('es');
+  assert.deepEqual(texts(), ['¡Hola, Ana!', '2 notas', 'English only', 'Añadir', 'Añadir']);
+  assert.equal(q(container, '.f4-button')[0], button, 'switching language patches in place');
+  assert.equal(container.lang, 'es');
+  rt.setLocale('ar');
+  assert.equal(container.dir, 'rtl');
+  rt.destroy();
+});
+
+test('accessibility: label/role/aria args, icon button names, keyboard-operable rows', async () => {
+  const src = `
+    view Root {
+      store open: bool = false;
+      store hits: i32 = 0;
+      state S {
+        render {
+          Button("⋯", title: "More") -> on_click(Toggle)
+          Row { Text("Row") } -> on_click(Hit)
+          Column { Text("x") }.style({ gap: 0; })
+          Text("list", role: "listbox", label: "Notes", aria: { expanded: open, activedescendant: open ? "a" : null })
+        }
+        effect Toggle() { open = !open; }
+        effect Hit() { hits = hits + 1; }
+      }
+    }`;
+  const { window, container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(src), container, {});
+  const btn = q(container, '.f4-button')[0];
+  assert.equal(btn.getAttribute('aria-label'), 'More');
+  const row = q(container, '.f4-row')[0];
+  assert.equal(row.getAttribute('role'), 'button');
+  assert.equal(row.tabIndex, 0);
+  assert.equal(q(container, '.f4-column')[0].hasAttribute('tabindex'), false, 'non-clickable stays out of tab order');
+  fire(window, row, 'keydown', { key: 'Enter' }); await tick();
+  fire(window, row, 'keydown', { key: ' ' }); await tick();
+  fire(window, row, 'keydown', { key: 'a' }); await tick();
+  assert.equal(rt.getSnapshot()[0].stores.hits, 2);
+  const lb = q(container, '[role=listbox]')[0];
+  assert.equal(lb.getAttribute('aria-label'), 'Notes');
+  assert.equal(lb.getAttribute('aria-expanded'), 'false');
+  assert.equal(lb.hasAttribute('aria-activedescendant'), false);
+  fire(window, btn, 'click'); await tick();
+  assert.equal(lb.getAttribute('aria-expanded'), 'true');
+  assert.equal(lb.getAttribute('aria-activedescendant'), 'a');
+  rt.destroy();
+});
+
+test('context menu effects receive the pointer position', async () => {
+  const src = `
+    view Root {
+      store at: any = null;
+      state S { render { Row { Text("r") } -> on_context_menu(Menu) } effect Menu(p: any) { at = p; } }
+    }`;
+  const { window, container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(src), container, {});
+  q(container, '.f4-row')[0].dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 45 }));
+  await tick();
+  assert.deepEqual(rt.getSnapshot()[0].stores.at, { x: 120, y: 45 });
+  rt.destroy();
+});
+
+test('drag and drop: drag payload reaches the drop target effect; classes while dragging', async () => {
+  const src = `
+    view Root {
+      store items: Vec<any> = [{ id: "a", name: "A" }, { id: "b", name: "B" }];
+      store moved: any = null;
+      state S {
+        render {
+          List(items) { it => Text(it.name, drag: it.id, drag_text: it.name) }
+          Column { Text("Trash") } -> on_drop(Dropped)
+        }
+        effect Dropped(id: any) { moved = id; }
+      }
+    }`;
+  const { window, container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(src), container, {});
+  const src0 = q(container, '[draggable=true]')[1];
+  assert.ok(src0, 'draggable element');
+  const target = q(container, '.f4-column')[0];
+  const data = {};
+  const dt = { setData: (k, v) => { data[k] = v; }, effectAllowed: '', dropEffect: '' };
+  const drag = (el, type) => {
+    const e = new window.Event(type, { bubbles: true, cancelable: true });
+    e.dataTransfer = dt;
+    el.dispatchEvent(e);
+    return e;
+  };
+  drag(src0, 'dragstart');
+  assert.equal(data['text/plain'], 'B');
+  assert.ok(src0.classList.contains('f4-drag-source'));
+  const over = drag(target.firstChild, 'dragover');
+  assert.equal(over.defaultPrevented, true, 'drop target accepts');
+  assert.ok(target.classList.contains('f4-drop-over'));
+  drag(target, 'drop');
+  await tick();
+  assert.equal(rt.getSnapshot()[0].stores.moved, 'b');
+  assert.equal(src0.classList.contains('f4-drag-source'), false);
+  assert.equal(target.classList.contains('f4-drop-over'), false);
+  // A drag from outside (files) is left alone.
+  const ext = drag(target, 'dragover');
+  assert.equal(ext.defaultPrevented, false);
+  rt.destroy();
+});
+
+test('List containers take role/label and events (context menu on the background)', async () => {
+  const src = `
+    view Root {
+      store items: Vec<any> = [{ id: "a" }];
+      store hit: any = null;
+      state S {
+        render { List(items, role: "listbox", label: "Things") { it => Text(it.id) } -> on_context_menu(Menu) }
+        effect Menu(p: any) { hit = p; }
+      }
+    }`;
+  const { window, container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(src), container, {});
+  const list = q(container, '.f4-list')[0];
+  assert.equal(list.getAttribute('role'), 'listbox');
+  assert.equal(list.getAttribute('aria-label'), 'Things');
+  list.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 6 }));
+  await tick();
+  assert.deepEqual(rt.getSnapshot()[0].stores.hit, { x: 5, y: 6 });
+  rt.destroy();
+});

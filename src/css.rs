@@ -15,6 +15,7 @@ pub enum Value {
 #[derive(Debug, Clone)]
 pub enum NestedKind {
     /// `@hover`, `@focus-within`, `@nth-child(2n)` ... -> `:hover` etc.
+    /// `@drop-over` / `@drag-source` -> the runtime's drag-and-drop classes.
     Pseudo(String),
     /// `@state Editing` -> matches while the view is in that state.
     State(String),
@@ -122,7 +123,15 @@ fn emit(
     }
     for (kind, sub) in &block.nested {
         match kind {
-            NestedKind::Pseudo(p) => emit(sub, &format!("{}:{}", sel, p), media, true, ctx, h, dynamic)?,
+            NestedKind::Pseudo(p) => {
+                // Runtime states that are classes rather than real pseudo-classes.
+                let suffix = match p.as_str() {
+                    "drop-over" => ".f4-drop-over".to_string(),
+                    "drag-source" => ".f4-drag-source".to_string(),
+                    _ => format!(":{}", p),
+                };
+                emit(sub, &format!("{}{}", sel, suffix), media, true, ctx, h, dynamic)?
+            }
             NestedKind::State(s) => {
                 let s2 = if ctx.is_host {
                     format!("{}[data-state-name=\"{}\"]", sel, s)

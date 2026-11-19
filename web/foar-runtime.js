@@ -15,15 +15,39 @@
 //   * One delegated listener per event type on the container.
 //   * Store writes are batched: N effects in one tick => one flush (microtask).
 //
+// Also exported: createI18n({ locale, fallback, messages }) -> { t, locale, dir, setLocale }.
+//
 // Public API: createFoarRuntime(ast, container, callbacks) ->
-//   { renderApp, flush, getSnapshot, forceStateTransition, invokeEffect, destroy }
+//   { renderApp, flush, getSnapshot, forceStateTransition, invokeEffect,
+//     setLocale, getLocale, destroy }
 //
 // callbacks: { onRender(snapshot), onEffect(info), onTransition(info), onEmit(info),
 //              bindings: { [apiName]: async fn },  // external async bindings
+//              i18n: { locale, fallback, messages: { [locale]: { [key]: msg } } },
 //              asyncDelay: ms,                      // simulated latency when no binding
 //              badges: true }                       // render dev-only state badges per view
+//
+// Built into every expression and effect:
+//   t(key, params)  translated string. Messages use {name} placeholders; a
+//                   message may be { zero?, one, two?, few?, many?, other }
+//                   picked by Intl.PluralRules with params.count.
+//   t_key(key)      returns key; marks a key kept as data and translated later.
+//
+// Accessibility: any element takes `label:` (aria-label), `role:`, and
+// `aria: { expanded: x, selected: y, ... }`. Clickable rows/text get
+// tabindex=0, role=button and Enter/Space activation automatically;
+// `tab_index:` overrides (roving tabindex in lists).
+//
+// Drag and drop: `drag: payload` makes an element draggable (`drag_text:`
+// adds text/plain for other apps); `-> on_drop(Effect)` makes a drop target
+// whose effect receives the payload. While dragging, the source has class
+// f4-drag-source and the hovered target f4-drop-over (`@drag-source {}` /
+// `@drop-over {}` in styles). on_context_menu effects receive { x, y };
+// Shift+right-click is left to the browser.
 
 const EVENT_TYPES = ['click', 'dblclick', 'input', 'change', 'keydown', 'contextmenu', 'focusout'];
+const DRAG_TYPES = ['dragstart', 'dragover', 'dragleave', 'drop', 'dragend'];
+const RTL = new Set(['ar', 'he', 'fa', 'ur', 'yi', 'ps', 'sd', 'ug', 'dv']);
 const EVENT_MAP = {
   on_click: 'click',
   on_double_click: 'dblclick',
@@ -32,6 +56,9 @@ const EVENT_MAP = {
   on_enter: 'keydown',
   on_context_menu: 'contextmenu',
   on_blur: 'focusout',
+  on_drop: 'drop',
+  on_drag_start: 'dragstart',
+  on_drag_end: 'dragend',
 };
 const EMPTY = Object.freeze({});
 const UNSET = Symbol('unset');
@@ -120,6 +147,51 @@ return [${storeNames.join(',')}];`;
 // ---------------------------------------------------------------------------
 // Runtime
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// i18n: t(key, params) with {name} placeholders, plural objects picked by
+// Intl.PluralRules (params.count), locale -> base language -> fallback lookup.
+// ---------------------------------------------------------------------------
+export function createI18n({ locale, fallback = 'en', messages = {} } = {}) {
+  let current = locale || fallback;
+  let plural = new Intl.PluralRules(current);
+  let numbers = new Intl.NumberFormat(current);
+  const missing = new Set();
+  function lookup(key) {
+    for (const tb of [messages[current], messages[current.split('-')[0]], messages[fallback]]) {
+      if (tb && tb[key] !== undefined) return tb[key];
+    }
+    if (!missing.has(`${current}:${key}`) && Object.keys(messages).length) {
+      missing.add(`${current}:${key}`);
+      console.warn(`FOAR i18n: missing message "${key}" (${current})`);
+    }
+    return key;
+  }
+  function t(key, params) {
+    let msg = lookup(key);
+    if (msg && typeof msg === 'object') {
+      const n = Number(params?.count ?? 0);
+      msg = (n === 0 && msg.zero !== undefined ? msg.zero : msg[plural.select(n)]) ?? msg.other ?? key;
+    }
+    if (!params) return msg;
+    return String(msg).replace(/\{(\w+)\}/g, (m, name) => {
+      const v = params[name];
+      if (v === undefined) return m;
+      return typeof v === 'number' ? numbers.format(v) : String(v);
+    });
+  }
+  return {
+    t,
+    get locale() { return current; },
+    get dir() { return RTL.has(current.split('-')[0]) ? 'rtl' : 'ltr'; },
+    get locales() { return Object.keys(messages); },
+    setLocale(next) {
+      current = next;
+      plural = new Intl.PluralRules(current);
+      numbers = new Intl.NumberFormat(current);
+    },
+  };
+}
+
 export function createFoarRuntime(ast, container, callbacks = {}) {
   const rootViewDecl = ast.views[0];
   if (!rootViewDecl) {
@@ -132,12 +204,34 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   const viewMap = new Map(ast.views.map((v) => [v.name, v]));
   const instances = new Map(); // key -> instance (live registry)
   const handlers = new WeakMap(); // element -> { [eventType]: fn }
+  const dragSources = new WeakMap(); // element -> () => { payload, text }
+  const dropTargets = new WeakMap(); // element -> () => (payload) => void
+  let dragging = null; // { payload, el }
+  let dropOver = null; // element showing f4-drop-over
+
+  // Attribute helper: null/undefined/false-for-non-aria removes, booleans become "true"/"false".
+  function setAttr(el, name, v) {
+    if (v === undefined || v === null || v === '') el.removeAttribute(name);
+    else el.setAttribute(name, typeof v === 'boolean' ? String(v) : v);
+  }
   const asyncTimers = new Set();
   const warned = new Set();
   const badges = callbacks.badges === true;
   // Host functions callable from .foar expressions and effects
   // (`persist(notes);`, `Text(fmt_date(note.updated))`).
-  const externs = Object.assign(Object.create(null), { random_uuid }, callbacks.bindings || {});
+  // ---- i18n ------------------------------------------------------------------
+  // `callbacks.i18n` is a config ({ locale, fallback, messages }) or a shared
+  // translator from createI18n() that host code also uses.
+  const i18n = callbacks.i18n && typeof callbacks.i18n.t === 'function' ? callbacks.i18n : createI18n(callbacks.i18n || {});
+  const t = i18n.t;
+  function applyLocale() {
+    container.lang = i18n.locale;
+    container.dir = i18n.dir;
+  }
+
+  // t_key("a.b") marks a key that is stored now and translated later (gettext's N_()).
+  const t_key = (key) => key;
+  const externs = Object.assign(Object.create(null), { random_uuid, t, t_key }, callbacks.bindings || {});
   const externNames = Object.keys(externs).filter((n) => /^[A-Za-z_$][\w$]*$/.test(n));
   const effectCache = new Map();
   let destroyed = false;
@@ -156,6 +250,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   styleEl.setAttribute('data-f4-runtime', String(rid));
   styleEl.textContent = `${BASE_CSS}\n${ast.css || ''}`;
   (doc.head || doc.documentElement).appendChild(styleEl);
+  applyLocale();
 
   function applyInlineStyle(el, key, val) {
     if (val === undefined || val === null || val === false || val === '') {
@@ -348,6 +443,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     host.className = `f4-view-host f4-view-${inst.viewName}`;
     addClasses(host, meta.hostStyle.cls);
     host.dataset.viewName = inst.viewName;
+    host.dataset.key = inst.key; // which instance this is (host code, devtools)
 
     // Topology badge is dev tooling (4 extra nodes per view); opt-in via callbacks.badges.
     if (badges) {
@@ -436,23 +532,51 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
           break;
         case 'on_context_menu':
           map.contextmenu = (e) => {
+            // Shift+right-click keeps the browser's own menu (spelling, inspect...).
+            if (e.shiftKey) return false;
             e.preventDefault();
-            invokeEffect(inst, handlerName);
+            // Opened from the keyboard (Shift+F10 / Menu key): no pointer position.
+            let x = e.clientX;
+            let y = e.clientY;
+            if (!x && !y) {
+              const r = el.getBoundingClientRect();
+              x = r.left + 16;
+              y = r.bottom;
+            }
+            invokeEffect(inst, handlerName, { x, y });
           };
+          break;
+        case 'on_drop':
+          dropTargets.set(el, () => (payload) => invokeEffect(inst, handlerName, payload));
+          break;
+        case 'on_drag_start':
+        case 'on_drag_end':
+          map[domType] = (payload) => invokeEffect(inst, handlerName, payload);
           break;
         case 'on_change':
           map.change = (e) => invokeEffect(inst, handlerName, e.target.checked);
           break;
         case 'on_enter':
           map.keydown = (e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              invokeEffect(inst, handlerName);
-            }
+            if (e.key !== 'Enter' || e.isComposing) return false;
+            e.preventDefault();
+            invokeEffect(inst, handlerName);
           };
           break;
         default:
           map[domType] = () => invokeEffect(inst, handlerName);
+      }
+    }
+    // Clickable non-controls are reachable and operable from the keyboard.
+    if (map?.click && !/^(BUTTON|INPUT|TEXTAREA|SELECT|A)$/.test(el.tagName) && !el.isContentEditable) {
+      if (!el.hasAttribute('tabindex')) el.tabIndex = 0;
+      if (!el.hasAttribute('role')) el.setAttribute('role', 'button');
+      if (!map.keydown) {
+        map.keydown = (e) => {
+          if (e.target !== el || (e.key !== 'Enter' && e.key !== ' ')) return false;
+          e.preventDefault();
+          map.click(e);
+        };
       }
     }
     if (map) handlers.set(el, map);
@@ -534,6 +658,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         el = doc.createElement('div');
         el.className = 'f4-richtext';
         el.contentEditable = 'true';
+        el.setAttribute('role', 'textbox');
+        el.setAttribute('aria-multiline', 'true');
         el.spellcheck = true;
         const valueExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
         if (valueExpr !== undefined) {
@@ -546,7 +672,10 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
           bind(node.namedArgs.placeholder, (v) => { el.dataset.placeholder = v ?? ''; });
         }
         if (node.namedArgs.editable !== undefined) {
-          bind(node.namedArgs.editable, (v) => { el.contentEditable = v ? 'true' : 'false'; });
+          bind(node.namedArgs.editable, (v) => {
+            el.contentEditable = v ? 'true' : 'false';
+            el.setAttribute('aria-readonly', String(!v));
+          });
         }
         break;
       }
@@ -598,8 +727,36 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const sc = compileStyle(node.style);
     addClasses(el, sc.cls);
     for (const d of sc.dynamic) bind(d.expr, (v) => applyInlineStyle(el, d.key, v));
-    if (node.namedArgs.title !== undefined && node.tag !== 'Image') {
-      bind(node.namedArgs.title, (v) => { if (v) el.title = v; else el.removeAttribute('title'); });
+    const na = node.namedArgs;
+    if (na.title !== undefined && node.tag !== 'Image') {
+      // An icon button's tooltip is also its accessible name unless `label:` says otherwise.
+      const nameFromTitle = node.tag === 'Button' && na.label === undefined;
+      bind(na.title, (v) => {
+        if (v) el.title = v;
+        else el.removeAttribute('title');
+        if (nameFromTitle) setAttr(el, 'aria-label', v);
+      });
+    }
+    if (na.label !== undefined) bind(na.label, (v) => setAttr(el, 'aria-label', v));
+    if (na.role !== undefined) bind(na.role, (v) => setAttr(el, 'role', v));
+    if (na.tab_index !== undefined) bind(na.tab_index, (v) => setAttr(el, 'tabindex', v == null ? v : String(v)));
+    if (na.aria !== undefined) {
+      let prev = [];
+      bind(na.aria, (obj) => {
+        const keys = obj ? Object.keys(obj) : [];
+        for (const k of prev) if (!keys.includes(k)) el.removeAttribute(`aria-${k.replace(/_/g, '-')}`);
+        for (const k of keys) setAttr(el, `aria-${k.replace(/_/g, '-')}`, obj[k]);
+        prev = keys;
+      });
+    }
+    if (na.drag !== undefined) {
+      const dragFn = compileExpr(na.drag, vn, localNames);
+      const textFn = na.drag_text !== undefined ? compileExpr(na.drag_text, vn, localNames) : null;
+      el.setAttribute('draggable', 'true');
+      dragSources.set(el, () => ({
+        payload: safeEval(dragFn, inst.vars, locals, na.drag),
+        text: textFn ? safeEval(textFn, inst.vars, locals, na.drag_text) : '',
+      }));
     }
     registerEvents(el, node, inst);
     runBindings(bindings, inst.vars, locals);
@@ -720,8 +877,23 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const rows = new Map(); // key -> { locals, blocks }
     let emptyEl = null;
     const seen = new Set();
+    // role / label / aria on the list container (e.g. role: "listbox")
+    const attrFns = [];
+    for (const [arg, attr] of [['role', 'role'], ['label', 'aria-label']]) {
+      const ex = node.namedArgs?.[arg];
+      if (ex !== undefined) attrFns.push({ attr, ex, fn: compileExpr(ex, inst.meta.varNames, localNames) });
+    }
+    const ariaEx = node.namedArgs?.aria;
+    const ariaFn = ariaEx !== undefined ? compileExpr(ariaEx, inst.meta.varNames, localNames) : null;
+    // A list container can take events too (e.g. on_context_menu on its background).
+    if (node.events && Object.keys(node.events).length) registerEvents(el, node, inst);
 
     function update() {
+      for (const a of attrFns) setAttr(el, a.attr, safeEval(a.fn, inst.vars, locals, a.ex));
+      if (ariaFn) {
+        const obj = safeEval(ariaFn, inst.vars, locals, ariaEx) || {};
+        for (const k of Object.keys(obj)) setAttr(el, `aria-${k.replace(/_/g, '-')}`, obj[k]);
+      }
       let items = safeEval(itemsFn, inst.vars, locals, node.listExpr);
       if (!Array.isArray(items)) items = items == null ? [] : Array.from(items);
 
@@ -835,13 +1007,73 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     while (t && t !== container) {
       const h = handlers.get(t);
       const fn = h && h[e.type];
-      if (fn) {
-        // Innermost handler wins: a button inside a clickable row must not
-        // also trigger the row.
-        fn(e);
+      // Innermost handler wins: a button inside a clickable row must not
+      // also trigger the row. A handler returns false to pass the event on.
+      if (fn && fn(e) !== false) return;
+      t = t.parentNode;
+    }
+  }
+
+  // ---- drag and drop (in-app payloads; other drags pass through) -------------
+  const closestIn = (map, node) => {
+    for (let t = node; t && t !== container; t = t.parentNode) if (map.has(t)) return t;
+    return null;
+  };
+  function setDropOver(el) {
+    if (dropOver === el) return;
+    dropOver?.classList.remove('f4-drop-over');
+    dropOver = el;
+    el?.classList.add('f4-drop-over');
+  }
+  function endDrag() {
+    if (!dragging) return;
+    dragging.el.classList.remove('f4-drag-source');
+    container.classList.remove('f4-dragging');
+    setDropOver(null);
+    const { el, payload } = dragging;
+    dragging = null;
+    handlers.get(el)?.dragend?.(payload);
+  }
+  function onDrag(e) {
+    switch (e.type) {
+      case 'dragstart': {
+        const src = closestIn(dragSources, e.target);
+        if (!src) return;
+        const { payload, text } = dragSources.get(src)();
+        dragging = { payload, el: src };
+        e.dataTransfer.effectAllowed = 'copyMove';
+        e.dataTransfer.setData('text/plain', text || '');
+        e.dataTransfer.setData('application/x-foar', String(rid));
+        src.classList.add('f4-drag-source');
+        container.classList.add('f4-dragging');
+        handlers.get(src)?.dragstart?.(payload);
         return;
       }
-      t = t.parentNode;
+      case 'dragover': {
+        if (!dragging) return;
+        const target = closestIn(dropTargets, e.target);
+        setDropOver(target);
+        if (target) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+        }
+        return;
+      }
+      case 'dragleave':
+        if (dropOver && !dropOver.contains(e.relatedTarget)) setDropOver(null);
+        return;
+      case 'drop': {
+        if (!dragging) return;
+        const target = closestIn(dropTargets, e.target);
+        if (!target) return;
+        e.preventDefault();
+        const payload = dragging.payload;
+        endDrag();
+        dropTargets.get(target)()(payload);
+        return;
+      }
+      case 'dragend':
+        endDrag();
     }
   }
 
@@ -851,6 +1083,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     for (const t of asyncTimers) clearTimeout(t);
     asyncTimers.clear();
     for (const type of EVENT_TYPES) container.removeEventListener(type, dispatch);
+    for (const type of DRAG_TYPES) container.removeEventListener(type, onDrag);
     disposeInstance(rootInst);
     styleEl.remove();
     container.textContent = '';
@@ -861,6 +1094,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   container.textContent = '';
   container.appendChild(mountInstance(rootInst));
   for (const type of EVENT_TYPES) container.addEventListener(type, dispatch);
+  for (const type of DRAG_TYPES) container.addEventListener(type, onDrag);
   callbacks.onRender?.(getSnapshot());
 
   return {
@@ -872,6 +1106,15 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       const inst = instances.get(instanceKey);
       if (inst) invokeEffect(inst, effectName, arg);
     },
+    /** Switch language: every t() re-evaluates in one flush. */
+    setLocale(next) {
+      if (!next) return;
+      i18n.setLocale(next);
+      applyLocale();
+      flush();
+    },
+    getLocale: () => i18n.locale,
+    t,
     destroy,
   };
 }

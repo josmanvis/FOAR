@@ -34,12 +34,14 @@ pub struct Parser<'s> {
     hoisted: Hoisted,
     cur_view: Option<String>,
     cls_counter: usize,
+    /// named style -> the styles it `@use`s (expanded onto elements after parsing)
+    style_uses: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl<'s> Parser<'s> {
     pub fn new(src: &'s str) -> PResult<Self> {
         let toks = lex(src).map_err(|at| err_at(src, at, "Unexpected character".to_string()))?;
-        Ok(Self { src, toks, pos: 0, hoisted: Hoisted::default(), cur_view: None, cls_counter: 0 })
+        Ok(Self { src, toks, pos: 0, hoisted: Hoisted::default(), cur_view: None, cls_counter: 0, style_uses: Default::default() })
     }
 
     // ---- token helpers ----------------------------------------------------
@@ -152,6 +154,19 @@ impl<'s> Parser<'s> {
                 self.parse_keyframes_body()?;
             } else {
                 return self.err(format!("Unexpected top-level token '{}'", self.describe()));
+            }
+        }
+        // `style A { @use B; }` then `.style(A)`: the element needs B's class too.
+        // Done after parsing because named styles may be declared after their use.
+        let mut views = views;
+        for v in &mut views {
+            if let Some(st) = &mut v.style {
+                expand_uses(st, &self.style_uses);
+            }
+            for s in &mut v.states {
+                for el in &mut s.render {
+                    expand_element(el, &self.style_uses);
+                }
             }
         }
         Ok(Program { kind: "Program", data_decls, views, css: self.hoisted.css() })
@@ -506,6 +521,7 @@ impl<'s> Parser<'s> {
                             "@state" => NestedKind::State(args),
                             "@dark" => NestedKind::Media("(prefers-color-scheme: dark)".to_string()),
                             "@light" => NestedKind::Media("(prefers-color-scheme: light)".to_string()),
+                            "@reduced-motion" => NestedKind::Media("(prefers-reduced-motion: reduce)".to_string()),
                             _ => NestedKind::Pseudo(format!("{}{}", &name[1..], args)),
                         };
                         block.nested.push((kind, sub));
@@ -685,6 +701,7 @@ impl<'s> Parser<'s> {
         self.expect("}")?;
         let ctx = Ctx { view: None, is_host: false, allow_dynamic: false };
         self.compile_style(&block, &format!("f4-{}", name), &ctx)?;
+        self.style_uses.insert(name, block.uses.clone());
         Ok(())
     }
 
@@ -715,6 +732,33 @@ impl<'s> Parser<'s> {
     }
 }
 
+fn expand_uses(st: &mut Style, uses: &std::collections::HashMap<String, Vec<String>>) {
+    let Some(cls) = &st.cls else { return };
+    let mut out: Vec<String> = cls.split(' ').map(str::to_string).collect();
+    let mut i = 0;
+    while i < out.len() {
+        if let Some(name) = out[i].strip_prefix("f4-") {
+            for u in uses.get(name).into_iter().flatten() {
+                let c = format!("f4-{}", u);
+                if !out.contains(&c) {
+                    out.push(c);
+                }
+            }
+        }
+        i += 1;
+    }
+    st.cls = Some(out.join(" "));
+}
+
+fn expand_element(el: &mut UiElement, uses: &std::collections::HashMap<String, Vec<String>>) {
+    if let Some(st) = &mut el.style {
+        expand_uses(st, uses);
+    }
+    for c in &mut el.children {
+        expand_element(c, uses);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::compile;
@@ -742,6 +786,7 @@ mod tests {
         let src = r#"
             theme { --accent: #07f; --radius: 6px; @dark { --accent: #4da3ff; } }
             style Card { padding: 12px; border-radius: var(--radius); @hover { box-shadow: 0 2px 8px rgba(0,0,0,.2); } }
+            style Drop { @drop-over { outline: 2px solid red; } @drag-source { opacity: .5; } @reduced-motion { animation: none; } }
             @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.05); } }
             @keyframes fade-in-up { from { opacity: 0; } to { opacity: 1; } }
             css { .legacy > b { font-weight: 700 } }
@@ -772,6 +817,13 @@ mod tests {
         assert!(css.contains(".f4-Card.f4-Card:hover{box-shadow:0 2px 8px rgba(0,0,0,.2)}"));
         assert!(css.contains("@keyframes pulse{from{transform:scale(1)}to{transform:scale(1.05)}}"));
         assert!(css.contains(".legacy > b { font-weight: 700 }"));
+        assert!(css.contains(".f4-Drop.f4-Drop.f4-drop-over{outline:2px solid red}"), "{}", css);
+        // @use inside a named style reaches elements that use it, even when declared later.
+        let p2 = compile("view W { state S { render { Text(\"x\").style(Late) } } } style Base { color: red; } style Late { @use Base; padding: 1px; }").unwrap();
+        let cls = p2.views[0].states[0].render[0].style.as_ref().unwrap().cls.clone().unwrap();
+        assert!(cls.contains("f4-Late") && cls.contains("f4-Base"), "{}", cls);
+        assert!(css.contains(".f4-Drop.f4-Drop.f4-drag-source{opacity:.5}"), "{}", css);
+        assert!(css.contains("@media (prefers-reduced-motion: reduce){.f4-Drop.f4-Drop{animation:none}}"), "{}", css);
         assert!(css.contains("@keyframes fade-in-up{from{opacity:0}to{opacity:1}}"), "{}", css);
         assert!(css.contains(".f4-V.f4-V{background:hsl(var(--hue) 80% 50%);animation:pulse 1s ease-in-out infinite alternate;width:calc(100% - 20px)}"), "{}", css);
         assert!(css.contains(".f4-V.f4-V[data-state-name=\"Open\"]{outline:2px solid var(--accent)}"));
