@@ -1,0 +1,26 @@
+// FormatButtons — the editor toolbar buttons that open FormatBar popovers.
+import "styles/shared"
+
+view FormatButtons(open: String) {
+    style { layout: horizontal; align: center; gap: 2px; }
+    state Idle {
+        render {
+            Button("Aa", title: t("fmt.styles"), aria: { haspopup: "menu", expanded: open == "styles" }) -> on_click(Styles)
+                .style(IconButton, { font-weight: 600; font-size: 14px; background: open == "styles" ? var(--field-bg) : transparent; })
+            Button("☑", title: t("fmt.checklist")) -> on_click(Checklist).style(IconButton)
+            Button("⊞", title: t("fmt.table"), aria: { haspopup: "menu", expanded: open == "table" }) -> on_click(Table)
+                .style(IconButton, { background: open == "table" ? var(--field-bg) : transparent; })
+            Button("🔗", title: t("fmt.link"), aria: { haspopup: "dialog", expanded: open == "link" }) -> on_click(Link)
+                .style(IconButton, { font-size: 13px; background: open == "link" ? var(--field-bg) : transparent; })
+            Button("🖍", title: t("fmt.colors"), aria: { haspopup: "menu", expanded: open == "colors" }) -> on_click(Colors)
+                .style(IconButton, { font-size: 13px; background: open == "colors" ? var(--field-bg) : transparent; })
+            Button("📎", title: t("fmt.attach")) -> on_click(Attach).style(IconButton, { font-size: 13px; })
+        }
+        effect Styles() { emit styles(true); }
+        effect Checklist() { fmt("checklist", ""); }
+        effect Table() { emit table(true); }
+        effect Link() { emit link(true); }
+        effect Colors() { emit colors(true); }
+        effect Attach() { fmt("attach", ""); }
+    }
+}

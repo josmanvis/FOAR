@@ -1,0 +1,25 @@
+// ContextMenu — a data-driven menu at the pointer.
+import "styles/shared"
+import "./MenuItem"
+
+// A data-driven menu at the pointer: items are { label, value, check?, danger?, hint? },
+// { title } or { sep: true }.
+view ContextMenu(at: any, items: Vec<any>, label: String) {
+    style { position: fixed; z-index: 300; left: {at.x + "px"}; top: {at.y + "px"}; }
+
+    state Showing {
+        render {
+            Column(role: "menu", label: label) {
+                List(items) { it =>
+                    If(it.sep) { Text("", role: "separator").style(MenuSep) }
+                    If(it.title) { Text(it.title, aria: { hidden: true }).style(MenuTitle) }
+                    If(!it.sep && !it.title) {
+                        MenuItem(label: it.label, value: it.value, check: it.check, danger: it.danger, hint: it.hint) -> on_pick(Pick)
+                    }
+                }
+            }.style(Menu, { position: static; min-width: 220px; })
+        }
+        effect Pick(v: String) { emit pick(v); }
+        effect Dismiss() { emit close(true); }
+    }
+}

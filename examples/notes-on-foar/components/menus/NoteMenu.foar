@@ -1,0 +1,68 @@
+// NoteMenu — the actions menu of a note (pin, lock, move, delete ...).
+import "styles/shared"
+import "./MenuItem"
+
+view NoteMenu(note: Note, folders: Vec<Folder>, unlocked: bool, at: any) {
+    style {
+        position: {at ? "fixed" : ""};
+        left: {at ? at.x + "px" : ""};
+        top: {at ? at.y + "px" : ""};
+        z-index: 200;
+    }
+
+    state Main {
+        render {
+            Column(role: "menu", label: t("note.menuLabel")) {
+                If(note.deleted_at == 0) {
+                    MenuItem(label: note.pinned ? t("note.unpin") : t("note.pin"), value: "pin") -> on_pick(Act)
+                    If(!note.locked) { MenuItem(label: t("note.lock"), value: "lock") -> on_pick(Act) }
+                    If(note.locked && unlocked) { MenuItem(label: t("note.removeLock"), value: "remove_lock") -> on_pick(Act) }
+                    MenuItem(label: t("note.moveTo"), value: "move") -> on_pick(StartMove)
+                    If(!note.locked || unlocked) {
+                        MenuItem(label: t("note.duplicate"), value: "duplicate") -> on_pick(Act)
+                        Text("", role: "separator").style(MenuSep)
+                        MenuItem(label: t("note.exportMd"), value: "export_md") -> on_pick(Act)
+                        MenuItem(label: t("note.exportHtml"), value: "export_html") -> on_pick(Act)
+                        MenuItem(label: t("note.print"), value: "print", hint: "Ctrl/⌘ P") -> on_pick(Act)
+                    }
+                    Text("", role: "separator").style(MenuSep)
+                    MenuItem(label: t("note.delete"), value: "delete", danger: true, hint: "Ctrl/⌘ ⌫") -> on_pick(Act)
+                }
+                If(note.deleted_at > 0) {
+                    MenuItem(label: t("note.recover"), value: "recover") -> on_pick(Act)
+                    MenuItem(label: t("note.purge"), value: "purge", danger: true) -> on_pick(AskPurge)
+                }
+            }.style(Menu, { position: at ? static : absolute; })
+        }
+        effect Act(kind: String) { emit action({ kind: kind, id: note.id }); }
+        effect StartMove(x: any) { transition Moving; }
+        effect AskPurge(x: any) { transition ConfirmPurge; }
+    }
+
+    state Moving {
+        render {
+            Column(role: "menu", label: t("note.moveTitle")) {
+                Text(t("note.moveTitle"), aria: { hidden: true }).style(MenuTitle)
+                List(by_name(folders)) { f =>
+                    MenuItem(label: f.name, value: f.id, check: f.id == note.folder) -> on_pick(MoveTo)
+                }
+            }.style(Menu, { position: at ? static : absolute; })
+        }
+        effect MoveTo(fid: String) { emit action({ kind: "move", id: note.id, folder: fid }); }
+    }
+
+    state ConfirmPurge {
+        render {
+            Column(role: "alertdialog", label: t("note.purgeConfirm")) {
+                Text(t("note.purgeConfirm")).style({ font-weight: 700; padding: 6px 8px 0; })
+                Text(t("confirm.cantUndo")).style({ color: var(--muted); font-size: 12px; padding: 2px 8px 8px; })
+                Row {
+                    Button(t("common.cancel"), autofocus: true) -> on_click(Back).style(TextButton, { flex: 1; })
+                    Button(t("common.delete")) -> on_click(Purge).style(DangerButton, { flex: 1; })
+                }.style({ gap: 6px; padding: 0 4px 4px; })
+            }.style(Menu, { width: 250px; position: at ? static : absolute; })
+        }
+        effect Back() { transition Main; }
+        effect Purge() { emit action({ kind: "purge", id: note.id }); }
+    }
+}

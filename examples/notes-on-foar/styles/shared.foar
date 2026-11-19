@@ -1,0 +1,178 @@
+// Named styles shared by components: `.style(Name)` or `@use Name`.
+
+style Toolbar {
+    layout: horizontal;
+    align: center;
+    gap: 2px;
+    height: 52px;
+    padding: 0 10px;
+    flex-shrink: 0;
+}
+
+style IconButton {
+    min-width: 32px;
+    height: 28px;
+    padding: 0 6px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font: 15px/1 var(--font);
+    @hover { background: var(--field-bg); color: var(--text); }
+    @active { transform: scale(0.95); }
+}
+
+style TextButton {
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    background: var(--window-bg);
+    color: var(--text);
+    font: 500 12px var(--font);
+    white-space: nowrap;
+    @hover { background: var(--field-bg); }
+}
+
+style PrimaryButton {
+    @use TextButton;
+    background: var(--focus);
+    color: #fff;
+    border-color: transparent;
+    @hover { background: var(--focus); filter: brightness(1.08); }
+}
+
+style DangerButton {
+    @use TextButton;
+    background: var(--danger);
+    color: #fff;
+    border-color: transparent;
+    @hover { background: var(--danger); filter: brightness(1.08); }
+}
+
+style Ellipsis {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+style SidebarItem {
+    layout: horizontal;
+    align: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 7px;
+    cursor: default;
+    user-select: none;
+    transition: background 0.12s, box-shadow 0.12s;
+    @drop-over { background: var(--drop); box-shadow: inset 0 0 0 2px var(--focus); }
+}
+
+style SidebarIcon { width: 18px; text-align: center; flex-shrink: 0; }
+
+style SectionLabel {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 14px 10px 4px;
+    user-select: none;
+}
+
+style Count {
+    color: var(--muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+style Menu {
+    position: absolute;
+    z-index: 60;
+    top: calc(100% - 6px);
+    left: 10px;
+    min-width: 210px;
+    max-height: calc(100dvh - 90px);
+    overflow-y: auto;
+    gap: 0;
+    padding: 5px;
+    border-radius: 9px;
+    background: var(--menu-bg);
+    backdrop-filter: blur(20px);
+    box-shadow: var(--shadow);
+    font-size: 13px;
+    color: var(--text);
+    animation: pop-in 0.12s ease-out;
+}
+
+style MenuRow {
+    layout: horizontal;
+    align: center;
+    gap: 6px;
+    min-height: 24px;
+    padding: 0 10px 0 4px;
+    border-radius: 5px;
+    cursor: default;
+    user-select: none;
+    outline: none;
+    @hover { background: var(--menu-hover); color: #fff; }
+    @focus-visible { background: var(--menu-hover); color: #fff; }
+}
+
+style MenuTitle {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 10px 2px 22px;
+}
+
+style MenuSep { height: 1px; margin: 5px 8px; background: var(--hairline); }
+
+style RenameField {
+    flex: 1;
+    min-width: 0;
+    height: 22px;
+    padding: 0 6px;
+    border: none;
+    border-radius: 5px;
+    outline: 3px solid color-mix(in srgb, var(--focus) 55%, transparent);
+    background: var(--window-bg);
+    color: var(--text);
+    font: 13px var(--font);
+}
+
+style GroupLabel {
+    padding: 14px 22px 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    user-select: none;
+}
+
+style Field {
+    height: 28px;
+    padding: 0 10px;
+    border: none;
+    border-radius: 7px;
+    outline: none;
+    background: var(--field-bg);
+    color: var(--text);
+    font: 13px var(--font);
+    @focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 45%, transparent); }
+}
+
+// Draggable column dividers (host/ux.js does the dragging and arrow keys).
+style Splitter {
+    width: 7px;
+    margin: 0 -3px;
+    flex-shrink: 0;
+    z-index: 5;
+    cursor: col-resize;
+    position: relative;
+    outline: none;
+    @hover { background: linear-gradient(to right, transparent 3px, var(--focus) 3px, var(--focus) 4px, transparent 4px); }
+    @focus-visible { background: linear-gradient(to right, transparent 2px, var(--focus) 2px, var(--focus) 5px, transparent 5px); }
+}
+style SidebarSplitter { @use Splitter; }
+style ListSplitter { @use Splitter; }

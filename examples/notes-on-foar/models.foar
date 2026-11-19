@@ -1,0 +1,18 @@
+// Data types shared by every view.
+
+data Note {
+    id: String,
+    folder: String,
+    title: String,
+    html: String,
+    created: i64,
+    updated: i64,
+    pinned: bool,
+    deleted_at: i64,
+    locked: bool,
+}
+
+data Folder {
+    id: String,
+    name: String,
+}

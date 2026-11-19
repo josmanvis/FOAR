@@ -1,0 +1,154 @@
+// NoteEditor — the editor pane: toolbar, rich text, locked-note screen.
+import "styles/shared"
+import "./FormatBar"
+import "components/menus/NoteMenu"
+import "components/menus/ContextMenu"
+
+view NoteEditor(note: Note, unlocked: bool, folders: Vec<Folder>, gallery: bool, fresh: bool, lock_error: String) {
+    store menu: bool = false;
+    store pw: String = "";
+    store edit_at: any = null;
+    store edit_items: Vec<any> = [];
+    style { layout: vertical; flex: 1; min-height: 0; min-width: 0; }
+
+    state Open {
+        render {
+            Row(role: "toolbar", label: t("editor.toolbar")) {
+                If(gallery) { Button("‹  " + t("editor.gallery"), title: t("editor.backHint")) -> on_click(Back).style(TextButton, { margin-right: 6px; }) }
+                If(note.deleted_at == 0 && (unlocked || !note.locked)) { FormatBar() }
+                Text("").style({ flex: 1; })
+                If(note.deleted_at == 0) {
+                    Button(note.locked ? (unlocked ? "🔓" : "🔒") : "🔒", title: lock_title(note, unlocked))
+                        -> on_click(LockButton)
+                        .style(IconButton, { opacity: note.locked ? 1 : 0.55; })
+                }
+                Button("⋯", title: t("editor.more"), aria: { haspopup: "menu", expanded: menu }) -> on_click(OpenMenu).style(IconButton, { font-weight: 700; })
+                If(menu) {
+                    NoteMenu(note: note, folders: folders, unlocked: unlocked, at: null) -> on_action(Act)
+                }
+            }.style(EditorToolbar)
+
+            If(note.locked && !unlocked) {
+                Column(role: "form", label: t("lock.isLocked")) {
+                    Text("🔒", aria: { hidden: true }).style({ font-size: 44px; })
+                    Text(t("lock.isLocked"), role: "heading", aria: { level: 2 }).style({ font-size: 17px; font-weight: 700; })
+                    Text(t("lock.enterPw")).style({ color: var(--muted); margin-bottom: 8px; })
+                    Input(value: pw, secure: true, placeholder: t("lock.password"), label: t("lock.password"), autofocus: true) -> on_input(Pw) -> on_enter(Unlock)
+                        .style(Field, { width: 240px; text-align: center; })
+                    If(lock_error != "") { Text(lock_error, role: "alert").style({ color: var(--danger); font-size: 12px; }) }
+                    If(password_hint() != "") { Text(t("lock.hint", { hint: password_hint() })).style({ color: var(--muted); font-size: 12px; }) }
+                }.style({ flex: 1; align-items: center; justify-content: center; gap: 6px; padding-bottom: 80px; animation: fade-in 0.2s; })
+            }
+
+            If(!note.locked || unlocked) {
+                If(note.deleted_at > 0) {
+                    Row(role: "note") {
+                        Text(t("editor.deletedBanner")).style({ flex: 1; })
+                        Button(t("editor.recover")) -> on_click(Recover).style(TextButton)
+                    }.style({
+                        margin: 0 56px 12px;
+                        padding: 8px 8px 8px 14px;
+                        border-radius: 8px;
+                        background: var(--field-bg);
+                        color: var(--muted);
+                    })
+                }
+                Text(fmt_long(note.updated)).style({ color: var(--muted); font-size: 12px; text-align: center; padding: 0 0 14px; flex-shrink: 0; })
+                RichText(value: note.html, editable: note.deleted_at == 0, autofocus: fresh, label: t("editor.label"))
+                    -> on_input(Edit) -> on_context_menu(EditMenu)
+                If(edit_at != null) {
+                    ContextMenu(at: edit_at, items: edit_items, label: t("editor.menuLabel")) -> on_pick(EditPick) -> on_close(CloseEditMenu)
+                }
+            }
+        }
+
+        effect Edit(h: String) { emit edit({ id: note.id, html: h }); }
+        effect Back() { emit back(true); }
+        effect LockButton() {
+            if note.locked {
+                if unlocked { emit close_locked(true); }
+            } else {
+                emit action({ kind: "lock", id: note.id });
+            }
+        }
+        effect OpenMenu() { menu = !menu; }
+        effect Act(a: any) { menu = false; emit action(a); }
+        effect Dismiss() { menu = false; edit_at = null; }
+        effect Pw(v: String) { pw = v; }
+        effect Unlock() {
+            let p = pw;
+            pw = "";
+            emit unlock(p);
+        }
+        effect Recover() { emit action({ kind: "recover", id: note.id }); }
+
+        // Right-click in the text: clipboard, styles, lists, and table/checklist
+        // commands when the caret is in one.
+        effect EditMenu(p: any) {
+            let ctx = fmt("context", "");
+            let editable = note.deleted_at == 0;
+            let items = [
+                { label: t("menu.cut"), value: "cut", hint: "Ctrl/⌘ X", disabled: !editable },
+                { label: t("menu.copy"), value: "copy", hint: "Ctrl/⌘ C" },
+                { label: t("menu.paste"), value: "paste", hint: "Ctrl/⌘ V", disabled: !editable },
+            ].filter(|i| !i.disabled);
+            if editable {
+                items = [...items,
+                    { sep: true },
+                    { label: t("fmt.bold"), value: "bold", hint: "Ctrl/⌘ B" },
+                    { label: t("fmt.italic"), value: "italic", hint: "Ctrl/⌘ I" },
+                    { label: t("fmt.underline"), value: "underline", hint: "Ctrl/⌘ U" },
+                    { label: t("fmt.strike"), value: "strikeThrough", hint: "Ctrl/⌘ ⇧ X" },
+                    { label: t("fmt.addLink"), value: "ask-link", hint: "Ctrl/⌘ K" },
+                    { sep: true },
+                    { label: t("style.title"), value: "block:h1", check: ctx.includes("|h1|") },
+                    { label: t("style.heading"), value: "block:h2", check: ctx.includes("|h2|") },
+                    { label: t("style.subheading"), value: "block:h3", check: ctx.includes("|h3|") },
+                    { label: t("style.body"), value: "block:p", check: ctx.includes("|p|") },
+                    { label: t("style.mono"), value: "block:pre", check: ctx.includes("|pre|") },
+                    { sep: true },
+                    { label: t("list.bullet"), value: "list:bullet", check: ctx.includes("|bullet|") },
+                    { label: t("list.dash"), value: "list:dash", check: ctx.includes("|dash|") },
+                    { label: t("list.number"), value: "list:number", check: ctx.includes("|number|") },
+                    { label: t("list.check"), value: "checklist", check: ctx.includes("|check|") },
+                    { label: t("style.quote"), value: "quote", check: ctx.includes("|blockquote|") },
+                ];
+                if ctx.includes("|check|") {
+                    items = [...items, { sep: true },
+                        { label: t("check.mark"), value: "mark-checked", hint: "Ctrl/⌘ ⇧ U" },
+                        { label: t("check.toBottom"), value: "checked-to-bottom" },
+                        { label: t("check.deleteChecked"), value: "delete-checked", danger: true },
+                    ];
+                }
+                if ctx.includes("|table|") {
+                    items = [...items, { sep: true },
+                        { label: t("table.rowAbove"), value: "table-op:row-above" },
+                        { label: t("table.rowBelow"), value: "table-op:row-below" },
+                        { label: t("table.colBefore"), value: "table-op:col-before" },
+                        { label: t("table.colAfter"), value: "table-op:col-after" },
+                        { label: t("table.deleteRow"), value: "table-op:delete-row", danger: true },
+                        { label: t("table.deleteCol"), value: "table-op:delete-col", danger: true },
+                    ];
+                }
+            }
+            edit_items = items;
+            menu = false;
+            edit_at = p;
+        }
+        effect EditPick(v: String) {
+            edit_at = null;
+            fmt(v, "");
+        }
+        effect CloseEditMenu(x: any) { edit_at = null; }
+    }
+}
+
+style EditorToolbar {
+    layout: horizontal;
+    align: center;
+    gap: 2px;
+    height: 52px;
+    padding: 0 12px;
+    flex-shrink: 0;
+    position: relative;
+}

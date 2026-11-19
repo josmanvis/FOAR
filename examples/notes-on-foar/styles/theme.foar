@@ -1,0 +1,163 @@
+// Design tokens (light/dark), animations and rich-text content CSS.
+
+theme {
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Helvetica Neue", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --window-bg: #ffffff;
+    --sidebar-bg: #ececee;
+    --list-bg: #ffffff;
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --hairline: rgba(0, 0, 0, 0.09);
+    --accent: #e0a100;
+    --focus: #0a66d6;
+    --link: #0a66d6;
+    --selection: #fbe39a;
+    --sidebar-selection: rgba(0, 0, 0, 0.08);
+    --field-bg: rgba(0, 0, 0, 0.055);
+    --menu-bg: rgba(250, 250, 250, 0.97);
+    --menu-hover: #0a66d6;
+    --danger: #d70015;
+    --drop: rgba(10, 102, 214, 0.16);
+    --shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.18), 0 10px 30px rgba(0, 0, 0, 0.18);
+    --sidebar-w: 230px;
+    --list-w: 320px;
+    @dark {
+        --window-bg: #1e1e1e;
+        --sidebar-bg: #262628;
+        --list-bg: #1e1e1e;
+        --text: #f5f5f7;
+        --muted: #a1a1a6;
+        --hairline: rgba(255, 255, 255, 0.09);
+        --accent: #ffc933;
+        --focus: #4ea1ff;
+        --link: #4ea1ff;
+        --selection: #6b5310;
+        --sidebar-selection: rgba(255, 255, 255, 0.1);
+        --field-bg: rgba(255, 255, 255, 0.08);
+        --menu-bg: rgba(44, 44, 46, 0.97);
+        --menu-hover: #2f6fd6;
+        --danger: #ff453a;
+        --drop: rgba(78, 161, 255, 0.22);
+        --shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.12), 0 12px 34px rgba(0, 0, 0, 0.5);
+    }
+}
+
+@keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes pop-in {
+    from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+}
+
+@keyframes sheet-in {
+    from { opacity: 0; transform: translateY(-14px); }
+    to { opacity: 1; transform: none; }
+}
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translate(-50%, 12px); }
+    to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+// Rich-text content and a few structural rules (verbatim CSS).
+css {
+    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--window-bg); }
+    ::selection { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+    :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+    [role=option]:focus-visible, .f4-SidebarItem:focus-visible { outline-offset: -2px; }
+    .f4-richtext:focus-visible { outline: none; }
+    .visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+    .f4-NoteScroller .f4-list-empty, .f4-GalleryScroller .f4-list-empty {
+        margin: auto; padding: 60px 20px; color: var(--muted); font-size: 15px; text-align: center;
+    }
+    .f4-NoteScroller::-webkit-scrollbar, .f4-GalleryScroller::-webkit-scrollbar, .f4-richtext::-webkit-scrollbar { width: 10px; }
+    .f4-NoteScroller::-webkit-scrollbar-thumb, .f4-GalleryScroller::-webkit-scrollbar-thumb, .f4-richtext::-webkit-scrollbar-thumb {
+        background: var(--hairline); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box;
+    }
+    .f4-NoteScroller, .f4-GalleryScroller, .f4-richtext, .f4-Sidebar { overscroll-behavior: contain; scroll-behavior: smooth; }
+    .f4-EditorToolbar .f4-view-NoteMenu { position: absolute; top: 44px; right: 10px; z-index: 60; }
+    .f4-EditorToolbar .f4-view-NoteMenu .f4-Menu { position: static; }
+    .f4-view-NoteRow .f4-view-NoteMenu .f4-Menu, .f4-view-GalleryCard .f4-view-NoteMenu .f4-Menu { left: 30px; }
+    .f4-Menu .f4-list { display: contents; }
+    .f4-KeyRow > .f4-view-Key { flex: 1; display: flex; }
+    .f4-KeyRow > .f4-view-Key > button { flex: 1; }
+
+    /* dragging a note */
+    .f4-drag-source { opacity: 0.45; }
+    .f4-dragging .f4-richtext { pointer-events: none; }
+
+    .f4-richtext { outline: none; flex: 1; overflow-y: auto; padding: 0 56px 120px; font: 15px/1.55 var(--font); color: var(--text); caret-color: var(--accent); word-wrap: break-word; }
+    .f4-richtext[contenteditable=false] { cursor: default; }
+    .f4-richtext > :first-child { margin-top: 0; }
+    .f4-richtext h1 { font-size: 26px; line-height: 1.25; font-weight: 700; margin: 0 0 8px; }
+    .f4-richtext h2 { font-size: 20px; line-height: 1.3; font-weight: 700; margin: 18px 0 4px; }
+    .f4-richtext h3 { font-size: 16px; font-weight: 600; margin: 14px 0 2px; }
+    .f4-richtext p, .f4-richtext div { margin: 0; }
+    .f4-richtext ul, .f4-richtext ol { margin: 4px 0; padding-left: 26px; }
+    .f4-richtext li { margin: 2px 0; }
+    .f4-richtext li > ul, .f4-richtext li > ol { margin: 2px 0; }
+    .f4-richtext ul.dashed { list-style: none; }
+    .f4-richtext ul.dashed > li { position: relative; }
+    .f4-richtext ul.dashed > li::before { content: "–"; position: absolute; left: -18px; color: var(--muted); }
+    .f4-richtext ul.checklist { list-style: none; padding-left: 30px; }
+    .f4-richtext ul.checklist > li { position: relative; margin: 5px 0; }
+    .f4-richtext ul.checklist > li::before {
+        content: ""; position: absolute; left: -28px; top: 3px; width: 18px; height: 18px; box-sizing: border-box;
+        border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--muted) 70%, transparent); cursor: pointer;
+        transition: background 0.12s, border-color 0.12s;
+    }
+    .f4-richtext ul.checklist > li[data-checked]::before { background: var(--accent); border-color: var(--accent); }
+    .f4-richtext ul.checklist > li[data-checked]::after {
+        content: ""; position: absolute; left: -21.5px; top: 6.5px; width: 4px; height: 8px;
+        border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); pointer-events: none;
+    }
+    .f4-richtext ul.checklist > li[data-checked] { color: var(--muted); }
+    .f4-richtext blockquote { margin: 8px 0; padding: 2px 0 2px 14px; border-left: 3px solid color-mix(in srgb, var(--accent) 70%, transparent); color: var(--muted); }
+    .f4-richtext blockquote:has(+ blockquote) { margin-bottom: 0; padding-bottom: 0; }
+    .f4-richtext blockquote + blockquote { margin-top: 0; padding-top: 0; }
+    .f4-richtext pre { font: 13px/1.5 var(--mono); background: var(--field-bg); padding: 8px 12px; border-radius: 7px; white-space: pre-wrap; margin: 8px 0; }
+    .f4-richtext pre:has(+ pre) { margin-bottom: 0; padding-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+    .f4-richtext pre + pre { margin-top: 0; padding-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
+    .f4-richtext a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+    .f4-richtext img { display: block; max-width: min(100%, 640px); height: auto; margin: 10px 0; border-radius: 9px; }
+    .f4-richtext table { border-collapse: collapse; margin: 10px 0; min-width: 60%; }
+    .f4-richtext td, .f4-richtext th { border: 1px solid var(--hairline); padding: 6px 10px; min-width: 70px; vertical-align: top; }
+    .f4-richtext th { background: var(--field-bg); text-align: left; font-weight: 600; }
+    .f4-richtext .tag { color: var(--accent); font-weight: 500; }
+    .f4-richtext [data-indent="1"] { margin-inline-start: 30px; }
+    .f4-richtext [data-indent="2"] { margin-inline-start: 60px; }
+    .f4-richtext [data-indent="3"] { margin-inline-start: 90px; }
+    .f4-richtext [data-indent="4"] { margin-inline-start: 120px; }
+    .f4-richtext [data-indent="5"] { margin-inline-start: 150px; }
+    .f4-richtext [data-indent="6"] { margin-inline-start: 180px; }
+    .f4-richtext [data-indent="7"] { margin-inline-start: 210px; }
+    .f4-richtext [data-indent="8"] { margin-inline-start: 240px; }
+
+    /* collapsible sections: the chevron left of a heading */
+    .f4-richtext [data-folded] { display: none !important; }
+    .f4-richtext > :is(h1, h2, h3) { position: relative; }
+    .f4-richtext > :is(h1, h2, h3)::before {
+        content: "›"; position: absolute; left: -26px; top: 0.12em; width: 20px; height: 1.1em;
+        display: grid; place-items: center; font: 600 18px/1 var(--font); color: var(--muted);
+        transform: rotate(90deg); opacity: 0; transition: opacity 0.12s, transform 0.15s; cursor: pointer;
+    }
+    .f4-richtext > :is(h1, h2, h3):hover::before { opacity: 1; }
+    .f4-richtext > :is(h1, h2, h3)[data-collapsed]::before { opacity: 1; transform: none; }
+    .f4-richtext > :is(h1, h2, h3)[data-collapsed]::after { content: " …"; color: var(--muted); font-weight: 400; }
+
+    @media (prefers-color-scheme: dark) {
+        .f4-richtext span[style*="background-color"] { color: #1d1d1f; border-radius: 2px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+    }
+    @media (forced-colors: active) {
+        .f4-richtext ul.checklist > li::before { border-color: CanvasText; }
+        .f4-richtext ul.checklist > li[data-checked]::before { background: Highlight; }
+    }
+}

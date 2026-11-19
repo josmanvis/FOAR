@@ -1,0 +1,22 @@
+// Key — a square key in the Aa popover (B, I, U, alignment, indent ...).
+
+view Key(label: String, value: String, tip: String) {
+    state Idle {
+        render {
+            Button(label, title: tip) -> on_click(Press).style(StyleKey)
+        }
+        effect Press() { emit press(value); }
+    }
+}
+
+style StyleKey {
+    flex: 1;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    background: var(--window-bg);
+    color: var(--text);
+    font-size: 14px;
+    @hover { background: var(--field-bg); }
+}

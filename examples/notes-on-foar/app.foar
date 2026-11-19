@@ -1,0 +1,586 @@
+// Notes on FOAR
+// A macOS Notes-style app written in FOAR.
+//
+// This is the entry file: its first view (NotesApp) is the root. Everything
+// else lives in the files it imports, one component per file:
+//
+//   models.foar              data types (Note, Folder)
+//   styles/theme.foar        design tokens, light/dark, animations, content CSS
+//   styles/shared.foar       named styles shared by components
+//   components/sidebar/      FolderRow, NewFolderRow, TagChip
+//   components/list/         ListHeader, HeaderBar, NoteRow, GalleryCard
+//   components/menus/        MenuItem, ContextMenu, NoteMenu
+//   components/editor/       NoteEditor, FormatBar, FormatButtons, Key, Swatch
+//   components/              Toast, PasswordSheet
+//
+// Every popup, sheet and inline editor is an explicit state of a view
+// (FolderRow: Idle/Menu/Renaming/ConfirmDelete, FormatBar: Idle/Styles/Colors/
+// Linking/Table, ...) instead of a pile of boolean flags.
+//
+// What the app shows off:
+//   * i18n: every string is t(key, params); catalogs live in locales/*.json
+//     and `foar i18n` checks them on every build. The language switches live
+//     (View options ▸ Language).
+//   * Accessibility: landmarks, listbox/option rows with a roving tabindex,
+//     menus with role=menu, labelled icon buttons, a live region for toasts,
+//     focus rings, reduced motion.
+//   * Drag and drop: drag notes onto folders or Recently Deleted (`drag:` and
+//     `-> on_drop`, styled with `@drop-over`).
+//   * Context menus at the pointer (on_context_menu receives { x, y }).
+//
+// Host functions (storage, encryption, rich-text commands, dates) live in
+// host/*.js and are called by name.
+
+import "models"
+import "styles/theme"
+import "styles/shared"
+import "components/sidebar/FolderRow"
+import "components/sidebar/NewFolderRow"
+import "components/sidebar/TagChip"
+import "components/list/ListHeader"
+import "components/list/NoteRow"
+import "components/list/GalleryCard"
+import "components/menus/ContextMenu"
+import "components/editor/NoteEditor"
+import "components/PasswordSheet"
+import "components/Toast"
+
+view NotesApp {
+    store sort: String = load_pref("sort", "edited");
+    store group_dates: bool = load_pref("group_dates", true);
+    store layout: String = load_pref("layout", "list");
+    store sidebar: bool = load_pref("sidebar", true);
+    store locale: String = current_locale();
+    store notes: Vec<Note> = load_notes();
+    store folders: Vec<Folder> = load_folders();
+    store view: String = "all";
+    store query: String = "";
+    store selected_id: String = first_in(notes, "all", "", sort, group_dates, folders);
+    store fresh_id: String = "";
+    store gallery_open: bool = false;
+    store has_pw: bool = password_exists();
+    store unlocked: bool = false;
+    store sheet: String = "";
+    store pending_lock: String = "";
+    store lock_error: String = "";
+    store menu_at: any = null;
+    store menu_items: Vec<any> = [];
+    store toast: any = null;
+
+    style {
+        layout: horizontal;
+        width: 100vw;
+        height: 100dvh;
+        overflow: hidden;
+        background: var(--window-bg);
+        color: var(--text);
+        font: 13px/1.4 var(--font);
+        -webkit-font-smoothing: antialiased;
+        animation: fade-in 0.25s ease-out;
+    }
+
+    state Ready {
+        render {
+            // ---- Sidebar ------------------------------------------------------
+            If(sidebar) {
+                Column(role: "navigation", label: t("sidebar.label")) {
+                    Row { }.style(Toolbar)
+
+                    Row(aria: { current: view == "all" ? "page" : null }) {
+                        Text("🗂", aria: { hidden: true }).style(SidebarIcon)
+                        Text(t("sidebar.allNotes")).style({ @use Ellipsis; flex: 1; })
+                        Text(count_in(notes, "all")).style(Count)
+                    } -> on_click(ShowAll)
+                        .style(SidebarItem, { background: view == "all" ? var(--sidebar-selection) : transparent; })
+
+                    Text(t("sidebar.folders"), role: "heading", aria: { level: 2 }).style(SectionLabel)
+                    List(by_name(folders), role: "list") { f =>
+                        FolderRow(folder: f, count: count_in(notes, f.id), selected: view == f.id, removable: f.id != "notes")
+                            -> on_pick(Pick)
+                            -> on_rename(RenameFolder)
+                            -> on_delete(DeleteFolder)
+                            -> on_drop_note(DropOnFolder)
+                    }
+                    If(count_in(notes, "deleted") > 0) {
+                        Row(aria: { current: view == "deleted" ? "page" : null }, title: t("sidebar.dropToDelete")) {
+                            Text("🗑", aria: { hidden: true }).style(SidebarIcon)
+                            Text(t("sidebar.deleted")).style({ @use Ellipsis; flex: 1; })
+                            Text(count_in(notes, "deleted")).style(Count)
+                        } -> on_click(ShowDeleted) -> on_drop(DropOnTrash)
+                            .style(SidebarItem, { background: view == "deleted" ? var(--sidebar-selection) : transparent; })
+                    }
+
+                    If(all_tags(notes).length > 0) {
+                        Text(t("sidebar.tags"), role: "heading", aria: { level: 2 }).style(SectionLabel)
+                        List(all_tags(notes), role: "list") { tg =>
+                            TagChip(tag: tg, selected: view == "tag:" + tg.name) -> on_pick(Pick)
+                        }.style({ display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 8px; })
+                    }
+
+                    Text("").style({ flex: 1; min-height: 20px; })
+                    If(unlocked) {
+                        Button("🔒  " + t("sidebar.lockAll"), title: t("sidebar.lockAllHint")) -> on_click(CloseLocked)
+                            .style(SidebarFooterButton)
+                    }
+                    NewFolderRow() -> on_create(CreateFolder)
+                } -> on_context_menu(SidebarMenu)
+                    .style(Sidebar)
+                Row(role: "separator", label: t("sidebar.resize"), tab_index: 0, aria: { orientation: "vertical" }) { }
+                    .style(SidebarSplitter)
+            }
+
+            // ---- List layout ----------------------------------------------------
+            If(layout == "list") {
+                Column(role: "region", label: t("list.label")) {
+                    ListHeader(
+                        title: view_title(view, folders),
+                        count: count_visible(notes, view, query, sort, group_dates, folders),
+                        sort: sort, group_dates: group_dates, layout: layout,
+                        in_trash: view == "deleted", sidebar: sidebar, locale: locale
+                    )
+                        -> on_new(NewNote) -> on_sort(SetSort) -> on_group(ToggleGroup)
+                        -> on_layout(SetLayout) -> on_empty(EmptyTrash) -> on_sidebar(ToggleSidebar)
+                        -> on_locale(SetLocale)
+
+                    Input(value: query, placeholder: t("list.search"), label: t("list.searchLabel")) -> on_input(Search)
+                        .style(Field, { margin: 0 12px 6px; flex-shrink: 0; })
+
+                    List(note_groups(notes, view, query, sort, group_dates, folders), empty: empty_text(view, query),
+                        role: "listbox", label: view_title(view, folders)) { g =>
+                        If(g.label != "") { Text(g.label, role: "presentation").style(GroupLabel) }
+                        List(g.notes) { note =>
+                            NoteRow(
+                                note: note, selected: note.id == selected_id, folders: folders, unlocked: unlocked,
+                                date: sort == "created" ? note.created : note.updated,
+                                folder_label: view == "all" || view.startsWith("tag:") || query != "" ? folder_name(folders, note.folder) : ""
+                            ) -> on_select(Select) -> on_action(NoteAction)
+                        }.style({ display: contents; })
+                    } -> on_context_menu(ListMenu)
+                        .style(NoteScroller)
+                }.style(ListPane)
+                Row(role: "separator", label: t("list.resize"), tab_index: 0, aria: { orientation: "vertical" }) { }
+                    .style(ListSplitter)
+
+                List(notes.filter(|n| n.id == selected_id), empty: "") { note =>
+                    NoteEditor(note: note, unlocked: unlocked, folders: folders, gallery: false, fresh: note.id == fresh_id, lock_error: lock_error)
+                        -> on_edit(EditNote) -> on_action(NoteAction) -> on_unlock(UnlockFromPane) -> on_close_locked(CloseLocked)
+                }.style(EditorPane)
+            }
+
+            // ---- Gallery layout -------------------------------------------------
+            If(layout == "gallery" && !gallery_open) {
+                Column(role: "region", label: t("list.label")) {
+                    ListHeader(
+                        title: view_title(view, folders),
+                        count: count_visible(notes, view, query, sort, group_dates, folders),
+                        sort: sort, group_dates: group_dates, layout: layout,
+                        in_trash: view == "deleted", sidebar: sidebar, locale: locale
+                    )
+                        -> on_new(NewNote) -> on_sort(SetSort) -> on_group(ToggleGroup)
+                        -> on_layout(SetLayout) -> on_empty(EmptyTrash) -> on_sidebar(ToggleSidebar)
+                        -> on_locale(SetLocale)
+
+                    Input(value: query, placeholder: t("list.search"), label: t("list.searchLabel")) -> on_input(Search)
+                        .style(Field, { width: 320px; margin: 0 22px 6px; flex-shrink: 0; })
+
+                    List(note_groups(notes, view, query, sort, group_dates, folders), empty: empty_text(view, query),
+                        role: "listbox", label: view_title(view, folders)) { g =>
+                        If(g.label != "") { Text(g.label, role: "presentation").style(GroupLabel) }
+                        List(g.notes) { note =>
+                            GalleryCard(note: note, selected: note.id == selected_id, folders: folders, unlocked: unlocked)
+                                -> on_select(Select) -> on_open(OpenNote) -> on_action(NoteAction)
+                        }.style(GalleryGrid)
+                    } -> on_context_menu(ListMenu)
+                        .style(GalleryScroller)
+                }.style({ flex: 1; gap: 0; min-width: 0; background: var(--list-bg); })
+            }
+            If(layout == "gallery" && gallery_open) {
+                List(notes.filter(|n| n.id == selected_id), empty: "") { note =>
+                    NoteEditor(note: note, unlocked: unlocked, folders: folders, gallery: true, fresh: note.id == fresh_id, lock_error: lock_error)
+                        -> on_edit(EditNote) -> on_action(NoteAction) -> on_unlock(UnlockFromPane)
+                        -> on_close_locked(CloseLocked) -> on_back(CloseGallery)
+                }.style(EditorPane)
+            }
+
+            // ---- Overlays ---------------------------------------------------------
+            If(menu_at != null) {
+                ContextMenu(at: menu_at, items: menu_items, label: t("menu.label")) -> on_pick(MenuPick) -> on_close(CloseMenu)
+            }
+            If(sheet != "") {
+                PasswordSheet(mode: sheet, error: lock_error, hint: password_hint())
+                    -> on_submit(SubmitPassword) -> on_cancel(CloseSheet)
+            }
+            // Live region: toasts are announced by screen readers.
+            Column(role: "status", aria: { live: "polite" }) {
+                If(toast != null) {
+                    Toast(toast: toast) -> on_undo(UndoToast) -> on_close(HideToast)
+                }
+            }.style({ display: contents; })
+        }
+
+        // ---- navigation ---------------------------------------------------------
+        effect ShowAll() {
+            view = "all";
+            query = "";
+            gallery_open = false;
+            selected_id = first_in(notes, view, query, sort, group_dates, folders);
+        }
+
+        effect ShowDeleted() {
+            view = "deleted";
+            query = "";
+            gallery_open = false;
+            selected_id = first_in(notes, view, query, sort, group_dates, folders);
+        }
+
+        effect Pick(v: String) {
+            view = v;
+            query = "";
+            gallery_open = false;
+            selected_id = first_in(notes, view, query, sort, group_dates, folders);
+        }
+
+        effect Select(id: String) { selected_id = id; }
+        effect OpenNote(id: String) { selected_id = id; gallery_open = true; }
+        effect CloseGallery(x: any) { gallery_open = false; }
+
+        // ↑/↓ in the note list (host/ux.js), Home/End with dir = -999/999.
+        effect Nav(dir: i32) {
+            let next = neighbor_of(notes, view, query, sort, group_dates, folders, selected_id, dir);
+            if next != "" { selected_id = next; }
+        }
+
+        effect Search(text: String) {
+            query = text;
+            let first = first_in(notes, view, query, sort, group_dates, folders);
+            if !query.is_empty() && first != "" { selected_id = first; }
+        }
+
+        // ---- notes ----------------------------------------------------------------
+        effect NewNote(x: any) {
+            let id = random_uuid();
+            let now = Date.now();
+            let target = folders.some(|f| f.id == view) ? view : "notes";
+            notes = [Note { id: id, folder: target, title: "", html: "<h1><br></h1>", created: now, updated: now, pinned: false, deleted_at: 0, locked: false }, ...notes];
+            if view == "deleted" { view = "all"; }
+            if view.startsWith("tag:") { view = "all"; }
+            query = "";
+            selected_id = id;
+            fresh_id = id;
+            if layout == "gallery" { gallery_open = true; }
+            persist(notes);
+        }
+
+        effect EditNote(e: any) {
+            notes = notes.map(|n| n.id == e.id ? { ...n, html: e.html, title: title_of(e.html), updated: Date.now() } : n);
+            persist(notes);
+        }
+
+        effect NoteAction(a: any) {
+            let now = Date.now();
+            if a.kind == "pin" {
+                notes = notes.map(|n| n.id == a.id ? { ...n, pinned: !n.pinned } : n);
+            } else if a.kind == "move" {
+                let before = notes.find(|n| n.id == a.id);
+                if before != null && before.folder != a.folder {
+                    notes = notes.map(|n| n.id == a.id ? { ...n, folder: a.folder } : n);
+                    if !a.quiet {
+                        toast = { id: random_uuid(), key: t_key("toast.moved"), params: { folder: folder_name(folders, a.folder) }, undo: { kind: "move", id: a.id, folder: before.folder, quiet: true } };
+                        later("HideToast", toast.id, 6000);
+                    }
+                }
+                if !a.dropped { selected_id = a.id; }
+                if a.dropped && view != "all" && !view.startsWith("tag:") && selected_id == a.id {
+                    selected_id = first_in(notes, view, query, sort, group_dates, folders);
+                }
+            } else if a.kind == "duplicate" {
+                let src = notes.find(|n| n.id == a.id);
+                let copy = { ...src, id: random_uuid(), created: now, updated: now, pinned: false };
+                notes = [copy, ...notes];
+                selected_id = copy.id;
+            } else if a.kind == "delete" {
+                notes = notes.map(|n| n.id == a.id ? { ...n, deleted_at: now, pinned: false } : n);
+                if selected_id == a.id { selected_id = first_in(notes, view, query, sort, group_dates, folders); }
+                toast = { id: random_uuid(), key: t_key("toast.deleted"), params: null, undo: { kind: "recover", id: a.id, quiet: true } };
+                later("HideToast", toast.id, 6000);
+            } else if a.kind == "recover" {
+                notes = notes.map(|n| n.id == a.id ? { ...n, deleted_at: 0, folder: folders.some(|f| f.id == n.folder) ? n.folder : "notes" } : n);
+                if a.quiet {
+                    selected_id = a.id;
+                    if view == "deleted" { view = "all"; }
+                } else {
+                    selected_id = first_in(notes, view, query, sort, group_dates, folders);
+                }
+            } else if a.kind == "purge" {
+                notes.retain(|n| n.id != a.id);
+                selected_id = first_in(notes, view, query, sort, group_dates, folders);
+            } else if a.kind == "lock" {
+                if !has_pw {
+                    pending_lock = a.id;
+                    sheet = "create";
+                } else if !unlocked {
+                    pending_lock = a.id;
+                    sheet = "enter";
+                } else {
+                    notes = notes.map(|n| n.id == a.id ? { ...n, locked: true } : n);
+                }
+            } else if a.kind == "remove_lock" {
+                notes = notes.map(|n| n.id == a.id ? { ...n, locked: false } : n);
+            } else {
+                note_command(a.kind, notes.find(|n| n.id == a.id));
+            }
+            persist(notes);
+        }
+
+        // Drag and drop from the note list onto the sidebar.
+        effect DropOnFolder(e: any) {
+            let n = notes.find(|x| x.id == e.id);
+            if n != null && n.deleted_at > 0 {
+                notes = notes.map(|x| x.id == e.id ? { ...x, deleted_at: 0 } : x);
+            }
+            later("NoteAction", { kind: "move", id: e.id, folder: e.folder, dropped: true }, 0);
+        }
+        effect DropOnTrash(id: any) {
+            let n = notes.find(|x| x.id == id);
+            if n != null && n.deleted_at == 0 { later("NoteAction", { kind: "delete", id: id }, 0); }
+        }
+
+        effect EmptyTrash(x: any) {
+            notes.retain(|n| n.deleted_at == 0);
+            view = "all";
+            selected_id = first_in(notes, view, query, sort, group_dates, folders);
+            persist(notes);
+        }
+
+        // ---- folders ----------------------------------------------------------------
+        effect CreateFolder(name: String) {
+            let id = random_uuid();
+            folders = [...folders, { id: id, name: unique_name(name, folders) }];
+            view = id;
+            query = "";
+            selected_id = "";
+            persist_folders(folders);
+        }
+
+        effect RenameFolder(e: any) {
+            folders = folders.map(|f| f.id == e.id ? { ...f, name: e.name } : f);
+            persist_folders(folders);
+        }
+
+        effect DeleteFolder(id: String) {
+            let now = Date.now();
+            notes = notes.map(|n| n.folder == id && n.deleted_at == 0 ? { ...n, deleted_at: now, pinned: false } : n);
+            folders.retain(|f| f.id != id);
+            if view == id { view = "all"; }
+            selected_id = first_in(notes, view, query, sort, group_dates, folders);
+            persist(notes);
+            persist_folders(folders);
+        }
+
+        // ---- context menus (sidebar background, list background) --------------------
+        effect SidebarMenu(p: any) {
+            menu_items = [
+                { label: t("sidebar.newFolder"), value: "new-folder", hint: "Ctrl/⌘ ⇧ N" },
+                { sep: true },
+                { label: sidebar ? t("header.hideSidebar") : t("header.showSidebar"), value: "sidebar" },
+            ];
+            menu_at = p;
+        }
+        effect ListMenu(p: any) {
+            menu_items = [
+                { label: t("menu.newNote"), value: "new-note", hint: "Ctrl/⌘ ⌥ N", disabled: view == "deleted" },
+                { sep: true, disabled: view == "deleted" },
+                { title: t("view.viewAs") },
+                { label: t("view.list"), value: "layout:list", check: layout == "list" },
+                { label: t("view.gallery"), value: "layout:gallery", check: layout == "gallery" },
+                { sep: true },
+                { title: t("view.sortBy") },
+                { label: t("sort.edited"), value: "sort:edited", check: sort == "edited" },
+                { label: t("sort.created"), value: "sort:created", check: sort == "created" },
+                { label: t("sort.title"), value: "sort:title", check: sort == "title" },
+                { sep: true },
+                { label: t("view.group"), value: "group", check: group_dates },
+            ].filter(|i| !i.disabled);
+            menu_at = p;
+        }
+        effect MenuPick(v: String) {
+            menu_at = null;
+            if v == "new-folder" {
+                start_new_folder();
+            } else if v == "new-note" {
+                later("NewNote", true, 0);
+            } else if v == "sidebar" {
+                sidebar = !sidebar;
+                save_pref("sidebar", sidebar);
+            } else if v == "group" {
+                group_dates = !group_dates;
+                save_pref("group_dates", group_dates);
+            } else if v.startsWith("layout:") {
+                layout = v.slice(7);
+                gallery_open = false;
+                save_pref("layout", layout);
+            } else if v.startsWith("sort:") {
+                sort = v.slice(5);
+                save_pref("sort", sort);
+            }
+        }
+        effect CloseMenu(x: any) { menu_at = null; }
+
+        // ---- toasts ---------------------------------------------------------------------
+        effect UndoToast(u: any) {
+            toast = null;
+            later("NoteAction", u, 0);
+        }
+        effect ShowToast(m: any) {
+            toast = { id: m.id, key: m.key, params: m.params, undo: null };
+            later("HideToast", m.id, 5000);
+        }
+        effect HideToast(id: any) {
+            if toast != null && (id == true || toast.id == id) { toast = null; }
+        }
+
+        // ---- view options -----------------------------------------------------------
+        effect SetSort(s: String) { sort = s; save_pref("sort", s); }
+        effect ToggleGroup(x: any) { group_dates = !group_dates; save_pref("group_dates", group_dates); }
+        effect SetLayout(l: String) { layout = l; gallery_open = false; save_pref("layout", l); }
+        effect ToggleSidebar(x: any) { sidebar = !sidebar; save_pref("sidebar", sidebar); }
+        effect SetLocale(l: String) { locale = l; set_locale(l); }
+
+        // ---- locked notes -----------------------------------------------------------
+        effect SubmitPassword(p: any) {
+            lock_error = "";
+            if sheet == "create" {
+                create_password(p.password, p.hint);
+            } else {
+                unlock_notes(p.password);
+            }
+        }
+
+        effect UnlockFromPane(pw: String) {
+            lock_error = "";
+            unlock_notes(pw);
+        }
+
+        // Called by host/lock.js once the password is set up.
+        effect PasswordCreated(x: any) {
+            has_pw = true;
+            unlocked = true;
+            sheet = "";
+            if pending_lock != "" {
+                notes = notes.map(|n| n.id == pending_lock ? { ...n, locked: true } : n);
+                pending_lock = "";
+                persist(notes);
+            }
+        }
+
+        // Called by host/lock.js with { [noteId]: decryptedHtml }.
+        effect Unlocked(plain: any) {
+            notes = notes.map(|n| plain[n.id] !== undefined ? { ...n, html: plain[n.id] } : n);
+            unlocked = true;
+            sheet = "";
+            lock_error = "";
+            if pending_lock != "" {
+                notes = notes.map(|n| n.id == pending_lock ? { ...n, locked: true } : n);
+                pending_lock = "";
+                persist(notes);
+            }
+        }
+
+        effect UnlockFailed(x: any) { lock_error = t("lock.errWrong"); }
+
+        effect CloseLocked(x: any) {
+            close_locked();
+            notes = notes.map(|n| n.locked ? { ...n, html: "" } : n);
+            unlocked = false;
+        }
+
+        effect CloseSheet(x: any) {
+            sheet = "";
+            pending_lock = "";
+            lock_error = "";
+        }
+
+        // Esc
+        effect Cancel() {
+            if menu_at != null {
+                menu_at = null;
+            } else if sheet != "" {
+                sheet = "";
+                pending_lock = "";
+                lock_error = "";
+            } else if gallery_open {
+                gallery_open = false;
+            }
+        }
+    }
+}
+
+style Sidebar {
+    box-sizing: border-box;
+    width: var(--sidebar-w);
+    min-width: 170px;
+    max-width: 420px;
+    flex-shrink: 0;
+    gap: 1px;
+    padding: 0 10px 10px;
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--hairline);
+    overflow-y: auto;
+    animation: fade-in 0.15s ease-out;
+}
+
+style SidebarFooterButton {
+    height: 30px;
+    padding: 0 10px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--muted);
+    font: 13px var(--font);
+    text-align: left;
+    flex-shrink: 0;
+    @hover { background: var(--sidebar-selection); color: var(--text); }
+}
+
+style ListPane {
+    box-sizing: border-box;
+    width: var(--list-w);
+    min-width: 220px;
+    max-width: 640px;
+    flex-shrink: 0;
+    gap: 0;
+    min-height: 0;
+    background: var(--list-bg);
+    border-right: 1px solid var(--hairline);
+}
+
+style NoteScroller {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding-bottom: 12px;
+}
+
+style EditorPane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--window-bg);
+}
+
+style GalleryScroller {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 0 10px 30px;
+}
+
+style GalleryGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 22px 18px;
+    padding: 4px 12px 10px;
+}

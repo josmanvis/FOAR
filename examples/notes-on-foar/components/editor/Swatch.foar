@@ -1,0 +1,22 @@
+// Swatch — a colour in the colours popover.
+
+view Swatch(color: String, name: String, text: bool) {
+    state Idle {
+        render {
+            Button(color == "" ? "⊘" : (text ? "A" : ""), title: name) -> on_click(Pick)
+                .style({
+                    width: 22px;
+                    height: 22px;
+                    padding: 0;
+                    border-radius: 50%;
+                    border: 1px solid var(--hairline);
+                    color: text && color != "" ? color : var(--muted);
+                    font: 700 13px/1 var(--font);
+                    background: text || color == "" ? transparent : color;
+                    transition: transform 0.1s;
+                    @hover { transform: scale(1.15); }
+                })
+        }
+        effect Pick() { emit pick(color); }
+    }
+}

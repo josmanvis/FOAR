@@ -1,0 +1,216 @@
+// FormatBar — the formatting toolbar; each popover (Aa styles, colours, table, link) is a state.
+// host/editor.js keeps the editor selection while these buttons are used.
+import "styles/shared"
+import "./FormatButtons"
+import "./Key"
+import "./Swatch"
+import "components/menus/MenuItem"
+
+view FormatBar {
+    store url: String = "";
+    store ctx: String = "";
+    style { position: relative; }
+
+    state Idle {
+        render {
+            FormatButtons(open: "") -> on_styles(OpenStyles) -> on_link(AskLink) -> on_colors(OpenColors) -> on_table(OpenTable)
+        }
+        effect OpenStyles(x: any) { ctx = fmt("context", ""); transition Styles; }
+        effect OpenColors(x: any) { transition Colors; }
+        effect OpenTable(x: any) {
+            ctx = fmt("context", "");
+            if ctx.includes("|table|") { transition Table; } else { fmt("table", ""); }
+        }
+        effect AskLink(x: any) {
+            url = fmt("link-target", "");
+            transition Linking;
+        }
+    }
+
+    state Styles {
+        render {
+            FormatButtons(open: "styles") -> on_styles(Close) -> on_link(AskLink) -> on_colors(OpenColors) -> on_table(OpenTable)
+            Column(role: "menu", label: t("fmt.styles")) {
+                Row(role: "group", label: t("fmt.fontGroup")) {
+                    Key(label: "B", value: "bold", tip: t("fmt.bold") + " (Ctrl/⌘ B)") -> on_press(Do)
+                    Key(label: "I", value: "italic", tip: t("fmt.italic") + " (Ctrl/⌘ I)") -> on_press(Do)
+                    Key(label: "U", value: "underline", tip: t("fmt.underline") + " (Ctrl/⌘ U)") -> on_press(Do)
+                    Key(label: "S", value: "strikeThrough", tip: t("fmt.strike") + " (Ctrl/⌘ ⇧ X)") -> on_press(Do)
+                }.style(KeyRow, { font-family: Georgia, serif; })
+                Row(role: "group", label: t("fmt.sizeGroup")) {
+                    Key(label: "x²", value: "superscript", tip: t("fmt.superscript")) -> on_press(Do)
+                    Key(label: "x₂", value: "subscript", tip: t("fmt.subscript")) -> on_press(Do)
+                    Key(label: "A−", value: "smaller", tip: t("fmt.smaller")) -> on_press(Do)
+                    Key(label: "A+", value: "bigger", tip: t("fmt.bigger")) -> on_press(Do)
+                }.style(KeyRow)
+                Row(role: "group", label: t("fmt.alignGroup")) {
+                    Key(label: "⇤", value: "align:left", tip: t("align.left")) -> on_press(Do)
+                    Key(label: "↔", value: "align:center", tip: t("align.center")) -> on_press(Do)
+                    Key(label: "⇥", value: "align:right", tip: t("align.right")) -> on_press(Do)
+                    Key(label: "☰", value: "align:justify", tip: t("align.justify")) -> on_press(Do)
+                }.style(KeyRow)
+                Row(role: "group", label: t("fmt.indentGroup")) {
+                    Key(label: "⇠", value: "outdent", tip: t("fmt.outdent") + " (Ctrl/⌘ [)") -> on_press(Do)
+                    Key(label: "⇢", value: "indent", tip: t("fmt.indent") + " (Ctrl/⌘ ])") -> on_press(Do)
+                    Key(label: "⇡", value: "move-up", tip: t("fmt.moveUp")) -> on_press(Do)
+                    Key(label: "⇣", value: "move-down", tip: t("fmt.moveDown")) -> on_press(Do)
+                }.style(KeyRow)
+                Text("", role: "separator").style(MenuSep)
+                MenuItem(label: t("style.title"), value: "block:h1", check: ctx.includes("|h1|"), hint: "Ctrl/⌘ ⌥ 1") -> on_pick(Pick)
+                MenuItem(label: t("style.heading"), value: "block:h2", check: ctx.includes("|h2|"), hint: "Ctrl/⌘ ⌥ 2") -> on_pick(Pick)
+                MenuItem(label: t("style.subheading"), value: "block:h3", check: ctx.includes("|h3|"), hint: "Ctrl/⌘ ⌥ 3") -> on_pick(Pick)
+                MenuItem(label: t("style.body"), value: "block:p", check: ctx.includes("|p|"), hint: "Ctrl/⌘ ⌥ 0") -> on_pick(Pick)
+                MenuItem(label: t("style.mono"), value: "block:pre", check: ctx.includes("|pre|"), hint: "Ctrl/⌘ ⌥ M") -> on_pick(Pick)
+                Text("", role: "separator").style(MenuSep)
+                MenuItem(label: "•  " + t("list.bullet"), value: "list:bullet", check: ctx.includes("|bullet|"), hint: "Ctrl/⌘ ⇧ 7") -> on_pick(Pick)
+                MenuItem(label: "–  " + t("list.dash"), value: "list:dash", check: ctx.includes("|dash|"), hint: "Ctrl/⌘ ⇧ 8") -> on_pick(Pick)
+                MenuItem(label: "1.  " + t("list.number"), value: "list:number", check: ctx.includes("|number|"), hint: "Ctrl/⌘ ⇧ 9") -> on_pick(Pick)
+                MenuItem(label: "◯  " + t("list.check"), value: "checklist", check: ctx.includes("|check|"), hint: "Ctrl/⌘ ⇧ L") -> on_pick(Pick)
+                MenuItem(label: "▍ " + t("style.quote"), value: "quote", check: ctx.includes("|blockquote|"), hint: "Ctrl/⌘ '") -> on_pick(Pick)
+                If(ctx.includes("|has-checklist|")) {
+                    Text("", role: "separator").style(MenuSep)
+                    MenuItem(label: t("check.mark"), value: "mark-checked", hint: "Ctrl/⌘ ⇧ U") -> on_pick(Pick)
+                    MenuItem(label: t("check.all"), value: "check-all") -> on_pick(Pick)
+                    MenuItem(label: t("check.none"), value: "uncheck-all") -> on_pick(Pick)
+                    MenuItem(label: t("check.toBottom"), value: "checked-to-bottom") -> on_pick(Pick)
+                    MenuItem(label: t("check.deleteChecked"), value: "delete-checked", danger: true) -> on_pick(Pick)
+                }
+                Text("", role: "separator").style(MenuSep)
+                MenuItem(label: t("section.collapseAll"), value: "collapse-all") -> on_pick(Pick)
+                MenuItem(label: t("section.expandAll"), value: "expand-all") -> on_pick(Pick)
+                Text("", role: "separator").style(MenuSep)
+                MenuItem(label: t("style.copy"), value: "copy-style", hint: "Ctrl/⌘ ⌥ C") -> on_pick(Pick)
+                If(ctx.includes("|can-paste-style|")) {
+                    MenuItem(label: t("style.paste"), value: "paste-style", hint: "Ctrl/⌘ ⌥ V") -> on_pick(Pick)
+                }
+            }.style(Menu, { left: 0; top: 34px; width: 260px; })
+        }
+        // Keys keep the popover open (like the Aa popover in Notes); styles refresh the checkmarks.
+        effect Do(v: String) { fmt(v, ""); ctx = fmt("context", ""); }
+        effect Pick(v: String) { fmt(v, ""); ctx = fmt("context", ""); }
+        effect OpenColors(x: any) { transition Colors; }
+        effect OpenTable(x: any) {
+            ctx = fmt("context", "");
+            if ctx.includes("|table|") {
+                transition Table;
+            } else {
+                fmt("table", "");
+                transition Idle;
+            }
+        }
+        effect AskLink(x: any) {
+            url = fmt("link-target", "");
+            transition Linking;
+        }
+        effect Close(x: any) { transition Idle; }
+        effect Dismiss() { transition Idle; }
+    }
+
+    state Colors {
+        render {
+            FormatButtons(open: "colors") -> on_styles(OpenStyles) -> on_link(AskLink) -> on_colors(Close) -> on_table(OpenTable)
+            Column(role: "menu", label: t("fmt.colors")) {
+                Text(t("colors.highlight"), aria: { hidden: true }).style(MenuTitle, { padding-left: 10px; })
+                Row(role: "group", label: t("colors.highlight")) {
+                    Swatch(color: "#d9b8ff", name: t("color.purple"), text: false) -> on_pick(Highlight)
+                    Swatch(color: "#ffb3d1", name: t("color.pink"), text: false) -> on_pick(Highlight)
+                    Swatch(color: "#ffd59e", name: t("color.orange"), text: false) -> on_pick(Highlight)
+                    Swatch(color: "#b8f0d8", name: t("color.mint"), text: false) -> on_pick(Highlight)
+                    Swatch(color: "#b5d8ff", name: t("color.blue"), text: false) -> on_pick(Highlight)
+                    Swatch(color: "", name: t("color.none"), text: false) -> on_pick(Highlight)
+                }.style({ gap: 8px; padding: 6px 10px 8px; })
+                Text(t("colors.text"), aria: { hidden: true }).style(MenuTitle, { padding-left: 10px; })
+                Row(role: "group", label: t("colors.text")) {
+                    Swatch(color: "#d70015", name: t("color.red"), text: true) -> on_pick(TextColor)
+                    Swatch(color: "#c75300", name: t("color.orange"), text: true) -> on_pick(TextColor)
+                    Swatch(color: "#248a3d", name: t("color.green"), text: true) -> on_pick(TextColor)
+                    Swatch(color: "#0a66d6", name: t("color.blue"), text: true) -> on_pick(TextColor)
+                    Swatch(color: "#8944ab", name: t("color.purple"), text: true) -> on_pick(TextColor)
+                    Swatch(color: "#6e6e73", name: t("color.gray"), text: true) -> on_pick(TextColor)
+                    Swatch(color: "", name: t("color.default"), text: true) -> on_pick(TextColor)
+                }.style({ gap: 8px; padding: 6px 10px 8px; })
+            }.style(Menu, { left: 100px; top: 34px; min-width: 0; })
+        }
+        effect Highlight(c: String) { fmt("highlight", c); transition Idle; }
+        effect TextColor(c: String) { fmt("color", c); transition Idle; }
+        effect OpenStyles(x: any) { ctx = fmt("context", ""); transition Styles; }
+        effect OpenTable(x: any) {
+            ctx = fmt("context", "");
+            if ctx.includes("|table|") {
+                transition Table;
+            } else {
+                fmt("table", "");
+                transition Idle;
+            }
+        }
+        effect AskLink(x: any) {
+            url = fmt("link-target", "");
+            transition Linking;
+        }
+        effect Close(x: any) { transition Idle; }
+        effect Dismiss() { transition Idle; }
+    }
+
+    state Table {
+        render {
+            FormatButtons(open: "table") -> on_styles(OpenStyles) -> on_link(AskLink) -> on_colors(OpenColors) -> on_table(Close)
+            Column(role: "menu", label: t("fmt.table")) {
+                MenuItem(label: t("table.rowAbove"), value: "row-above") -> on_pick(Op)
+                MenuItem(label: t("table.rowBelow"), value: "row-below") -> on_pick(Op)
+                MenuItem(label: t("table.colBefore"), value: "col-before") -> on_pick(Op)
+                MenuItem(label: t("table.colAfter"), value: "col-after") -> on_pick(Op)
+                Text("", role: "separator").style(MenuSep)
+                MenuItem(label: t("table.deleteRow"), value: "delete-row", danger: true) -> on_pick(Op)
+                MenuItem(label: t("table.deleteCol"), value: "delete-col", danger: true) -> on_pick(Op)
+                Text("", role: "separator").style(MenuSep)
+                MenuItem(label: t("table.toText"), value: "to-text") -> on_pick(Op)
+                MenuItem(label: t("table.delete"), value: "delete-table", danger: true) -> on_pick(Op)
+            }.style(Menu, { left: 36px; top: 34px; })
+        }
+        effect Op(v: String) { fmt("table-op", v); transition Idle; }
+        effect OpenStyles(x: any) { ctx = fmt("context", ""); transition Styles; }
+        effect OpenColors(x: any) { transition Colors; }
+        effect AskLink(x: any) {
+            url = fmt("link-target", "");
+            transition Linking;
+        }
+        effect Close(x: any) { transition Idle; }
+        effect Dismiss() { transition Idle; }
+    }
+
+    state Linking {
+        render {
+            FormatButtons(open: "link") -> on_styles(OpenStyles) -> on_link(Close) -> on_colors(OpenColors) -> on_table(OpenTable)
+            Column(role: "dialog", label: t("link.add")) {
+                Text(t("link.add"), aria: { hidden: true }).style(MenuTitle, { padding-left: 10px; })
+                Input(value: url, placeholder: t("link.placeholder"), label: t("link.urlLabel"), autofocus: true) -> on_input(Url) -> on_enter(Apply)
+                    .style(Field, { margin: 4px 8px; width: 260px; })
+                Row {
+                    Button(t("common.remove")) -> on_click(Remove).style(TextButton)
+                    Text("").style({ flex: 1; })
+                    Button(t("common.cancel")) -> on_click(Close).style(TextButton)
+                    Button(t("common.ok")) -> on_click(Apply).style(PrimaryButton)
+                }.style({ gap: 6px; padding: 4px 8px 6px; })
+            }.style(Menu, { left: 70px; top: 34px; })
+        }
+        effect Url(v: String) { url = v; }
+        effect Apply() { fmt("link", url); transition Idle; }
+        effect Remove() { fmt("unlink", ""); transition Idle; }
+        effect OpenStyles(x: any) { ctx = fmt("context", ""); transition Styles; }
+        effect OpenColors(x: any) { transition Colors; }
+        effect OpenTable(x: any) {
+            ctx = fmt("context", "");
+            if ctx.includes("|table|") {
+                transition Table;
+            } else {
+                fmt("table", "");
+                transition Idle;
+            }
+        }
+        effect Close(x: any) { fmt("restore-selection", ""); transition Idle; }
+        effect Dismiss() { transition Idle; }
+        effect Cancel() { fmt("restore-selection", ""); transition Idle; }
+    }
+}
+
+style KeyRow { gap: 4px; padding: 3px 4px; }

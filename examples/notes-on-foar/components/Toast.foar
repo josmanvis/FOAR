@@ -1,0 +1,37 @@
+// Toast — bottom-centre notification with Undo (a live region).
+import "styles/shared"
+
+view Toast(toast: any) {
+    style {
+        position: fixed;
+        left: 50%;
+        bottom: 22px;
+        z-index: 400;
+        transform: translateX(-50%);
+        animation: toast-in 0.18s ease-out;
+    }
+    state Showing {
+        render {
+            Row {
+                // Stored as key + params so a language switch re-translates it.
+                Text(t(toast.key, toast.params)).style({ @use Ellipsis; max-width: 420px; })
+                If(toast.undo != null) {
+                    Button(t("toast.undo")) -> on_click(Undo)
+                        .style({ border: none; background: transparent; color: var(--link); font: 600 13px var(--font); padding: 4px 6px; border-radius: 5px; @hover { background: var(--field-bg); } })
+                }
+                Button("✕", title: t("common.close")) -> on_click(Close)
+                    .style({ border: none; background: transparent; color: var(--muted); font-size: 12px; width: 24px; height: 24px; border-radius: 12px; @hover { background: var(--field-bg); } })
+            }.style({
+                gap: 10px;
+                padding: 8px 8px 8px 16px;
+                border-radius: 12px;
+                background: var(--menu-bg);
+                backdrop-filter: blur(20px);
+                box-shadow: var(--shadow);
+                font-size: 13px;
+            })
+        }
+        effect Undo() { emit undo(toast.undo); }
+        effect Close() { emit close(true); }
+    }
+}

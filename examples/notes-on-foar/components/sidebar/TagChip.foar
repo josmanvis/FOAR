@@ -1,0 +1,23 @@
+// TagChip — a #tag filter in the sidebar.
+
+view TagChip(tag: any, selected: bool) {
+    state Idle {
+        render {
+            Button("#" + tag.name, aria: { pressed: selected }, title: t("list.count", { count: tag.count })) -> on_click(Pick)
+                .style({
+                    height: 24px;
+                    padding: 0 10px;
+                    border: none;
+                    border-radius: 12px;
+                    font: 500 12px var(--font);
+                    background: selected ? var(--accent) : var(--field-bg);
+                    color: selected ? #1d1d1f : var(--text);
+                    @hover { filter: brightness(0.95); }
+                })
+        }
+        effect Pick() {
+            let v = "tag:" + tag.name;
+            emit pick(v);
+        }
+    }
+}

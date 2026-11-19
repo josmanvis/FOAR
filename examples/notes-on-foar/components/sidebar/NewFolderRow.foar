@@ -1,0 +1,30 @@
+// NewFolderRow — "New Folder" button that turns into an inline name field.
+import "styles/shared"
+
+view NewFolderRow {
+    store draft: String = "";
+
+    state Idle {
+        render {
+            Button("⊕  " + t("sidebar.newFolder"), title: t("sidebar.newFolderHint")) -> on_click(Start).style(SidebarFooterButton)
+        }
+        effect Start() { draft = t("sidebar.newFolder"); transition Naming; }
+    }
+
+    state Naming {
+        render {
+            Row {
+                Text("📁", aria: { hidden: true }).style(SidebarIcon)
+                Input(value: draft, autofocus: true, label: t("folder.nameLabel")) -> on_input(Draft) -> on_enter(Commit) -> on_blur(Commit)
+                    .style(RenameField)
+            }.style(SidebarItem)
+        }
+        effect Draft(v: String) { draft = v; }
+        effect Commit() {
+            let name = draft.trim();
+            if name != "" { emit create(name); }
+            transition Idle;
+        }
+        effect Cancel() { transition Idle; }
+    }
+}
