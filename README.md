@@ -81,6 +81,7 @@ program and what it imports.
 | `web/foar-compiler.js` | Browser front-end: runs the Rust compiler as WASM (or via the dev server), plus playground helpers |
 | `web/playground.js`, `web/index.html` | Browser playground: live preview, state-machine inspector |
 | `web/workspace.js`, `web/foar-highlight.js` | Playground workspace: file tree, tabs, highlighted editor, saving |
+| `web/layout.js`, `web/palette.js`, `web/search.js`, `web/findbar.js` | Workbench: layout and status bar, command palette / quick open, project search, find in file |
 | `server.js` | Zero-dependency static server for the playground (`pnpm dev`) |
 | `test/` | Runtime test suite (`pnpm test`, runs in happy-dom) |
 | `bench/` | Interaction benchmark (`pnpm bench`) |
@@ -318,6 +319,37 @@ foar i18n locales app.foar host/*.js                 # check translation catalog
   `?src=<url of its .foar entry>` is saved to disk with **Ctrl+S** if its dev
   server offers the project API below; the app then rebuilds and reloads, and
   files changed on disk by another editor flow into the playground.
+
+- **Workbench**: an activity bar (Explorer, Search), a command center in the
+  title bar, and toggles for the sidebar, preview, tools (state machines,
+  compiled JS, AST) and zen mode. Every divider can be dragged, moved with the
+  arrow keys or reset with a double-click; the layout is remembered. The status
+  bar shows the project, save state, compile errors (click or F8 to jump),
+  line/column and compile time.
+- **Search**: quick open with fuzzy matching and recent files; project-wide
+  search with match case / whole word / regex, include and exclude globs,
+  results per file, and replace (one, per file, or all after a confirmation,
+  with a preview of each change); find and replace in the open file with the
+  matches marked in the text.
+
+| Keys | |
+|---|---|
+| Ctrl+P | Go to file (`>` commands, `:` line, `@` symbol in file, `#` symbol in project) |
+| Ctrl+Shift+P, F1 | Command palette |
+| Ctrl+G · Ctrl+Shift+O · Ctrl+Alt+O | Go to line · symbol in file · symbol in project |
+| Ctrl+F · Ctrl+H · F3 / Shift+F3 | Find · replace · next / previous match |
+| Ctrl+Shift+F · Ctrl+Shift+H | Search in files · replace in files |
+| Ctrl+B · Ctrl+Alt+B · Ctrl+J · Ctrl+K Z | Toggle sidebar · preview · tools · zen mode |
+| Ctrl+Shift+E | Show explorer |
+| Alt+N · Alt+Shift+N · F2 · Delete | New file · new folder · rename · delete (in the tree) |
+| Ctrl+S | Save all |
+| Alt+W · Alt+PageDown / PageUp | Close editor · next / previous editor |
+| F8 | Go to the compile error |
+| Ctrl+/ · Ctrl+Shift+D · Tab / Shift+Tab | Comment · duplicate line · indent / outdent |
+| Ctrl/Cmd+click | Open the file that declares a view (or an import) |
+
+(Cmd works for Ctrl on a Mac. Keys the browser keeps for itself, such as
+Ctrl+W, Ctrl+T and Ctrl+Tab, have Alt-based equivalents.)
 
 The project API a dev server can offer (notes-on-foar's `dev.mjs` does):
 

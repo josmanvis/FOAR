@@ -1,5 +1,9 @@
 import { compileFoarProject, extractStateMachines, generateReadableJS, compilerBackend } from './foar-compiler.js';
 import { createWorkspace, localBackend, remoteBackend } from './workspace.js';
+import { createSearchPanel } from './search.js';
+import { createFindBar } from './findbar.js';
+import { createPalette } from './palette.js';
+import { createLayout } from './layout.js';
 import { createFoarRuntime } from './foar-runtime.js';
 
 const exampleSelect = document.getElementById('example-select');
@@ -404,6 +408,95 @@ if (previewUrl) {
     } else if (inspectorCallbacks[kind]) inspectorCallbacks[kind](data);
   });
 }
+
+// ---- workbench: search, find, command palette, layout ------------------------------------
+const searchPanel = createSearchPanel(ws);
+const findBar = createFindBar(ws, ws.editorColEl.querySelector('.editor-host'));
+const palette = createPalette(ws);
+const layout = createLayout({ ws, search: searchPanel, palette });
+
+const hasEditor = () => !!ws.activeEditor();
+const selectedText = () => {
+  const ae = ws.activeEditor();
+  if (!ae || document.activeElement !== ae.ta) return '';
+  const t = ae.ta.value.slice(ae.ta.selectionStart, ae.ta.selectionEnd);
+  return t.includes('\n') ? '' : t;
+};
+const showInspectorTab = (id) => {
+  layout.toggle('tools', true);
+  document.querySelector(`.tab-btn[data-tab="${id}"]`)?.click();
+};
+const COMMANDS = [
+  // go / open
+  ['workbench.quickOpen', 'Go', 'Go to File…', ['Ctrl+P'], () => palette.open('')],
+  ['workbench.commands', 'View', 'Command Palette…', ['Ctrl+Shift+P', 'F1'], () => palette.open('>')],
+  ['go.line', 'Go', 'Go to Line/Column…', ['Ctrl+G'], () => palette.open(':'), hasEditor],
+  ['go.symbol', 'Go', 'Go to Symbol in File…', ['Ctrl+Shift+O'], () => palette.open('@'), hasEditor],
+  ['go.workspaceSymbol', 'Go', 'Go to Symbol in Project…', ['Ctrl+Alt+O'], () => palette.open('#')],
+  ['go.error', 'Go', 'Go to Compile Error', ['F8'], () => {
+    const e = ws.error;
+    if (e) ws.openFile(e.file, { line: e.line, col: e.col });
+  }, () => !!ws.error],
+  ['go.nextTab', 'View', 'Open Next Editor', ['Alt+PageDown'], () => ws.cycleTab(1)],
+  ['go.prevTab', 'View', 'Open Previous Editor', ['Alt+PageUp'], () => ws.cycleTab(-1)],
+  // layout
+  ['view.sidebar', 'View', 'Toggle Sidebar', ['Ctrl+B'], () => layout.toggle('sidebar')],
+  ['view.preview', 'View', 'Toggle Preview', ['Ctrl+Alt+B'], () => layout.toggle('preview')],
+  ['view.tools', 'View', 'Toggle Tools (State Machines, Compiled JS, AST)', ['Ctrl+J'], () => layout.toggle('tools')],
+  ['view.zen', 'View', 'Toggle Zen Mode', ['Ctrl+K Z'], () => layout.toggle('zen')],
+  ['view.explorer', 'View', 'Show Explorer', ['Ctrl+Shift+E'], () => layout.showPanel('explorer')],
+  ['view.search', 'View', 'Show Search', ['Ctrl+Shift+F'], () => {
+    layout.showPanel('search', { focus: false });
+    searchPanel.focus({ text: selectedText() || undefined, replace: false });
+  }],
+  ['view.resetLayout', 'View', 'Reset Layout', [], () => layout.reset()],
+  ['view.focusEditor', 'View', 'Focus Active Editor', [], () => ws.activeEditor()?.ta.focus()],
+  ['view.machines', 'View', 'Show State Machines & Stores', [], () => showInspectorTab('tab-machines')],
+  ['view.js', 'View', 'Show Compiled JS', [], () => showInspectorTab('tab-js')],
+  ['view.ast', 'View', 'Show AST', [], () => showInspectorTab('tab-ast')],
+  ['view.badges', 'View', 'Toggle Topology Badges', [], () => document.getElementById('toggle-badges').click()],
+  // edit
+  ['edit.find', 'Edit', 'Find', ['Ctrl+F'], () => findBar.show(), hasEditor],
+  ['edit.replace', 'Edit', 'Replace', ['Ctrl+H'], () => findBar.show({ replace: true }), hasEditor],
+  ['edit.findNext', 'Edit', 'Find Next', ['F3'], () => findBar.next(), hasEditor],
+  ['edit.findPrev', 'Edit', 'Find Previous', ['Shift+F3'], () => findBar.prev(), hasEditor],
+  ['edit.replaceInFiles', 'Edit', 'Replace in Files', ['Ctrl+Shift+H'], () => {
+    layout.showPanel('search', { focus: false });
+    searchPanel.focus({ text: selectedText() || undefined, replace: true });
+  }],
+  // files
+  ['file.new', 'File', 'New File…', ['Alt+N'], () => {
+    layout.showPanel('explorer', { focus: false });
+    ws.newFile();
+  }],
+  ['file.newFolder', 'File', 'New Folder…', ['Alt+Shift+N'], () => {
+    layout.showPanel('explorer', { focus: false });
+    ws.newFolder();
+  }],
+  ['file.save', 'File', 'Save All', ['Ctrl+S'], () => ws.saveAll(), null, { displayOnly: true }],
+  ['file.close', 'View', 'Close Editor', ['Alt+W'], () => ws.closeActive(), hasEditor],
+  ['file.reveal', 'File', 'Reveal Active File in Explorer', [], () => {
+    layout.showPanel('explorer', { focus: false });
+    ws.revealActive();
+  }, hasEditor],
+  ['file.collapse', 'File', 'Collapse Folders in Explorer', [], () => ws.collapseAll()],
+  ['file.revert', 'File', 'Revert Project to Original', [], () => ws.revert(), () => ws.backendKind === 'local'],
+  // project / app
+  ['project.open', 'Project', 'Open Project…', [], () =>
+    palette.pick({
+      placeholder: 'Open a project',
+      items: [...exampleSelect.options].map((o) => ({
+        label: o.textContent.trim(),
+        run: () => {
+          exampleSelect.value = o.value;
+          exampleSelect.dispatchEvent(new Event('change'));
+        },
+      })),
+    })],
+  ['app.reset', 'Preview', 'Reset State (recompile and remount)', [], () => btnReset.click()],
+  ['app.clearLog', 'Preview', 'Clear Event Log', [], () => btnClearLog.click()],
+];
+for (const [id, category, title, keys, run, when, extra] of COMMANDS) palette.register({ id, category, title, keys, run, when: when || undefined, ...extra });
 
 // Initial boot
 if (remoteSrc) {

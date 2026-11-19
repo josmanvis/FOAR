@@ -14,6 +14,25 @@ import { highlightFoar } from './foar-highlight.js';
 
 const LINE_HEIGHT = 20; // px, keep in sync with .code-* in styles.css
 const PAD_TOP = 14;
+const PAD_LEFT = 16;
+
+// Monospace metrics for drawing find marks over the highlighted text.
+let cachedCharWidth = 0;
+function charWidth(pre) {
+  if (cachedCharWidth) return cachedCharWidth;
+  const probe = document.createElement('span');
+  probe.textContent = 'M'.repeat(200);
+  probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre';
+  pre.append(probe);
+  cachedCharWidth = probe.getBoundingClientRect().width / 200 || 7.8;
+  probe.remove();
+  return cachedCharWidth;
+}
+function visualCol(text, lineStart, off) {
+  let col = 0;
+  for (let i = lineStart; i < off; i++) col = text[i] === '\t' ? col + 4 - (col % 4) : col + 1;
+  return col;
+}
 const INDENT = '    ';
 
 // ---- paths and imports (same rules as src/project.rs) ---------------------------------
@@ -215,6 +234,9 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
   host.append(empty);
   const editorCol = h('div', { class: 'editor-col' }, tabs, host);
   root.append(explorer, editorCol);
+  // 'active' (tab switched), 'change' (buffers), 'compile' (result in), 'cursor'
+  const events = new EventTarget();
+  const emit = (type, detail) => events.dispatchEvent(new CustomEvent(type, { detail }));
 
   // ---- state helpers ----
   const dirty = (p) => files[p] !== saved[p];
@@ -243,6 +265,7 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
     renderTabs();
     renderFoot();
     onChange?.(project());
+    emit('change');
   }
 
   // ---- editor (one per open file: each keeps its own undo history) ----
@@ -261,7 +284,12 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
       'aria-multiline': 'true',
     });
     ta.value = files[path] ?? '';
+    const marks = h('div', { class: 'code-marks' });
+    pre.prepend(marks);
     const wrap = h('div', { class: 'code-view', role: 'tabpanel' }, gutter, h('div', { class: 'code-stack' }, pre, ta));
+    ta.addEventListener('keyup', () => emit('cursor'));
+    ta.addEventListener('mouseup', () => emit('cursor'));
+    ta.addEventListener('focus', () => emit('cursor'));
     let lines = -1;
     const paint = () => {
       code.innerHTML = highlightFoar(ta.value) + '\n';
@@ -309,6 +337,51 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
         ta.setSelectionRange(Math.min(s, v.length), Math.min(e, v.length));
         ta.scrollTop = scrollTop;
         paint();
+      },
+      /** Find matches: [[start, end], ...] offsets; `current` is drawn stronger. */
+      setMarks(ranges = [], current = -1) {
+        marks.textContent = '';
+        if (!ranges.length) return;
+        const cw = charWidth(pre);
+        const v = ta.value;
+        const lineStarts = [0];
+        for (let i = 0; i < v.length; i++) if (v.charCodeAt(i) === 10) lineStarts.push(i + 1);
+        const lineOf = (off) => {
+          let lo = 0;
+          let hi = lineStarts.length - 1;
+          while (lo < hi) {
+            const mid = (lo + hi + 1) >> 1;
+            if (lineStarts[mid] <= off) lo = mid;
+            else hi = mid - 1;
+          }
+          return lo;
+        };
+        const frag = document.createDocumentFragment();
+        ranges.slice(0, 5000).forEach(([a, b], i) => {
+          const line = lineOf(a);
+          const col = visualCol(v, lineStarts[line], a);
+          const lineEnd = v.indexOf('\n', a);
+          const endCol = visualCol(v, lineStarts[line], Math.min(b, lineEnd < 0 ? v.length : lineEnd));
+          const m = document.createElement('div');
+          m.className = `code-mark${i === current ? ' current' : ''}`;
+          m.style.cssText = `top:${PAD_TOP + line * LINE_HEIGHT}px;left:${PAD_LEFT + col * cw}px;width:${Math.max(2, (endCol - col) * cw)}px`;
+          frag.append(m);
+        });
+        marks.append(frag);
+      },
+      /** Select [start, end) and scroll it into view (centred if off screen). */
+      select(start, end = start, { focus = true } = {}) {
+        if (focus) ta.focus({ preventScroll: true });
+        ta.setSelectionRange(start, end);
+        const line = ta.value.slice(0, start).split('\n').length - 1;
+        const top = PAD_TOP + line * LINE_HEIGHT;
+        if (top < ta.scrollTop + LINE_HEIGHT || top > ta.scrollTop + ta.clientHeight - 3 * LINE_HEIGHT) ta.scrollTop = Math.max(0, top - ta.clientHeight / 3);
+        const cw = charWidth(pre);
+        const col = visualCol(ta.value, ta.value.lastIndexOf('\n', start - 1) + 1, start);
+        const left = PAD_LEFT + col * cw;
+        if (left < ta.scrollLeft || left > ta.scrollLeft + ta.clientWidth - 40) ta.scrollLeft = Math.max(0, left - ta.clientWidth / 2);
+        sync();
+        emit('cursor');
       },
       goTo(line, col = 1) {
         const ls = ta.value.split('\n');
@@ -431,7 +504,7 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
   }
 
   // ---- tabs ----
-  function openFile(path, { line, col, focus = true } = {}) {
+  function openFile(path, { line, col, select, focus = true } = {}) {
     if (files[path] == null) return;
     if (!open.includes(path)) open.push(path);
     active = path;
@@ -445,9 +518,11 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
     empty.classList.add('hidden');
     renderTabs();
     selectInTree(path);
-    if (line) ed.goTo(line, col);
+    if (select) ed.select(select[0], select[1], { focus });
+    else if (line) ed.goTo(line, col);
     else if (focus) ed.ta.focus({ preventScroll: true });
     persistUi();
+    emit('active', path);
   }
 
   function closeFile(path) {
@@ -460,7 +535,10 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
     if (active === path) {
       active = open[i] ?? open[i - 1] ?? null;
       if (active) openFile(active);
-      else empty.classList.remove('hidden');
+      else {
+        empty.classList.remove('hidden');
+        emit('active', null);
+      }
     }
     renderTabs();
     persistUi();
@@ -1157,6 +1235,7 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
     openFile(first, { focus: false });
     renderFoot();
     onChange?.(project());
+    emit('change');
   }
 
   // External changes (another editor saved a file): take them for files without unsaved edits.
@@ -1193,9 +1272,72 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
     renderTabs();
     renderFoot();
     onChange?.(project());
+    emit('change');
   }
 
   return {
+    events,
+    explorerEl: explorer,
+    editorColEl: editorCol,
+    get name() {
+      return projectName;
+    },
+    get dirtyCount() {
+      return backend?.kind === 'remote' ? dirtyPaths().length : 0;
+    },
+    get error() {
+      return error;
+    },
+    get openPaths() {
+      return [...open];
+    },
+    /** { path, ta, ed } of the active editor, or null. */
+    activeEditor() {
+      const ed = active && editors.get(active);
+      return ed ? { path: active, ta: ed.ta, ed } : null;
+    },
+    /**
+     * Replace a file's whole text (search & replace). An open editor gets it as
+     * one undoable edit; other files just change in the buffer.
+     */
+    applyEdit(path, text) {
+      if (files[path] == null || files[path] === text) return;
+      const ed = editors.get(path);
+      if (ed) {
+        const { scrollTop, selectionStart } = ed.ta;
+        const focused = document.activeElement;
+        replaceRange(ed.ta, 0, ed.ta.value.length, text, Math.min(selectionStart, text.length));
+        ed.ta.scrollTop = scrollTop;
+        if (focused && focused !== ed.ta) focused.focus({ preventScroll: true });
+      } else {
+        files[path] = text;
+        changed();
+      }
+    },
+    newFile: () => startCreate('file', currentFolder()),
+    newFolder: () => startCreate('dir', currentFolder()),
+    saveAll: () => saveAll(),
+    closeActive: () => active && closeFile(active),
+    cycleTab(dir) {
+      if (!open.length) return;
+      const i = open.indexOf(active);
+      openFile(open[(i + dir + open.length) % open.length]);
+    },
+    collapseAll() {
+      for (const d of Object.keys(files).flatMap((p) => p.split('/').slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join('/')))) collapsed.add(d);
+      for (const d of dirs) collapsed.add(d);
+      renderTree();
+      persistUi();
+    },
+    revealActive() {
+      if (!active) return;
+      selectInTree(active);
+      tree.querySelector(`[data-path="${CSS.escape(active)}"]`)?.focus();
+    },
+    focusTree() {
+      (tree.querySelector('[aria-selected="true"]') ?? tree.querySelector('[tabindex="0"]') ?? tree.querySelector('.tree-row'))?.focus();
+    },
+    revert: () => backend?.kind === 'local' && revert(),
     /** Loads a project through `backend`; `name` is shown in the explorer. */
     async load(b, { name, id, original: orig } = {}) {
       unwatch();
@@ -1223,6 +1365,7 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
       for (const ed of editors.values()) ed.paintError();
       renderTree();
       renderTabs();
+      emit('compile', error);
     },
     openFile,
     /** Open the file declaring view `name`. */
