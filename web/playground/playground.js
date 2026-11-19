@@ -21,6 +21,9 @@ const astOutput = document.getElementById('ast-output');
 const toggleBadges = document.getElementById('toggle-badges');
 const btnReset = document.getElementById('btn-reset');
 const btnClearLog = document.getElementById('btn-clear-log');
+const btnOpenExampleTab = document.getElementById('btn-open-example-tab');
+const btnOpenPreviewTab = document.getElementById('btn-open-preview-tab');
+const btnBackToIde = document.getElementById('btn-back-to-ide');
 
 let currentRuntime = null;
 let currentMachines = [];
@@ -32,7 +35,38 @@ let activeHost = null;
 // default: the source's origin) instead of mounting it bare.
 const params = new URLSearchParams(location.search);
 const remoteSrc = params.get('src');
+const standalonePreview = params.get('preview') === '1' || params.get('standalone') === '1';
 const previewUrl = remoteSrc ? params.get('app') || new URL(remoteSrc, location.href).origin + '/' : null;
+
+if (standalonePreview) {
+  document.body.classList.add('standalone-preview');
+  toggleBadges.checked = false;
+  foarMount.classList.remove('show-badges');
+}
+
+function buildExampleUrls(value) {
+  const v = value || exampleSelect.value || 'todo';
+  if (v.startsWith('src:')) {
+    const q = `?src=${encodeURIComponent(v.slice(4))}`;
+    return { ide: q, preview: `${q}&preview=1` };
+  }
+  if (remoteSrc && !v) {
+    const q = `?src=${encodeURIComponent(remoteSrc)}`;
+    return { ide: q, preview: `${q}&preview=1` };
+  }
+  const q = `?example=${encodeURIComponent(v)}`;
+  return { ide: q, preview: `${q}&preview=1` };
+}
+
+function syncNewTabLinks(value, label) {
+  const urls = buildExampleUrls(value);
+  if (btnOpenExampleTab) btnOpenExampleTab.href = standalonePreview ? urls.preview : urls.ide;
+  if (btnOpenPreviewTab) btnOpenPreviewTab.href = urls.preview;
+  if (btnBackToIde) btnBackToIde.href = urls.ide;
+  if (standalonePreview && label) {
+    document.title = `${label} — FOAR`;
+  }
+}
 
 
 // Data (store values, effect args, payloads) is escaped before it goes into
@@ -329,6 +363,7 @@ async function openProject(backend, info) {
 
 function openScratch() {
   currentHostUrl = null;
+  syncNewTabLinks('scratch', 'Scratch');
   const starter = examples.find((e) => e.id === 'starter');
   const original = { entry: starter?.entry ?? 'app.foar', files: starter?.files ?? { 'app.foar': 'view App {\n    state Ready {\n        render {\n            Text("Hello")\n        }\n    }\n}\n' } };
   return openProject(localBackend('scratch', original), { name: 'Scratch', id: 'scratch', original });
@@ -338,6 +373,7 @@ function loadExample(id) {
   const ex = examples.find((e) => e.id === id);
   if (!ex) return openScratch();
   currentHostUrl = ex.host ?? null;
+  syncNewTabLinks(id, ex.title);
   const original = { entry: ex.entry, files: ex.files };
   return openProject(localBackend(`example:${id}`, original), { name: `examples/${id}`, id: `example:${id}`, original });
 }
@@ -346,6 +382,7 @@ function loadExample(id) {
 // (GET /__foar/project, PUT/DELETE /__foar/files). Without that API, only the
 // one .foar file is shown, and edits stay in this browser.
 async function loadRemote(url) {
+  syncNewTabLinks(`src:${url}`, url.split('/').pop());
   const base = `${new URL(url).origin}/`;
   const remote = remoteBackend(base);
   let p = null;
@@ -372,12 +409,13 @@ const NOTES_SRC = 'http://localhost:4400/src/app.foar';
 exampleSelect.addEventListener('change', () => {
   const v = exampleSelect.value;
   if (!v) return;
+  const urls = buildExampleUrls(v);
   if (v.startsWith('src:')) {
-    location.search = `?src=${encodeURIComponent(v.slice(4))}`;
+    location.search = standalonePreview ? urls.preview : urls.ide;
   } else if (remoteSrc) {
-    location.search = `?example=${encodeURIComponent(v)}`; // leave remote mode
+    location.search = standalonePreview ? urls.preview : urls.ide; // leave remote mode
   } else {
-    history.replaceState(null, '', `?example=${encodeURIComponent(v)}`);
+    history.replaceState(null, '', standalonePreview ? urls.preview : urls.ide);
     if (v === 'scratch') openScratch();
     else loadExample(v);
   }
@@ -520,6 +558,25 @@ const COMMANDS = [
           exampleSelect.value = o.value;
           exampleSelect.dispatchEvent(new Event('change'));
         },
+      })),
+    })],
+  ['project.openNewTab', 'Project', 'Open Project in New Playground Tab…', [], () =>
+    palette.pick({
+      placeholder: 'Open a project in a new playground tab',
+      items: [...exampleSelect.options].map((o) => ({
+        label: o.textContent.trim(),
+        run: () => window.open(buildExampleUrls(o.value).ide, '_blank', 'noopener,noreferrer'),
+      })),
+    })],
+  ['preview.openNewTab', 'Preview', 'Open Current App Standalone in New Tab', [], () => {
+    window.open(buildExampleUrls(exampleSelect.value).preview, '_blank', 'noopener,noreferrer');
+  }],
+  ['preview.openAnyNewTab', 'Preview', 'Open Example Standalone in New Tab…', [], () =>
+    palette.pick({
+      placeholder: 'Open an example app standalone in a new tab',
+      items: [...exampleSelect.options].map((o) => ({
+        label: o.textContent.trim(),
+        run: () => window.open(buildExampleUrls(o.value).preview, '_blank', 'noopener,noreferrer'),
       })),
     })],
   ['app.reset', 'Preview', 'Reset State (recompile and remount)', [], () => btnReset.click()],
