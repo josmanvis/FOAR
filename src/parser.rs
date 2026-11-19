@@ -61,6 +61,14 @@ pub struct Parser<'s> {
     var_types: std::collections::HashMap<String, String>,
     /// captured expressions/statements/view-calls to typecheck once all decls are parsed
     check_items: Vec<crate::typecheck::CheckItem>,
+    /// the state whose render/effects are being parsed
+    cur_state: Option<String>,
+    /// `-> on_x(Handler)` in render blocks: (view, state, handler, offset)
+    handler_refs: Vec<(String, String, String, usize)>,
+    /// `-> on_x(...)` on a sub-view element: (target view, event, offset)
+    view_event_refs: Vec<(String, String, usize)>,
+    /// events each view emits (`emit name(...)` in any of its effects)
+    emits: std::cell::RefCell<std::collections::HashMap<String, std::collections::HashSet<String>>>,
     /// active lexical locals in the current render tree (List / Route bindings)
     render_locals: Vec<(String, Option<String>)>,
 }
@@ -91,6 +99,10 @@ impl<'s> Parser<'s> {
             match_id: Default::default(),
             var_types: Default::default(),
             check_items: Vec::new(),
+            cur_state: None,
+            handler_refs: Vec::new(),
+            view_event_refs: Vec::new(),
+            emits: Default::default(),
             render_locals: Vec::new(),
         })
     }
@@ -219,6 +231,7 @@ impl<'s> Parser<'s> {
         }
         // Static type check across the whole program (stores, lets, data literals,
         // field accesses, view props, effects, transitions, contexts, fns, and extern fns).
+        self.check_view_events(&views)?;
         crate::typecheck::check_program(self.src, &data_decls, &enums, &externs, &functions, &contexts, &views, &self.check_items)?;
         // `style A { @use B; }` then `.style(A)`: the element needs B's class too.
         // Done after parsing because named styles may be declared after their use.
@@ -293,7 +306,7 @@ impl<'s> Parser<'s> {
             self.expect(":")?;
             let param_type = self.parse_type()?;
             self.eat(",");
-            params.push(Param { name: pname, param_type });
+            params.push(Param { name: pname, param_type, default: None });
         }
         self.expect(")")?;
         let return_type = if self.eat("->") { self.parse_type()? } else { "any".to_string() };
@@ -392,7 +405,7 @@ impl<'s> Parser<'s> {
             self.expect(":")?;
             let param_type = self.parse_type()?;
             self.eat(",");
-            params.push(Param { name: pname, param_type });
+            params.push(Param { name: pname, param_type, default: None });
         }
         self.expect(")")?;
         let return_type = if self.eat("->") { self.parse_type()? } else { "Void".to_string() };
@@ -455,7 +468,11 @@ impl<'s> Parser<'s> {
     // ---- views ------------------------------------------------------------
     fn parse_view(&mut self) -> PResult<ViewDecl> {
         self.expect("view")?;
+        let name_at = self.peek().start;
         let name = self.declare("View")?;
+        if BUILTIN_ELEMENTS.contains(&name.as_str()) || name == "Else" || name == "Fallback" {
+            return Err(err_at(self.src, name_at, format!("'{}' is a built-in element: give the view another name", name)));
+        }
         let type_params = self.parse_type_params()?;
         self.cur_view = Some(name.clone());
         self.cls_counter = 0;
@@ -466,9 +483,20 @@ impl<'s> Parser<'s> {
                 let pname = self.expect_ident()?;
                 self.expect(":")?;
                 let param_type = self.parse_type()?;
+                // `check: bool = false`: the prop becomes optional
+                let mut default = None;
+                if self.eat("=") {
+                    let at = self.peek().start;
+                    let toks = self.collect_arg_tokens();
+                    if toks.is_empty() {
+                        return self.err(format!("Expected a default value for prop {}", pname));
+                    }
+                    default = Some(self.join_js(&toks));
+                    self.check_items.push(crate::typecheck::CheckItem::ParamDefault { view: name.clone(), name: pname.clone(), declared: param_type.clone(), tokens: toks, at });
+                }
                 self.eat(",");
                 self.var_types.insert(pname.clone(), param_type.clone());
-                params.push(Param { name: pname, param_type });
+                params.push(Param { name: pname, param_type, default });
             }
             self.expect(")")?;
         }
@@ -558,6 +586,7 @@ impl<'s> Parser<'s> {
             }
         }
         self.expect("}")?;
+        self.check_handlers(&name, &states)?;
         self.cur_view = None;
         Ok(ViewDecl { kind: "ViewDecl", name, type_params, params, uses, stores, derived, style, on_unmount, states })
     }
@@ -573,7 +602,7 @@ impl<'s> Parser<'s> {
                 let pname = self.expect_ident()?;
                 let param_type = if self.eat(":") { self.parse_type()? } else { default_type.to_string() };
                 self.eat(",");
-                params.push(Param { name: pname, param_type });
+                params.push(Param { name: pname, param_type, default: None });
             }
             self.expect(")")?;
         }
@@ -583,6 +612,7 @@ impl<'s> Parser<'s> {
     fn parse_state(&mut self) -> PResult<StateDecl> {
         self.expect("state")?;
         let name = self.expect_ident()?;
+        self.cur_state = Some(name.clone());
         self.expect("{")?;
         let mut render = Vec::new();
         let mut effects = Vec::new();
@@ -682,6 +712,7 @@ impl<'s> Parser<'s> {
             }
         }
         self.expect("}")?;
+        self.cur_state = None;
         Ok(StateDecl { kind: "StateDecl", name, render, effects, on_enter, on_exit, on_error, on_unmount, key_handlers })
     }
 
@@ -892,9 +923,19 @@ impl<'s> Parser<'s> {
         }
         loop {
             if self.eat("->") {
+                let ev_at = self.peek().start;
                 let ev = self.expect_ident()?;
                 self.expect("(")?;
+                let handler_at = self.peek().start;
                 let mut handler = self.expect_ident()?;
+                if let (Some(v), Some(st)) = (&self.cur_view, &self.cur_state) {
+                    if !self.is(".") {
+                        self.handler_refs.push((v.clone(), st.clone(), handler.clone(), handler_at));
+                    }
+                }
+                if !BUILTIN_ELEMENTS.contains(&tag.as_str()) {
+                    self.view_event_refs.push((tag.clone(), ev.clone(), ev_at));
+                }
                 if self.eat(".") {
                     handler.push('.');
                     handler.push_str(&self.expect_ident()?);
@@ -970,7 +1011,7 @@ impl<'s> Parser<'s> {
             let pname = self.expect_ident()?;
             let param_type = if self.eat(":") { self.parse_type()? } else { "any".to_string() };
             self.eat(",");
-            params.push(Param { name: pname, param_type });
+            params.push(Param { name: pname, param_type, default: None });
         }
         self.expect(")")?;
         let body = self.parse_balanced_braces()?;
@@ -988,6 +1029,56 @@ impl<'s> Parser<'s> {
         let b = self.effect_body(&body);
         self.var_types = saved;
         Ok(EffectDecl { kind: "EffectDecl", name, params, transitions: b.transitions, emissions: b.emissions, js_body: b.js_body })
+    }
+
+    /// `-> on_click(Save)` must name an effect of the state it appears in: the
+    /// runtime looks effects up in the current state, so anything else would
+    /// silently do nothing.
+    fn check_handlers(&mut self, view: &str, states: &[StateDecl]) -> PResult<()> {
+        let refs: Vec<_> = self.handler_refs.iter().filter(|r| r.0 == view).cloned().collect();
+        self.handler_refs.retain(|r| r.0 != view);
+        for (_, state, handler, at) in refs {
+            let here = states.iter().find(|s| s.name == state).is_some_and(|s| s.effects.iter().any(|e| e.name == handler));
+            if here {
+                continue;
+            }
+            if let Some(other) = states.iter().find(|s| s.effects.iter().any(|e| e.name == handler)) {
+                return Err(err_at(
+                    self.src,
+                    at,
+                    format!("'{}' is an effect of state {}, not {}: in {} this event would do nothing. Declare it in {} too, or move the element.", handler, other.name, state, state, state),
+                ));
+            }
+            let all: Vec<&str> = states.iter().flat_map(|s| s.effects.iter().map(|e| e.name.as_str())).collect();
+            let hint = crate::typecheck::did_you_mean(&handler, all.iter().copied());
+            return Err(err_at(self.src, at, format!("State {} of {} has no effect '{}'{}", state, view, handler, hint)));
+        }
+        Ok(())
+    }
+
+    /// `-> on_pick(...)` on a component must be an event it emits (or a DOM event).
+    fn check_view_events(&self, views: &[ViewDecl]) -> PResult<()> {
+        const DOM_EVENTS: &[&str] = &["on_click", "on_double_click", "on_input", "on_change", "on_enter", "on_context_menu", "on_blur", "on_drop", "on_drag_start", "on_drag_end", "on_submit"];
+        let emits = self.emits.borrow();
+        for (target, ev, at) in &self.view_event_refs {
+            if !views.iter().any(|v| &v.name == target) || DOM_EVENTS.contains(&ev.as_str()) {
+                continue;
+            }
+            let name = ev.strip_prefix("on_").unwrap_or(ev);
+            let set = emits.get(target);
+            if set.is_some_and(|s| s.contains(name)) {
+                continue;
+            }
+            let mut list: Vec<String> = set.map(|s| s.iter().map(|e| format!("on_{}", e)).collect()).unwrap_or_default();
+            list.sort();
+            let msg = if list.is_empty() {
+                format!("{} never emits '{}' (it doesn't emit any events)", target, name)
+            } else {
+                format!("{} never emits '{}'{}. It emits: {}", target, name, crate::typecheck::did_you_mean(ev, list.iter().map(|s| s.as_str())), list.join(", "))
+            };
+            return Err(err_at(self.src, *at, msg));
+        }
+        Ok(())
     }
 
     fn effect_body(&self, toks: &[Token]) -> EffectBody {
@@ -1011,6 +1102,9 @@ impl<'s> Parser<'s> {
                     }
                 }
             }
+        }
+        if let Some(view) = &self.cur_view {
+            self.emits.borrow_mut().entry(view.clone()).or_default().extend(emissions.iter().cloned());
         }
         let js_body = if toks.is_empty() { "undefined".to_string() } else { rust_idioms_to_js(&self.raw_join(toks, true)) };
         EffectBody { params: Vec::new(), transitions, emissions, js_body }

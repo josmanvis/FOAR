@@ -566,15 +566,15 @@ mod tests {
     #[test]
     fn compiles_imports_in_order_with_mapped_errors() {
         let files = project(&[
-            ("app.foar", "import \"./ui/Row\"\nimport \"./theme\"\nview App { state Ready { render { Row(name: \"a\") } } }"),
-            ("ui/Row.foar", "import \"../theme\" // shared + circular is fine\nview Row(name: String) { style { color: var(--ink); } state Idle { render { Text(name) } } }"),
+            ("app.foar", "import \"./ui/Row\"\nimport \"./theme\"\nview App { state Ready { render { Line(name: \"a\") } } }"),
+            ("ui/Row.foar", "import \"../theme\" // shared + circular is fine\nview Line(name: String) { style { color: var(--ink); } state Idle { render { Text(name) } } }"),
             ("theme.foar", "import \"./app\"\ntheme { --ink: #222; }"),
         ]);
         let all = load("app.foar", &mut |p| files.get(p).cloned()).unwrap();
         assert_eq!(all.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["app.foar", "ui/Row.foar", "theme.foar"]);
         let p = compile_files(&all).unwrap();
         assert_eq!(p.views[0].name, "App"); // entry's first view is the root
-        assert_eq!(p.views[1].name, "Row");
+        assert_eq!(p.views[1].name, "Line");
         assert!(p.css.contains("--ink"));
 
         let broken = project(&[("app.foar", "import \"./b\"\nview App { state S { render { Text(\"x\") } } }"), ("b.foar", "\n\nview B {\n  state S { render { Text(\"x\") }\n")]);

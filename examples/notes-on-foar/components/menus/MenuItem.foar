@@ -1,7 +1,7 @@
 // MenuItem — one row of a menu (label, optional check mark, shortcut hint).
 import "styles/shared"
 
-view MenuItem<T>(label: String, value: T, check: bool, danger: bool, hint: String) {
+view MenuItem<T>(label: String, value: T, check: bool = false, danger: bool = false, hint: String = "") {
     state Idle {
         render {
             Row(role: check ? "menuitemcheckbox" : "menuitem", aria: { checked: check ? true : null }, tab_index: -1) {

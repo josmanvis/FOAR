@@ -553,6 +553,10 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const propNames = decl.params.map((p) => p.name);
     const storeNames = decl.stores.map((s) => s.name);
     const derivedNames = (decl.derived || []).map((d) => d.name);
+    // `view Row(check: bool = false)`: defaults for props that aren't given
+    const propDefaults = new Map(
+      decl.params.filter((p) => p.default !== undefined).map((p) => [p.name, { expr: p.default, fn: compileExpr(p.default, [], externNames) }]),
+    );
     const states = new Map();
     for (const s of decl.states) {
       states.set(s.name, { decl: s, effects: new Map(s.effects.map((e) => [e.name, e])) });
@@ -560,6 +564,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     m = {
       decl,
       propNames,
+      propDefaults,
       storeNames,
       derivedNames,
       // `let` values, in order (a later one may use an earlier one)
@@ -574,6 +579,13 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     m.derived = (decl.derived || []).map((d) => ({ name: d.name, expr: d.expr, fn: compileExpr(d.expr, m.varNames, m.externNames) }));
     viewMeta.set(decl, m);
     return m;
+  }
+
+  /** A prop's value, or its declared default when it's undefined. */
+  function propValue(meta, name, value) {
+    if (value !== undefined) return value;
+    const d = meta.propDefaults.get(name);
+    return d ? safeEval(d.fn, {}, externs, d.expr) : undefined;
   }
 
   // `let` values: recomputed before every update and every effect.
@@ -612,7 +624,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   function createInstance(key, decl, props, parentEmitter, parentInst, slotCtx = null) {
     const meta = metaFor(decl);
     const vars = {};
-    for (const p of meta.propNames) vars[p] = props[p];
+    for (const p of meta.propNames) vars[p] = propValue(meta, p, props[p]);
     const inst = {
       key,
       viewName: decl.name,
@@ -1332,7 +1344,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       el,
       update() {
         for (const p of propFns) {
-          const v = safeEval(p.fn, inst.vars, locals, p.expr);
+          const v = propValue(child.meta, p.name, safeEval(p.fn, inst.vars, locals, p.expr));
           if (v !== child.vars[p.name]) child.vars[p.name] = v;
         }
         updateInstance(child);
@@ -2183,7 +2195,9 @@ export function renderToString(ast, options = {}) {
     const varNames = dedupe([...propNames, ...storeNames, ...derivedNames]);
     const viewExterns = externNames.filter((n) => !varNames.includes(n));
     const vars = {};
-    for (const p of propNames) vars[p] = props[p];
+    for (const p of decl.params) {
+      vars[p.name] = props[p.name] !== undefined || p.default === undefined ? props[p.name] : evalSafe(p.default, [], {}, externNames, externs);
+    }
     for (const s of decl.stores) vars[s.name] = evalSafe(s.initExpr, varNames, vars, viewExterns, externs);
     for (const d of decl.derived || []) vars[d.name] = evalSafe(d.expr, varNames, vars, viewExterns, externs);
 

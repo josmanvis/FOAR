@@ -9,6 +9,11 @@ All notable changes to FOAR are documented in this file.
 - The landing page's hero is now a real FOAR component (`web/hero/note.foar`), compiled at build time with the WebAssembly compiler and mounted on the runtime; a track diagram lights the current state and the transition that just ran.
 - Landing, docs and playground restyled to match; docs table of contents no longer double-escapes `&`.
 
+### Language
+- **Prop defaults**: `view MenuItem(label: String, check: bool = false)`; a prop with a default (or of type `Option<T>`) is optional, the default is type-checked and applied on the client, on updates and in SSR.
+- The compiler now rejects: missing required props; an event handler that isn't an effect of the state it's in (it would silently do nothing) or doesn't exist; `-> on_x` on a component that never emits `x`; match arms of different types; views named like a built-in element (`view Row` used to be silently ignored in favour of the built-in).
+- Fixed: props named `label`, `title`, `role`, `id`… were not type-checked because built-in attribute names were checked first.
+
 ### Tooling
 - `foar fmt` indents continuation lines (`.style(…)`, `-> on_click(…)`) and multi-line call arguments instead of flattening them, and tracks `(` as well as `{`/`[`. The playground's Format Document now uses the same formatter through WebAssembly (`f4_format`).
 - Playground: compiler errors underline the whole word, the Problems list no longer shows a compiler error twice, and suggestions stay open for long lines.

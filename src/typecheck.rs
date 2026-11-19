@@ -100,6 +100,14 @@ pub enum CheckItem {
         locals: Vec<(String, Option<String>)>,
         tokens: Vec<Token>,
     },
+    /// `view R(check: bool = false)`: the default must fit the prop's type.
+    ParamDefault {
+        view: String,
+        name: String,
+        declared: String,
+        tokens: Vec<Token>,
+        at: usize,
+    },
 }
 
 struct Env<'a> {
@@ -254,6 +262,11 @@ fn unify(a: Ty, b: Ty) -> Ty {
     }
 }
 
+/// " (did you mean 'x'?)" for the closest candidate, or "".
+pub fn did_you_mean<'a>(needle: &str, candidates: impl Iterator<Item = &'a str>) -> String {
+    closest(needle, candidates).map(|s| format!(" (did you mean '{}'?)", s)).unwrap_or_default()
+}
+
 fn closest<'a>(needle: &str, candidates: impl Iterator<Item = &'a str>) -> Option<String> {
     let mut best: Option<(usize, &str)> = None;
     for c in candidates {
@@ -387,9 +400,17 @@ pub fn check_program(
         env.view_vars.insert(v.name.clone(), scope);
     }
 
-    // Pass 1: Store initializers + Derived `let`s (in order, updating inferred `let` types)
+    // Pass 1: prop defaults, store initializers + derived `let`s (in order, updating inferred `let` types)
     for item in items {
         match item {
+            CheckItem::ParamDefault { view, name, declared, tokens, at } => {
+                let expected = parse_ty(declared, &data_names, &enum_names);
+                let mut tc = Checker::new(&env, view, HashMap::new());
+                let actual = tc.check_expr(tokens, Some(&expected))?;
+                if !is_assignable(&expected, &actual) {
+                    return Err(err_at(src, *at, format!("Default for prop '{}' should be {}, got {}", name, expected, actual)));
+                }
+            }
             CheckItem::StoreInit { view, name, declared, tokens, at } => {
                 let scope = env.view_vars.get(view).cloned().unwrap_or_default();
                 let expected = parse_ty(declared, &data_names, &enum_names);
@@ -474,7 +495,8 @@ pub fn check_program(
                 }
 
                 for (pname, toks, arg_at) in named_args {
-                    if BUILTIN_ATTR_PROPS.contains(&pname.as_str()) {
+                    // the view's own props win over the built-in attributes (label, title, …)
+                    if BUILTIN_ATTR_PROPS.contains(&pname.as_str()) && !target_params.iter().any(|(n, _)| n == pname) {
                         tc.check_expr(toks, None)?;
                         continue;
                     }
@@ -496,6 +518,14 @@ pub fn check_program(
                             *at,
                             format!("Unknown prop '{}' on view '{}'{}", pname, target, hint),
                         ));
+                    }
+                }
+                // every prop must be given, except Option<…> ones and ones with a default
+                let defaults = views.iter().find(|v| &v.name == target).map(|v| v.params.iter().filter(|p| p.default.is_some()).map(|p| p.name.clone()).collect::<HashSet<_>>()).unwrap_or_default();
+                for (i, (pname, pty)) in target_params.iter().enumerate() {
+                    let given = i < pos_args.len() || named_args.iter().any(|(n, _, _)| n == pname);
+                    if !given && !defaults.contains(pname) && !matches!(pty, Ty::Option(_) | Ty::Any) {
+                        return Err(err_at(src, *at, format!("{} needs the prop '{}' ({})", target, pname, pty)));
                     }
                 }
             }
@@ -1604,6 +1634,18 @@ impl<'a> Checker<'a> {
                             return self.err(arm_at, format!("Match arm produces {}, expected {}", t, exp));
                         }
                     }
+                    // enum values compile to their (string) values, so String and an enum agree
+                    // (only enums without payloads: tagged unions compile to objects)
+                    let env = self.env;
+                    let stringish = |x: &Ty| match x {
+                        Ty::String => true,
+                        Ty::Enum(n, a) => a.is_empty() && env.enums.get(n).is_some_and(|(_, vs)| vs.iter().all(|(_, p)| p.is_none())),
+                        _ => false,
+                    };
+                    if expected.is_none() && result_ty != Ty::Any && t != Ty::Any && !matches!(t, Ty::Null) && !matches!(result_ty, Ty::Null) && !(stringish(&t) && stringish(&result_ty)) && !is_assignable(&result_ty, &t) && !is_assignable(&t, &result_ty) {
+                        self.scope = saved;
+                        return self.err(arm_at, format!("Match arms produce different types: {} here, {} before", t, result_ty));
+                    }
                     result_ty = if result_ty == Ty::Any { t } else { unify(result_ty, t) };
                 }
                 self.scope = saved;
@@ -2007,5 +2049,30 @@ mod tests {
 
         let bad_ctx_eff = compile("context Auth { store user: String = \"\"; effect Login(u: String) { user = u; } }\nview A { use Auth; state S { render { Button(\"x\") -> on_click(Go) } effect Go() { Auth.Login(42); } } }").unwrap_err();
         assert!(bad_ctx_eff.message.contains("expects String, got number"), "{}", bad_ctx_eff);
+    }
+
+    #[test]
+    fn checks_handlers_view_events_required_props_defaults_and_arm_types() {
+        let err = |src: &str| compile(src).unwrap_err().message;
+        // a handler must be an effect of the state it appears in
+        assert!(err(r#"view A { state S { render { Button("b") -> on_click(Nope) } effect Nop() {} } }"#).contains("State S of A has no effect 'Nope' (did you mean 'Nop'?)"));
+        assert!(err(r#"view A { state S { render { Button("b") -> on_click(E2) } } state T { render { Text("t") } effect E2() { transition S; } } }"#).contains("'E2' is an effect of state T, not S"));
+        // events on components must be emitted by them (DOM events are fine)
+        let r = r#"view R { state S { render { Button("r") -> on_click(P) } effect P() { emit pick(1); } } }"#;
+        assert!(err(&format!("view A {{ state S {{ render {{ R() -> on_pik(E) }} effect E() {{}} }} }}\n{}", r)).contains("R never emits 'pik' (did you mean 'on_pick'?). It emits: on_pick"));
+        assert!(compile(&format!("view A {{ state S {{ render {{ R() -> on_pick(E) -> on_click(E) }} effect E(n: any) {{}} }} }}\n{}", r)).is_ok());
+        // props: the view's own `label` is type-checked, required props must be given
+        let line = r#"view Line(label: String, check: bool = false, note: Option<String>) { state S { render { Text(label) } } }"#;
+        assert!(err(&format!("view A {{ state S {{ render {{ Line(label: 5) }} }} }}\n{}", line)).contains("Prop 'label' of view 'Line' expects String, got number"));
+        assert!(err(&format!("view A {{ state S {{ render {{ Line() }} }} }}\n{}", line)).contains("Line needs the prop 'label' (String)"));
+        let ok = compile(&format!("view A {{ state S {{ render {{ Line(label: \"x\") }} }} }}\n{}", line));
+        assert!(ok.is_ok(), "defaults and Option<…> props are optional: {:?}", ok.err());
+        assert_eq!(ok.unwrap().views[1].params[1].default.as_deref(), Some("false"));
+        assert!(err(r#"view R(n: i32 = "x") { state S { render { Text("r") } } }"#).contains("Default for prop 'n' should be number, got String"));
+        // views can't take a built-in element's name
+        assert!(err(r#"view Row { state S { render { Text("x") } } }"#).contains("'Row' is a built-in element"));
+        // match arms must agree on a type (string enums count as String)
+        assert!(err(r#"view A { store n: i32 = 1; let s = match n { 1 => "a", _ => 2 }; state S { render { Text("x") } } }"#).contains("Match arms produce different types"));
+        assert!(compile("enum K { A, B }\nview A { store k: K = K.A; let s = match k { K.A => \"first\", other => other }; state S { render { Text(s) } } }").is_ok());
     }
 }

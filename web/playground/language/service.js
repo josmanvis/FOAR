@@ -48,7 +48,7 @@ export function createLanguageService() {
 
   const fileOf = (path) => index?.files.get(path);
   const viewAt = (f, offset) => f.views.find((v) => v.start <= offset && offset <= v.end);
-  const viewSig = (v) => `view ${v.name}${v.params.length ? `(${v.params.map((p) => `${p.name}: ${p.type}`).join(', ')})` : ''}`;
+  const viewSig = (v) => `view ${v.name}${v.params.length ? `(${v.params.map((p) => `${p.name}: ${p.type}${p.default != null ? ` = ${p.default}` : ''}`).join(', ')})` : ''}`;
   const allEffects = (v) => v.states.flatMap((s) => s.effects.map((e) => ({ ...e, state: s.name })));
 
   // the element a "-> on_x" chain belongs to (walk back over balanced brackets)
@@ -244,7 +244,7 @@ export function createLanguageService() {
       const items = [];
       if (call && atArgStart) {
         const v = index.views.get(call.callee);
-        if (v) for (const p of v.params) items.push({ label: `${p.name}:`, kind: 'arg', detail: p.type, insert: `${p.name}: $0`, filter: p.name, sort: '0' });
+        if (v) for (const p of v.params) items.push({ label: `${p.name}:`, kind: 'arg', detail: p.default != null ? `${p.type} = ${p.default}` : p.type, insert: `${p.name}: $0`, filter: p.name, sort: p.default != null ? '1' : '0' });
         else if (ELEMENTS[call.callee]) for (const n of ELEMENTS[call.callee].named) items.push({ label: `${n}:`, kind: 'arg', doc: argDoc(n), insert: n === 'aria' ? 'aria: { $1 }' : `${n}: $0`, filter: n, sort: '0' });
       }
       items.push(...expressionItems(f, r, offset, view));
@@ -258,7 +258,7 @@ export function createLanguageService() {
         for (const [n, e] of Object.entries(ELEMENTS)) items.push({ label: n, kind: 'element', detail: e.sig, doc: e.doc, insert: e.snippet });
         for (const v of index.views.values()) {
           if (v.name === view?.name) continue;
-          const args = v.params.map((p, i) => `${p.name}: \${${i + 1}:${p.name}}`).join(', ');
+          const args = v.params.filter((p) => p.default == null && !/^Option</.test(p.type)).map((p, i) => `${p.name}: \${${i + 1}:${p.name}}`).join(', ');
           items.push({ label: v.name, kind: 'view', detail: viewSig(v), doc: `${v.path}${v.emits.size ? ` · emits ${[...v.emits].join(', ')}` : ''}`, insert: v.params.length ? `${v.name}(${args})` : `${v.name}()` });
         }
       }

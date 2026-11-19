@@ -352,8 +352,8 @@ test('If, RichText, Image, context menu, blur, title, innermost handler wins', a
 
 test('props and stores shadow host functions with the same name', async () => {
   const src = `
-    view Root { state S { render { Row(label: "from prop") Text(label("x")) } } }
-    view Row(label: String) {
+    view Root { state S { render { Line(label: "from prop") Text(label("x")) } } }
+    view Line(label: String) {
       store title: String = "from store";
       state S { render { Text(label) Text(title) } }
     }`;
@@ -1369,4 +1369,20 @@ view LikeButton(initial: i32) {
   await tick();
   assert.equal(likeBtn.textContent, 'Likes: 6');
   mgr.destroy();
+});
+
+test('prop defaults: used when a prop is not given, on the client and in SSR', async () => {
+  const src = `view App {
+    state S { render { Badge(label: "a") Badge(label: "b", tone: "red", count: 2) } }
+}
+view Badge(label: String, tone: String = "gray", count: i32 = 0) {
+    state S { render { Text("{label}:{tone}:{count}") } }
+}`;
+  const ast = parseFoar(src);
+  const { container } = makeDom();
+  const rt = createFoarRuntime(ast, container, {});
+  assert.deepEqual(q(container, '.f4-text').map((e) => e.textContent), ['a:gray:0', 'b:red:2']);
+  rt.destroy();
+  const { html } = renderToString(ast, {});
+  assert.ok(html.includes('a:gray:0') && html.includes('b:red:2'), html);
 });

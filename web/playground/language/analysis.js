@@ -98,13 +98,21 @@ export function analyzeFile(path, text) {
         let j = i + 2;
         let depth = 0;
         const typeToks = [];
+        let def = null;
         while (j < close && !(depth === 0 && is(j, ','))) {
           if (is(j, '<')) depth++;
           if (is(j, '>')) depth--;
+          if (depth === 0 && is(j, '=') && def === null) {
+            // `check: bool = false`: the default makes the prop optional
+            const from = j + 1;
+            while (j < close && !(depth === 0 && is(j, ','))) j++;
+            def = text.slice(toks[from]?.s ?? toks[j - 1].e, toks[j - 1].e).trim();
+            break;
+          }
           typeToks.push(toks[j].v);
           j++;
         }
-        out.push({ name: toks[i].v, type: typeToks.join(''), offset: toks[i].s });
+        out.push({ name: toks[i].v, type: typeToks.join(''), offset: toks[i].s, default: def });
         i = j + 1;
       } else i++;
     }

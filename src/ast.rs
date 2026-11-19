@@ -119,6 +119,9 @@ pub struct Param {
     pub name: String,
     #[serde(rename = "paramType")]
     pub param_type: String,
+    /// `view Row(check: bool = false)`: JS of the value used when the prop isn't given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
 }
 
 #[derive(Serialize, Debug, Clone)]

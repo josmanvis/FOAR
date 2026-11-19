@@ -50,15 +50,26 @@ view NoteRow(note: Note, selected: bool) {
 
 | Member | |
 |---|---|
-| parameters | `view Name(a: Type, b: Type)`: values from the parent, read-only |
+| parameters | `view Name(a: Type, b: Type = default)`: values from the parent, read-only. A parameter with a default, or of type `Option<T>`, is optional; every other one must be passed |
 | `store name: Type = value;` | mutable data, kept across renders and state changes |
 | `let name = expr;` | a **derived value**: recomputed before every update and every effect, read-only |
 | `style { … }` | styles for the view's host element |
 | `state Name { … }` | a state: `render`, effects and `on_exit` |
 
 Types are names: `String`, `bool`, `i32`, `i64`, `f64`, `any`, `Vec<T>`,
-`Option<T>`, your `data` and `enum` types. They document intent and drive the
-`match` exhaustiveness check.
+`Option<T>`, your `data` and `enum` types. The compiler checks them (see
+[static type checking](#static-type-checking-and-extern-fn)).
+
+```foar
+view MenuItem(label: String, check: bool = false, hint: String = "") { … }
+
+MenuItem(label: "Rename")                     // check is false, hint is ""
+MenuItem(label: "Pin", check: pinned)
+```
+
+A default is used whenever the prop isn't given, or its value is `undefined`,
+both in the browser and in server rendering. A view can't take the name of a
+built-in element (`Row`, `Text`, `List`, …).
 
 ### States
 
@@ -70,9 +81,11 @@ state Editing {
 }
 ```
 
-A view is always in exactly one state. Effects belong to a state: an event
-handled by an effect that the current state doesn't have does nothing. Moving
-between states (`transition Name;`) replaces only this view's subtree.
+A view is always in exactly one state. Effects belong to a state, and an
+element's `-> on_click(Save)` must name an effect of the state it appears in:
+anything else is a compile error (with "did you mean"), because at runtime it
+would silently do nothing. Moving between states (`transition Name;`)
+replaces only this view's subtree.
 
 ## Render
 
@@ -372,9 +385,14 @@ emitting output:
 - `store` initializers and explicit `let` annotations;
 - `data` struct literals (missing required fields, unknown fields with
   "did you mean", and field value types) and `.field` accesses;
-- child view instantiation props (unknown props and prop types);
+- child view props: unknown props, prop types, and required props that are
+  missing (a view's own props win over built-in attributes such as `label` or
+  `title`);
+- event wiring: `-> on_x(Effect)` names an effect of the current state, and on
+  a component, `on_x` is an event it emits (`emit x(…)`) or a DOM event;
 - assignments and operators in `effect` blocks, enum comparisons, `match` arm
-  types, and `transition` target state names.
+  types (all arms of a value-producing match agree; plain enums count as
+  strings), prop defaults, and `transition` target state names.
 
 To typecheck calls into JavaScript host functions, declare their signatures at
 the top level with `extern fn`:
