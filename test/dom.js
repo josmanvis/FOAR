@@ -17,12 +17,26 @@ export function fire(window, el, type, init = {}) {
 }
 
 // Compile .foar with the native Rust compiler (target/release/foar).
+import fs from 'node:fs';
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 const FOAR_BIN = new URL('../target/release/foar', import.meta.url).pathname;
+/** An example project folder -> { entry: 'app.foar', files: { path: source } }. */
+export function loadProject(dir) {
+  const root = new URL(`../examples/${dir}/`, import.meta.url);
+  const files = {};
+  for (const rel of fs.readdirSync(root, { recursive: true })) {
+    if (String(rel).endsWith('.foar')) files[String(rel).split(path.sep).join('/')] = fs.readFileSync(new URL(String(rel), root), 'utf8');
+  }
+  return { entry: 'app.foar', files };
+}
+
+/** Compiles a source string, or a project { entry, files } (imports resolved). */
 export function compile(source) {
   let out;
+  const project = typeof source !== 'string';
   try {
-    out = execFileSync(FOAR_BIN, ['build', '-'], { input: source, stdio: ['pipe', 'pipe', 'pipe'] });
+    out = execFileSync(FOAR_BIN, ['build', '-', ...(project ? ['--project'] : [])], { input: project ? JSON.stringify(source) : source, stdio: ['pipe', 'pipe', 'pipe'] });
   } catch (e) {
     out = e.stdout;
   }

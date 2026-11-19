@@ -42,42 +42,59 @@ function compileNative(req, res) {
   });
 }
 
+// examples/<id>/ are project folders: app.foar (entry) + whatever it imports.
+// GET /examples/index.json -> [{ id, title, description, entry, files: { path: source } }]
+function examplesIndex() {
+  const out = [];
+  for (const e of fs.readdirSync(EXAMPLES_DIR, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    const dir = path.join(EXAMPLES_DIR, e.name);
+    if (!fs.existsSync(path.join(dir, 'app.foar'))) continue;
+    const files = {};
+    for (const rel of fs.readdirSync(dir, { recursive: true })) {
+      if (String(rel).endsWith('.foar')) files[String(rel).split(path.sep).join('/')] = fs.readFileSync(path.join(dir, String(rel)), 'utf8');
+    }
+    // "// Title — description" on the entry's first line
+    const first = /^\/\/\s*(.+)$/m.exec(files['app.foar'])?.[1] ?? e.name;
+    const [title, description = ''] = first.split(/\s+—\s+/);
+    out.push({ id: e.name, title: title.replace(/^FOAR\s+/, ''), description, entry: 'app.foar', files });
+  }
+  const order = ['starter', 'counter', 'todo'];
+  return out.sort((a, b) => (order.indexOf(a.id) + 1 || 99) - (order.indexOf(b.id) + 1 || 99) || a.id.localeCompare(b.id));
+}
+
+const send = (res, status, type, body) => {
+  res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+  res.end(body);
+};
+
 const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/api/compile') return compileNative(req, res);
-  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-  const pathname = decodeURIComponent(url.pathname);
+  let pathname;
+  try {
+    // "//x" would parse as a host name: collapse leading slashes first
+    pathname = decodeURIComponent(new URL((req.url || '/').replace(/^\/+/, '/'), 'http://localhost').pathname);
+  } catch {
+    return send(res, 400, 'text/plain', 'Bad request');
+  }
 
+  if (pathname === '/examples/index.json') return send(res, 200, MIME_TYPES['.json'], JSON.stringify(examplesIndex()));
+
+  // /            -> the playground (web/playground/index.html)
+  // /examples/…  -> example sources
+  // anything else -> web/ (runtime, compiler, wasm, playground modules)
   let filePath;
-  if (pathname === '/' || pathname === '/index.html') {
-    filePath = path.join(WEB_DIR, 'index.html');
-  } else if (pathname.startsWith('/examples/')) {
-    const rel = path.basename(pathname);
-    filePath = path.join(EXAMPLES_DIR, rel);
-  } else {
-    const rel = pathname.replace(/^\/+/, '');
-    filePath = path.join(WEB_DIR, rel);
-  }
+  if (pathname === '/' || pathname === '/index.html') filePath = path.join(WEB_DIR, 'playground', 'index.html');
+  else if (pathname.startsWith('/examples/')) filePath = path.join(EXAMPLES_DIR, pathname.slice('/examples/'.length));
+  else filePath = path.join(WEB_DIR, pathname.replace(/^\/+/, ''));
+  filePath = path.normalize(filePath);
 
-  // Prevent directory traversal
-  if (!filePath.startsWith(WEB_DIR) && !filePath.startsWith(EXAMPLES_DIR)) {
-    res.writeHead(403, { 'Content-Type': 'text/plain' });
-    res.end('Forbidden');
-    return;
-  }
+  // no directory traversal
+  if (!filePath.startsWith(WEB_DIR + path.sep) && !filePath.startsWith(EXAMPLES_DIR + path.sep)) return send(res, 403, 'text/plain', 'Forbidden');
 
   fs.readFile(filePath, (err, data) => {
-    if (err) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end(`Not found: ${pathname}`);
-      return;
-    }
-    const ext = path.extname(filePath);
-    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-    res.writeHead(200, {
-      'Content-Type': contentType,
-      'Cache-Control': 'no-store',
-    });
-    res.end(data);
+    if (err) return send(res, 404, 'text/plain', `Not found: ${pathname}`);
+    send(res, 200, MIME_TYPES[path.extname(filePath)] || 'application/octet-stream', data);
   });
 });
 

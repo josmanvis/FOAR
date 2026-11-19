@@ -23,8 +23,9 @@ view AsyncCounter {
 }
 ```
 
-See `examples/` for the full `TodoApp.foar` (sub-views, keyed lists, events,
-emitted events, dynamic styles) and `Counter.foar` (async transitions).
+See [`examples/`](examples): `todo/` (sub-views, keyed lists, emitted events,
+dynamic styles, split into components), `counter/` (async transitions) and
+`starter/` (the smallest multi-file app).
 
 ## Architecture
 
@@ -74,17 +75,26 @@ program and what it imports.
 
 ## Layout
 
-| Path | What |
-|---|---|
-| `src/` | The Rust compiler: `lexer.rs`, `parser.rs`, `project.rs` (imports), `css.rs`, `transpile.rs`, `ast.rs`, `i18n.rs`, CLI `main.rs`, WASM ABI `wasm.rs` |
-| `web/foar-runtime.js` | The reactive DOM runtime (`createFoarRuntime`) |
-| `web/foar-compiler.js` | Browser front-end: runs the Rust compiler as WASM (or via the dev server), plus playground helpers |
-| `web/playground.js`, `web/index.html` | Browser playground: live preview, state-machine inspector |
-| `web/workspace.js`, `web/foar-highlight.js` | Playground workspace: file tree, tabs, highlighted editor, saving |
-| `web/layout.js`, `web/palette.js`, `web/search.js`, `web/findbar.js` | Workbench: layout and status bar, command palette / quick open, project search, find in file |
-| `server.js` | Zero-dependency static server for the playground (`pnpm dev`) |
-| `test/` | Runtime test suite (`pnpm test`, runs in happy-dom) |
-| `bench/` | Interaction benchmark (`pnpm bench`) |
+```
+FOAR/
+├── src/                    the Rust compiler (native CLI + WebAssembly)
+│   ├── lexer.rs parser.rs  tokens → AST; css.rs (styles), transpile.rs (Rust idioms → JS)
+│   ├── project.rs          imports: multi-file programs, errors mapped to file:line:col
+│   ├── i18n.rs             `foar i18n` catalog checker
+│   ├── main.rs             CLI · wasm.rs: the WASM ABI · ast.rs: the program JSON
+├── web/
+│   ├── foar-runtime.js     the reactive DOM runtime (createFoarRuntime, createI18n)
+│   ├── foar-compiler.js    runs the compiler in the browser (WASM, or the dev server)
+│   ├── foar.wasm           built by `pnpm build:wasm` (git-ignored)
+│   └── playground/         the browser IDE served at http://localhost:3000
+│       ├── index.html  styles.css  playground.js   (preview, inspector, commands)
+│       ├── workbench/      workspace (files, tabs, editor), layout, palette, search, find bar
+│       └── language/       highlighting and the language service (completions, hover, …)
+├── examples/               one folder per project: starter/, counter/, todo/
+├── test/                   runtime tests (happy-dom) · bench/: interaction benchmark
+├── server.js               zero-dependency playground server (/, /examples/index.json, /api/compile)
+└── Cargo.toml  package.json
+```
 
 ## Elements
 
@@ -293,9 +303,9 @@ pnpm build:wasm   # compile the compiler to web/foar.wasm (needs the wasm32 targ
 pnpm test         # cargo test + runtime tests
 pnpm bench
 
-foar check examples/TodoApp.foar
-foar build examples/TodoApp.foar --pretty            # program JSON
-foar build examples/TodoApp.foar --format js -o app.js
+foar check examples/todo/app.foar
+foar build examples/todo/app.foar --pretty            # program JSON
+foar build examples/todo/app.foar --format js -o app.js
 foar i18n locales app.foar host/*.js                 # check translation catalogs
 ```
 
@@ -369,7 +379,7 @@ An app that needs its own host functions is shown running from its origin (or
 `&app=<url>`); if it posts its runtime events to a localhost parent (as
 notes-on-foar does), the inspector follows it live. The Example menu lists
 Notes on FOAR under Apps, and a plain visit opens it when its dev server is
-running (`?example=Counter.foar` or `?example=scratch` pick another project).
+running (`?example=counter` or `?example=scratch` pick another project).
 
 Without `web/foar.wasm` the playground compiles through the dev server, which
 runs the native `foar` binary. Both paths use the same Rust compiler.

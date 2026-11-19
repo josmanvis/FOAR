@@ -1,0 +1,18 @@
+// Starter — a small multi-file app to build on.
+// The entry file's first view is the root; other files join with `import`.
+// Ctrl+click a name to open its file. New files: the + buttons in Files.
+import "components/Greeting"
+
+view App {
+    store count: i32 = 0;
+
+    state Ready {
+        render {
+            Column {
+                Greeting(label: "Hello from another file!")
+                Button("Clicked {count} times") -> on_click(Bump)
+            }.style({ gap: 12px; padding: 24px; })
+        }
+        effect Bump() { count += 1; }
+    }
+}

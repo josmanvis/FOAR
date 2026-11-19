@@ -1,8 +1,8 @@
 {
   "name": "FOAR",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "FOAR: a state-machine UI language. Rust compiler (native + WebAssembly), JavaScript DOM runtime, browser playground.",
+  "main": "web/foar-runtime.js",
   "type": "module",
   "scripts": {
     "start": "node server.js",
@@ -17,11 +17,6 @@
   "license": "ISC",
   "packageManager": "pnpm@10.33.0",
   "devDependencies": {
-    "@types/node": "^26.6.3",
-    "peggy": "^5.1.0",
-    "ts-node": "^10.9.2",
-    "ts-pegjs": "^4.2.2",
-    "typescript": "^7.0.2",
     "happy-dom": "^15.11.7"
   }
 }

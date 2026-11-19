@@ -1,0 +1,7 @@
+// Data types of the todo app.
+
+data Todo {
+    id: String,
+    text: String,
+    completed: bool,
+}

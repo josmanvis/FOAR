@@ -4,13 +4,14 @@
 // "elements created" column as the real work metric.
 //   pnpm bench
 import fs from 'node:fs';
-import { makeDom, tick, fire, compile as parseFoar } from '../test/dom.js';
+import { makeDom, tick, fire, compile as parseFoar, loadProject } from '../test/dom.js';
 import { createFoarRuntime } from '../web/foar-runtime.js';
 
-const src = fs.readFileSync(new URL('../examples/TodoApp.foar', import.meta.url), 'utf8');
+const project = loadProject('todo');
 const withTodos = (n) => {
   const items = Array.from({ length: n }, (_, i) => `{id:"t${i}",text:"item ${i}",completed:${i % 2 === 0}}`).join(',');
-  return src.replace(/store todos: Vec<Todo> = \[[\s\S]*?\];/, `store todos: Vec<Todo> = [${items}];`);
+  const app = project.files['app.foar'].replace(/store todos: Vec<Todo> = \[[\s\S]*?\];/, `store todos: Vec<Todo> = [${items}];`);
+  return { ...project, files: { ...project.files, 'app.foar': app } };
 };
 
 async function scenario(n, iters) {

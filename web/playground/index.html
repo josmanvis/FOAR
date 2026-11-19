@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FOAR Playground — State-Machine UI Language</title>
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/playground/styles.css" />
 </head>
 <body>
   <header class="topbar">
@@ -18,18 +18,15 @@
 
     <div class="topbar-controls">
       <div class="control-group">
-        <label for="example-select">Example:</label>
+        <label for="example-select">Project:</label>
         <select id="example-select">
           <optgroup label="Apps">
-            <option value="src:http://localhost:4400/app.foar">Notes on FOAR (live app · localhost:4400)</option>
+            <option value="src:http://localhost:4400/src/app.foar">Notes on FOAR (live app · localhost:4400)</option>
           </optgroup>
           <optgroup label="Your projects">
-            <option value="scratch">Scratch (multi-file, kept in this browser)</option>
+            <option value="scratch">Scratch (starter, kept in this browser)</option>
           </optgroup>
-          <optgroup label="Examples">
-            <option value="TodoApp.foar">TodoApp.foar (Sub-views &amp; Item State Machines)</option>
-            <option value="Counter.foar">Counter.foar (Async Counter State Machine)</option>
-          </optgroup>
+          <optgroup label="Examples" id="examples-group"></optgroup>
         </select>
       </div>
 
@@ -126,6 +123,6 @@
     </section>
   </main>
 
-  <script type="module" src="/playground.js"></script>
+  <script type="module" src="/playground/playground.js"></script>
 </body>
 </html>

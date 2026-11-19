@@ -1,0 +1,22 @@
+// Theme, shared styles and animations: plain CSS, compiled once by the Rust
+// compiler into one stylesheet.
+
+theme {
+    --accent: #007bff;
+    --radius: 6px;
+    --row-hover: #f9f9f9;
+    --muted: #aaa;
+    @dark { --row-hover: #1c2128; }
+}
+
+style Field {
+    padding: 10px;
+    border-radius: var(--radius);
+    border: 1px solid #ccc;
+    @focus { border-color: var(--accent); }
+}
+
+@keyframes slide-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: none; }
+}

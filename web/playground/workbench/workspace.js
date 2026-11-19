@@ -10,7 +10,7 @@
 //
 // Buffers are the truth for compiling; `saved` is what the backend has. Saving
 // is a diff: changed or new paths are written, missing ones deleted.
-import { highlightFoar } from './foar-highlight.js';
+import { highlightFoar } from '../language/highlight.js';
 
 const LINE_HEIGHT = 20; // px, keep in sync with .code-* in styles.css
 const PAD_TOP = 14;

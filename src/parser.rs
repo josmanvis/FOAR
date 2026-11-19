@@ -833,7 +833,10 @@ mod tests {
 
     #[test]
     fn examples_parse() {
-        let p = compile(include_str!("../examples/TodoApp.foar")).unwrap();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/todo");
+        let files = crate::project::load("app.foar", &mut |p| std::fs::read_to_string(root.join(p)).ok()).unwrap();
+        assert_eq!(files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["app.foar", "models.foar", "styles/theme.foar", "components/TodoItem.foar"]);
+        let p = crate::project::compile_files(&files).unwrap();
         assert_eq!(p.views.len(), 2);
         assert_eq!(p.views[0].stores[0].init_expr.starts_with("[ {"), true, "{}", p.views[0].stores[0].init_expr);
         assert!(p.css.contains(".f4-TodoItem.f4-TodoItem:hover{background:var(--row-hover)}"));
@@ -842,7 +845,7 @@ mod tests {
         let st = item_text.style.as_ref().unwrap();
         assert_eq!(st.dynamic[0].key, "text-decoration");
         assert_eq!(st.dynamic[0].expr, "(item.completed) ? \"line-through\" : \"none\"");
-        let c = compile(include_str!("../examples/Counter.foar")).unwrap();
+        let c = compile(include_str!("../examples/counter/app.foar")).unwrap();
         let fin = &c.views[0].states[1].effects[2];
         assert_eq!(fin.name, "FinishAndSave");
         assert_eq!(fin.js_body, "__asyncTransition(\"api_save\", [count], \"Saving\");");

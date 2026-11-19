@@ -1,5 +1,4 @@
-// FOAR: A State-Machine UI Language
-// ----------------------------------
+// Counter — one view, three states, an async transition and on_exit
 // A fresh take: UIs are inherently state machines. 
 // Instead of complex boolean flags (isLoading, isError, isActive) like React, 
 // FOAR uses explicit topological states for UI components.

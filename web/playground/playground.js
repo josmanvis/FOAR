@@ -1,10 +1,10 @@
-import { compileFoarProject, extractStateMachines, generateReadableJS, compilerBackend } from './foar-compiler.js';
-import { createWorkspace, localBackend, remoteBackend } from './workspace.js';
-import { createSearchPanel } from './search.js';
-import { createFindBar } from './findbar.js';
-import { createPalette } from './palette.js';
-import { createLayout } from './layout.js';
-import { createFoarRuntime } from './foar-runtime.js';
+import { compileFoarProject, extractStateMachines, generateReadableJS, compilerBackend } from '../foar-compiler.js';
+import { createWorkspace, localBackend, remoteBackend } from './workbench/workspace.js';
+import { createSearchPanel } from './workbench/search.js';
+import { createFindBar } from './workbench/findbar.js';
+import { createPalette } from './workbench/palette.js';
+import { createLayout } from './workbench/layout.js';
+import { createFoarRuntime } from '../foar-runtime.js';
 
 const exampleSelect = document.getElementById('example-select');
 const projectTitle = document.getElementById('project-title');
@@ -257,45 +257,18 @@ async function compileAndMount(project) {
 }
 
 // ---- projects ---------------------------------------------------------------------------
-// A scratch project to try multiple files without a dev server (kept in this browser).
-const SCRATCH = {
-  entry: 'app.foar',
-  files: {
-    'app.foar': `// Scratch project — kept in this browser.
-// The entry file's first view is the root view; other files are imported.
-// Ctrl+click a name to jump to its file. New files: the + buttons in Files.
-import "components/Greeting"
-
-view App {
-    store count: i32 = 0;
-
-    state Ready {
-        render {
-            Column {
-                Greeting(label: "Hello from another file!")
-                Button("Clicked {count} times") -> on_click(Bump)
-            }.style({ gap: 12px; padding: 24px; })
-        }
-        effect Bump() { count += 1; }
-    }
-}
-`,
-    'components/Greeting.foar': `// Greeting — a component in its own file.
-
-view Greeting(label: String) {
-    state Idle {
-        render {
-            Text(label).style({
-                font-size: 22px;
-                font-weight: 700;
-                color: #4f46e5;
-            })
-        }
-    }
-}
-`,
-  },
-};
+// Examples are project folders in examples/ (GET /examples/index.json lists them
+// with their files). "Scratch" starts as a copy of examples/starter and is kept
+// in this browser.
+let examples = [];
+const examplesReady = fetch('/examples/index.json', { cache: 'no-store' })
+  .then((r) => (r.ok ? r.json() : []))
+  .catch(() => [])
+  .then((list) => {
+    examples = list;
+    const group = document.getElementById('examples-group');
+    for (const ex of list) group.append(new Option(`${ex.title} — ${ex.description}`, ex.id));
+  });
 
 const ws = createWorkspace(document.getElementById('workspace-root'), {
   onChange(project) {
@@ -319,14 +292,16 @@ async function openProject(backend, info) {
 }
 
 function openScratch() {
-  return openProject(localBackend('scratch', SCRATCH), { name: 'Scratch', id: 'scratch', original: SCRATCH });
+  const starter = examples.find((e) => e.id === 'starter');
+  const original = { entry: starter?.entry ?? 'app.foar', files: starter?.files ?? { 'app.foar': 'view App {\n    state Ready {\n        render {\n            Text("Hello")\n        }\n    }\n}\n' } };
+  return openProject(localBackend('scratch', original), { name: 'Scratch', id: 'scratch', original });
 }
 
-async function loadExample(filename) {
-  const res = await fetch(`/examples/${filename}`);
-  if (!res.ok) throw new Error(`Failed to fetch ${filename}`);
-  const original = { entry: filename, files: { [filename]: await res.text() } };
-  await openProject(localBackend(`example:${filename}`, original), { name: filename.replace(/\.foar$/, ''), id: `example:${filename}`, original });
+function loadExample(id) {
+  const ex = examples.find((e) => e.id === id);
+  if (!ex) return openScratch();
+  const original = { entry: ex.entry, files: ex.files };
+  return openProject(localBackend(`example:${id}`, original), { name: `examples/${id}`, id: `example:${id}`, original });
 }
 
 // A running app: its dev server serves the whole project and saves edits
@@ -355,7 +330,7 @@ async function loadRemote(url) {
 
 // "src:<url>" options open a running app's source (remote mode); the others are
 // bundled examples. Switching between the two modes reloads the page.
-const NOTES_SRC = 'http://localhost:4400/app.foar';
+const NOTES_SRC = 'http://localhost:4400/src/app.foar';
 exampleSelect.addEventListener('change', () => {
   const v = exampleSelect.value;
   if (!v) return;
@@ -512,25 +487,28 @@ if (remoteSrc) {
   }
   loadRemote(remoteSrc);
 } else {
-  const example = params.get('example');
-  const bundled = [...exampleSelect.options].filter((o) => o.value.endsWith('.foar') && !o.value.startsWith('src:')).map((o) => o.value);
-  if (example === 'scratch') {
-    exampleSelect.value = 'scratch';
-    openScratch();
-  } else if (example && bundled.includes(example)) {
-    exampleSelect.value = example;
-    loadExample(example);
-  } else {
-    // Plain visit: open the Notes app when its dev server is running,
-    // otherwise the first bundled example.
-    fetch(NOTES_SRC, { method: 'HEAD', signal: AbortSignal.timeout(800) })
-      .then((r) => {
-        if (!r.ok) throw new Error();
-        location.replace(`?src=${encodeURIComponent(NOTES_SRC)}`);
-      })
-      .catch(() => {
-        exampleSelect.value = bundled[0];
-        loadExample(bundled[0]);
-      });
-  }
+  examplesReady.then(() => {
+    const example = params.get('example');
+    const ids = examples.map((e) => e.id);
+    if (example === 'scratch') {
+      exampleSelect.value = 'scratch';
+      openScratch();
+    } else if (example && ids.includes(example)) {
+      exampleSelect.value = example;
+      loadExample(example);
+    } else {
+      // Plain visit: open the Notes app when its dev server is running,
+      // otherwise the first example.
+      fetch(NOTES_SRC, { method: 'HEAD', signal: AbortSignal.timeout(800) })
+        .then((r) => {
+          if (!r.ok) throw new Error();
+          location.replace(`?src=${encodeURIComponent(NOTES_SRC)}`);
+        })
+        .catch(() => {
+          const first = ids.includes('todo') ? 'todo' : ids[0];
+          exampleSelect.value = first;
+          loadExample(first);
+        });
+    }
+  });
 }

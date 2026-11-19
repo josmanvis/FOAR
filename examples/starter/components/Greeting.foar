@@ -1,0 +1,13 @@
+// Greeting — a component in its own file.
+
+view Greeting(label: String) {
+    state Idle {
+        render {
+            Text(label).style({
+                font-size: 22px;
+                font-weight: 700;
+                color: #4f46e5;
+            })
+        }
+    }
+}

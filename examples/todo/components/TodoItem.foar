@@ -1,0 +1,84 @@
+// TodoItem — one todo. Its states (Idle, Editing) replace React-style
+// boolean flags such as `isEditing` and conditional rendering.
+import "styles/theme"
+
+view TodoItem(item: Todo) {
+    store draft_edit: String = item.text;
+
+    style {
+        layout: horizontal;
+        align: center;
+        gap: 12px;
+        padding: 12px;
+        border-bottom: 1px solid #eee;
+        transition: background 0.2s ease;
+        animation: slide-in 0.18s ease-out;
+
+        @hover { background: var(--row-hover); }
+        // Styles that apply only while this item is in a given state:
+        @state Editing { background: #fffbe6; }
+    }
+
+    // Default State: Showing the Todo
+    state Idle {
+        render {
+            Checkbox(checked: item.completed) -> on_change(Toggle)
+            
+            Text(item.text)
+                .style({ 
+                    text-decoration: item.completed ? line-through : none; 
+                    flex: 1; 
+                    color: item.completed ? var(--muted) : inherit;
+                })
+                -> on_double_click(StartEdit)
+
+            Button("Edit") -> on_click(StartEdit)
+            Button("Delete") -> on_click(DeleteSelf).style({ color: red; })
+        }
+
+        effect Toggle(checked: bool) {
+            let mut new_item = item;
+            new_item.completed = checked;
+            emit update(new_item);
+        }
+
+        effect StartEdit() {
+            draft_edit = item.text; // Reset draft
+            transition Editing;     // Explicitly change UI topology!
+        }
+
+        effect DeleteSelf() {
+            emit delete(item.id);
+        }
+    }
+
+    // Editing State: Layout completely changes surgically
+    state Editing {
+        render {
+            Input(value: draft_edit) 
+                -> on_input(UpdateEditDraft)
+                -> on_enter(SaveEdit)
+                .style({ flex: 1; padding: 6px; })
+
+            Button("Save") -> on_click(SaveEdit).style({ color: green; })
+            Button("Cancel") -> on_click(CancelEdit)
+        }
+
+        effect UpdateEditDraft(text: String) {
+            draft_edit = text;
+        }
+
+        effect SaveEdit() {
+            if !draft_edit.is_empty() {
+                let mut new_item = item;
+                new_item.text = draft_edit;
+                emit update(new_item);
+            }
+            transition Idle; // Go back to normal view
+        }
+
+        effect CancelEdit() {
+            transition Idle;
+        }
+    }
+}

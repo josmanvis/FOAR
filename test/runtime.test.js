@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { makeDom, tick, fire, compile as parseFoar } from './dom.js';
+import { makeDom, tick, fire, compile as parseFoar, loadProject } from './dom.js';
 import { createFoarRuntime } from '../web/foar-runtime.js';
 
-const todoSrc = fs.readFileSync(new URL('../examples/TodoApp.foar', import.meta.url), 'utf8');
-const counterSrc = fs.readFileSync(new URL('../examples/Counter.foar', import.meta.url), 'utf8');
+const todoSrc = loadProject('todo'); // multi-file project
+const counterSrc = fs.readFileSync(new URL('../examples/counter/app.foar', import.meta.url), 'utf8');
 
 const q = (c, sel) => Array.from(c.querySelectorAll(sel));
 const texts = (c) => q(c, '.f4-view-TodoItem .f4-text').map((e) => e.textContent);

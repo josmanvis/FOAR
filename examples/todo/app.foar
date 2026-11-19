@@ -1,0 +1,91 @@
+// Todo App — sub-views with their own state machines, events, a theme and data
+// Split into files:
+//   app.foar                  the root view (this file)
+//   models.foar               data Todo
+//   styles/theme.foar         theme, shared styles, animations
+//   components/TodoItem.foar  one todo: Idle / Editing states
+import "models"
+import "styles/theme"
+import "components/TodoItem"
+
+view TodoApp {
+    // Persistent View State
+    store todos: Vec<Todo> = [
+        Todo { id: "todo-1", text: "Design explicit topological UI states", completed: true },
+        Todo { id: "todo-2", text: "Double-click or click Edit to test Editing state", completed: false },
+        Todo { id: "todo-3", text: "Eliminate React boolean flags forever", completed: false },
+    ];
+    store search_query: String = "";
+    store draft: String = "";
+
+    // Base styling applied to the host element
+    style {
+        layout: vertical;
+        padding: 32px;
+        gap: 20px;
+        max-width: 600px;
+        font-family: system-ui;
+    }
+
+    // The App is always active in this example
+    state Active {
+        render {
+            Text("FOAR Todo App")
+                .style({ font-size: 32px; font-weight: bold; color: #333; })
+
+            // Search Bar
+            Input(value: search_query, placeholder: "🔍 Search todos...") 
+                -> on_input(UpdateSearch)
+                .style(Field)
+
+            // Create New Todo Row
+            Row {
+                Input(value: draft, placeholder: "What needs to be done?")
+                    -> on_input(UpdateDraft)
+                    -> on_enter(AddTodo)
+                    .style(Field, { flex: 1; })
+                
+                Button("Add") 
+                    -> on_click(AddTodo)
+                    .style({ background: #007bff; color: white; border-radius: 6px; padding: 0 20px; })
+            }
+
+            // List rendering with reactive filtering
+            List(todos.filter(|t| t.text.contains(search_query))) { todo =>
+                // Instantiate sub-view and listen to its emitted events
+                TodoItem(item: todo)
+                    -> on_delete(RemoveTodo)
+                    -> on_update(UpdateTodo)
+            }
+        }
+
+        // --- Effects (Transitions & Data Mutations) ---
+        effect UpdateSearch(query: String) {
+            search_query = query;
+        }
+
+        effect UpdateDraft(text: String) {
+            draft = text;
+        }
+
+        effect AddTodo() {
+            if draft.is_empty() { return; }
+            todos.push(Todo { 
+                id: random_uuid(), 
+                text: draft, 
+                completed: false 
+            });
+            draft = ""; // Clear input
+        }
+
+        effect RemoveTodo(id: String) {
+            todos.retain(|t| t.id != id);
+        }
+
+        effect UpdateTodo(updated: Todo) {
+            if let Some(index) = todos.find_index(|t| t.id == updated.id) {
+                todos[index] = updated;
+            }
+        }
+    }
+}
