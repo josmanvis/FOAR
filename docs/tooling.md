@@ -3,7 +3,7 @@
 ## The compiler
 
 The compiler is written in Rust and builds two ways from the same source: a
-native command-line tool, and a WebAssembly module (≈246 KB gzipped) that the
+native command-line tool, and a WebAssembly module (≈252 KB gzipped) that the
 playground runs in the browser. Both compile and typecheck the 21-file Notes app
 (≈2,000 lines) in about 30 ms.
 
@@ -16,8 +16,9 @@ pnpm build:wasm                    # web/foar.wasm (needs: rustup target add was
 
 ```sh
 foar check app.foar                         # parse, resolve imports/@packages, typecheck
+foar fmt app.foar [--check]                 # deterministic formatter (CI-friendly with --check)
 foar build app.foar --pretty                # program JSON (for createFoarRuntime)
-foar build app.foar --format js -o app.js   # ES module: { program, mount, hydrate, renderToString, renderToStringAsync, renderToStream, createI18n }
+foar build app.foar --format js -o app.js   # ES module: { program, mount, hydrate, hydrateIslands, renderToString, renderToStringAsync, renderToStream, createI18n }
 foar build app.foar --format js --runtime ./foar-runtime.js -o dist/app.js
 foar build - < app.foar                     # one source from stdin
 foar build - --project < project.json       # {"entry", "files": {path: source}} from stdin
@@ -79,9 +80,9 @@ run in CI.
 
 ## The runtime
 
-`web/foar-runtime.js` is one ES module (≈21 KB gzipped) with no dependencies:
-`createFoarRuntime`, `hydrate`, `renderToString`, `renderToStringAsync`,
-`renderToStream`, and `createI18n`. See
+`web/foar-runtime.js` is one ES module (≈24 KB gzipped) with no dependencies:
+`createFoarRuntime`, `hydrate`, `hydrateIslands`, `renderToString`,
+`renderToStringAsync`, `renderToStream`, and `createI18n`. See
 the [reference](./language.md#host-functions-and-the-runtime).
 
 ## The playground

@@ -5,7 +5,7 @@
 //! extern declarations, and views across all imported files), reporting exact
 //! source offsets that multi-file builds map back to `file:line:col`.
 
-use crate::ast::{DataDecl, EnumDecl, ExternDecl, Param, ViewDecl};
+use crate::ast::{ContextDecl, DataDecl, EnumDecl, ExternDecl, FnDecl, Param, ViewDecl};
 use crate::lexer::{Kind, Token};
 use crate::parser::CompileError;
 use std::collections::{HashMap, HashSet};
@@ -27,6 +27,7 @@ pub enum Ty {
     Record(Box<Ty>),
     RouteInfo,
     CatchError,
+    Context(String),
 }
 
 impl std::fmt::Display for Ty {
@@ -53,6 +54,7 @@ impl std::fmt::Display for Ty {
             Ty::Record(t) => write!(f, "Record<{}>", t),
             Ty::RouteInfo => write!(f, "Route"),
             Ty::CatchError => write!(f, "CatchError"),
+            Ty::Context(n) => write!(f, "context {}", n),
         }
     }
 }
@@ -79,6 +81,12 @@ pub enum CheckItem {
         params: Vec<Param>,
         tokens: Vec<Token>,
     },
+    FnBody {
+        name: String,
+        params: Vec<Param>,
+        return_type: String,
+        tokens: Vec<Token>,
+    },
     ViewCall {
         view: String,
         locals: Vec<(String, Option<String>)>,
@@ -100,14 +108,20 @@ struct Env<'a> {
     data: HashMap<String, (Vec<String>, Vec<(String, Ty)>)>,
     /// enum name -> (type_params, variants: (variant_name, optional payload ty))
     enums: HashMap<String, (Vec<String>, Vec<(String, Option<Ty>)>)>,
+    /// extern fns + top-level FOAR `fn`s: name -> (params, return_ty)
     externs: HashMap<String, (Vec<(String, Ty)>, Ty)>,
+    /// context name -> (fields: stores+derived, effects: name -> params)
+    contexts: HashMap<String, (HashMap<String, Ty>, HashMap<String, Vec<(String, Ty)>>)>,
     views: HashMap<String, Vec<(String, Ty)>>,
     view_states: HashMap<String, HashSet<String>>,
-    /// Per-view scope (params + stores + derived `let`s).
+    /// Per-view (and per-context `@ctx:Name`) scope.
     view_vars: HashMap<String, HashMap<String, Ty>>,
 }
 
-const BUILTIN_ATTR_PROPS: &[&str] = &["key", "label", "role", "aria", "title", "tab_index", "drag", "drag_text", "class", "id", "slot"];
+const BUILTIN_ATTR_PROPS: &[&str] = &[
+    "key", "label", "role", "aria", "title", "tab_index", "drag", "drag_text",
+    "class", "id", "slot", "disabled", "min", "max", "step", "client",
+];
 
 fn err_at(src: &str, at: usize, message: String) -> CompileError {
     let at = at.min(src.len());
@@ -272,6 +286,8 @@ pub fn check_program(
     data_decls: &[DataDecl],
     enums: &[EnumDecl],
     externs: &[ExternDecl],
+    functions: &[FnDecl],
+    contexts: &[ContextDecl],
     views: &[ViewDecl],
     items: &[CheckItem],
 ) -> Result<(), CompileError> {
@@ -283,6 +299,7 @@ pub fn check_program(
         data: HashMap::new(),
         enums: HashMap::new(),
         externs: HashMap::new(),
+        contexts: HashMap::new(),
         views: HashMap::new(),
         view_states: HashMap::new(),
         view_vars: HashMap::new(),
@@ -318,6 +335,29 @@ pub fn check_program(
         env.externs.insert(ex.name.clone(), (params, ret));
     }
 
+    for f in functions {
+        let params = f.params.iter().map(|p| (p.name.clone(), parse_ty(&p.param_type, &data_names, &enum_names))).collect();
+        let ret = parse_ty(&f.return_type, &data_names, &enum_names);
+        env.externs.insert(f.name.clone(), (params, ret));
+    }
+
+    for ctx in contexts {
+        let mut fields = HashMap::new();
+        for s in &ctx.stores {
+            fields.insert(s.name.clone(), parse_ty(&s.store_type, &data_names, &enum_names));
+        }
+        for d in &ctx.derived {
+            fields.insert(d.name.clone(), parse_ty(&d.derived_type, &data_names, &enum_names));
+        }
+        let mut effs = HashMap::new();
+        for ef in &ctx.effects {
+            let ps = ef.params.iter().map(|p| (p.name.clone(), parse_ty(&p.param_type, &data_names, &enum_names))).collect();
+            effs.insert(ef.name.clone(), ps);
+        }
+        env.view_vars.insert(format!("@ctx:{}", ctx.name), fields.clone());
+        env.contexts.insert(ctx.name.clone(), (fields, effs));
+    }
+
     for v in views {
         let params: Vec<(String, Ty)> = v
             .params
@@ -329,6 +369,12 @@ pub fn check_program(
 
         let mut scope = HashMap::new();
         scope.insert("route".to_string(), Ty::RouteInfo);
+        for ctx_name in &v.uses {
+            if !env.contexts.contains_key(ctx_name) {
+                return Err(err_at(src, 0, format!("Unknown context '{}' in view '{}'", ctx_name, v.name)));
+            }
+            scope.insert(ctx_name.clone(), Ty::Context(ctx_name.clone()));
+        }
         for (n, ty) in params {
             scope.insert(n, ty);
         }
@@ -371,7 +417,12 @@ pub fn check_program(
                 }
                 if expected == Ty::Any && actual != Ty::Any {
                     if let Some(vscope) = env.view_vars.get_mut(view) {
-                        vscope.insert(name.clone(), actual);
+                        vscope.insert(name.clone(), actual.clone());
+                    }
+                    if let Some(cname) = view.strip_prefix("@ctx:") {
+                        if let Some((fields, _)) = env.contexts.get_mut(cname) {
+                            fields.insert(name.clone(), actual);
+                        }
                     }
                 }
             }
@@ -388,6 +439,14 @@ pub fn check_program(
                     scope.insert(p.name.clone(), parse_ty(&p.param_type, &data_names, &enum_names));
                 }
                 let mut tc = Checker::new(&env, view, scope);
+                tc.check_statements(tokens)?;
+            }
+            CheckItem::FnBody { name, params, return_type: _, tokens } => {
+                let mut scope = HashMap::new();
+                for p in params {
+                    scope.insert(p.name.clone(), parse_ty(&p.param_type, &data_names, &enum_names));
+                }
+                let mut tc = Checker::new(&env, name, scope);
                 tc.check_statements(tokens)?;
             }
             CheckItem::ViewCall { view, locals, target, pos_args, named_args, at } => {
@@ -1184,12 +1243,52 @@ impl<'a> Checker<'a> {
                 "message" | "view" => Ok(Ty::String),
                 _ => self.err(at, format!("Unknown field '{}' on CatchError (available: message, view)", field)),
             },
+            Ty::Context(cname) => {
+                if let Some((fields, _)) = self.env.contexts.get(cname) {
+                    if let Some(fty) = fields.get(field) {
+                        return Ok(fty.clone());
+                    }
+                    let hint = closest(field, fields.keys().map(|s| s.as_str()))
+                        .map(|s| format!(" (did you mean '{}'?)", s))
+                        .unwrap_or_default();
+                    return self.err(at, format!("Unknown store or let '{}' on context '{}'{}", field, cname, hint));
+                }
+                Ok(Ty::Any)
+            }
             Ty::Record(v) => Ok((**v).clone()),
             _ => Ok(Ty::Any),
         }
     }
 
     fn check_method_call(&mut self, base: &Ty, method: &str, args: &[Vec<Token>], at: usize) -> Result<Ty, CompileError> {
+        // Context effect call: `Auth.SignIn("Ada")`
+        if let Ty::Context(cname) = base {
+            if let Some((_, effects)) = self.env.contexts.get(cname) {
+                let Some(params) = effects.get(method) else {
+                    let hint = closest(method, effects.keys().map(|s| s.as_str()))
+                        .map(|s| format!(" (did you mean '{}'?)", s))
+                        .unwrap_or_default();
+                    return self.err(at, format!("Unknown effect '{}' on context '{}'{}", method, cname, hint));
+                };
+                if args.len() != params.len() {
+                    return self.err(
+                        at,
+                        format!("Context effect '{}.{}' expects {} argument(s), got {}", cname, method, params.len(), args.len()),
+                    );
+                }
+                for (i, (a, (pname, pty))) in args.iter().zip(params.iter()).enumerate() {
+                    let actual = self.check_expr(a, Some(pty))?;
+                    if !is_assignable(pty, &actual) {
+                        let a_at = a.first().map(|t| t.start).unwrap_or(at);
+                        return self.err(
+                            a_at,
+                            format!("Argument {} ('{}') of '{}.{}' expects {}, got {}", i + 1, pname, cname, method, pty, actual),
+                        );
+                    }
+                }
+                return Ok(Ty::Void);
+            }
+        }
         // Handle closure-taking Vec methods with inferred element parameter types
         if let Ty::Vec(elem) = base {
             match method {
@@ -1852,5 +1951,61 @@ mod tests {
             "view App { state S { render { Catch { Text(\"ok\") } Fallback { err => Text(err.nope) } } } }",
         ).unwrap_err();
         assert!(bad_err.message.contains("Unknown field 'nope' on CatchError"), "{}", bad_err);
+    }
+
+    #[test]
+    fn checks_contexts_pure_fns_forms_hotkeys_and_async_error_hooks() {
+        let ok = compile(
+            "fn format_cents(cents: i32) -> String {\n\
+                 return \"$\" + (cents / 100).toFixed(2);\n\
+             }\n\
+             context Cart {\n\
+                 store total: i32 = 0;\n\
+                 let label: String = format_cents(total);\n\
+                 effect Add(cents: i32) { total += cents; }\n\
+                 effect Clear() { total = 0; }\n\
+             }\n\
+             extern fn checkout(amount: i32) -> Promise<String>;\n\
+             view App {\n\
+                 use Cart;\n\
+                 store tier: String = \"pro\";\n\
+                 store vol: i32 = 50;\n\
+                 store msg: String = \"\";\n\
+                 state Idle {\n\
+                     on_key(\"Escape\") { Cart.Clear(); }\n\
+                     render {\n\
+                         Form {\n\
+                             Text(Cart.label)\n\
+                             Select(value: tier) {\n\
+                                 Option(value: \"free\", \"Free\")\n\
+                                 Option(value: \"pro\", \"Pro\")\n\
+                             } -> on_change(SetTier)\n\
+                             Slider(value: vol, min: 0, max: 100, step: 5) -> on_input(SetVol)\n\
+                             Progress(value: vol, max: 100)\n\
+                             Island(client: \"visible\") { Button(\"Clear\", disabled: Cart.total == 0) -> on_click(Cart.Clear) }\n\
+                             Button(\"Pay\") -> on_click(Pay)\n\
+                         } -> on_submit(Pay)\n\
+                     }\n\
+                     effect SetTier(v: String) { tier = v; }\n\
+                     effect SetVol(v: i32) { vol = v; }\n\
+                     effect Pay() { Cart.Add(500); checkout(Cart.total) -> transition(Paying); }\n\
+                 }\n\
+                 state Paying {\n\
+                     render { Spinner(\"Paying...\") }\n\
+                     on_exit(receipt: String) { msg = receipt; transition Idle; }\n\
+                     on_error(err: String) { msg = err; transition Idle; }\n\
+                 }\n\
+             }",
+        );
+        assert!(ok.is_ok(), "{:?}", ok);
+
+        let bad_fn = compile("fn dbl(n: i32) -> i32 { return n * 2; }\nview A { let x: i32 = dbl(\"no\"); state S { render { Text(\"{x}\") } } }").unwrap_err();
+        assert!(bad_fn.message.contains("expects number, got String"), "{}", bad_fn);
+
+        let bad_ctx_field = compile("context Auth { store user: String = \"\"; }\nview A { use Auth; state S { render { Text(Auth.usr) } } }").unwrap_err();
+        assert!(bad_ctx_field.message.contains("Unknown store or let 'usr' on context 'Auth' (did you mean 'user'?)"), "{}", bad_ctx_field);
+
+        let bad_ctx_eff = compile("context Auth { store user: String = \"\"; effect Login(u: String) { user = u; } }\nview A { use Auth; state S { render { Button(\"x\") -> on_click(Go) } effect Go() { Auth.Login(42); } } }").unwrap_err();
+        assert!(bad_ctx_eff.message.contains("expects String, got number"), "{}", bad_ctx_eff);
     }
 }

@@ -32,8 +32,13 @@ const KEYWORDS: &[(&str, &str)] = &[
     ("render", "Declare the retained UI tree for a state."),
     ("effect", "Declare a state-scoped event handler that mutates stores, emits, or transitions."),
     ("on_enter", "Lifecycle hook executed when entering a state."),
-    ("on_exit", "Lifecycle hook executed when an async transition settles."),
+    ("on_exit", "Lifecycle hook executed when an async transition resolves (`on_exit(res: Type) { … }`)."),
+    ("on_error", "Error hook executed when an async transition rejects (`on_error(err: String) { … }`)."),
     ("on_unmount", "Lifecycle hook executed when leaving a state or disposing a view."),
+    ("on_key", "State-scoped keyboard shortcut (`on_key(\"Escape\") { … }`, `on_key(\"Mod+K\") { … }`)."),
+    ("context", "Declare a shared reactive singleton context (`context Auth { store ...; let ...; effect ... }`)."),
+    ("use", "Subscribe a view to a shared reactive context (`use Auth;`)."),
+    ("fn", "Declare a typed pure FOAR function (`fn format_price(cents: i32) -> String { … }`)."),
     ("store", "Declare reactive view state (`store name: Type = init;`)."),
     ("let", "Declare a derived reactive value (`let total = items.len();`)."),
     ("data", "Declare a typed record struct (`data User<T> { ... }`)."),
@@ -70,6 +75,12 @@ const BUILTIN_ELEMENTS: &[(&str, &str)] = &[
     ("Portal", "Render children into another DOM container (`Portal(target: \"#modal-root\") { ... }`)."),
     ("Catch", "Error boundary isolating runtime & SSR errors (`Catch { ... } Fallback { err => ... }`)."),
     ("Fallback", "Fallback UI rendered when a `Catch` boundary catches an error."),
+    ("Form", "Native `<form>` container with automatic `preventDefault()` (`Form { ... } -> on_submit(Submit)`)."),
+    ("Select", "Native `<select>` dropdown (`Select(value: x) { Option(value: \"a\", \"Alpha\") } -> on_change(Pick)`)."),
+    ("Option", "Option inside a `Select` (`Option(value: \"a\", \"Alpha\")`)."),
+    ("Slider", "Native range slider (`Slider(value: v, min: 0, max: 100, step: 1) -> on_input(Set)`)."),
+    ("Progress", "Native progress bar (`Progress(value: v, max: 100)`)."),
+    ("Island", "Partial hydration boundary (`Island(client: \"visible\" | \"idle\" | \"load\") { ... }`)."),
 ];
 
 pub fn run_stdio() {
@@ -320,6 +331,10 @@ impl Server {
                 out.push(SymbolInfo { kind: "enum", name, detail: trimmed.to_string(), line: line_idx, col, uri: uri.to_string() });
             } else if let Some((name, col)) = rest_ident("extern fn ") {
                 out.push(SymbolInfo { kind: "extern fn", name, detail: trimmed.to_string(), line: line_idx, col, uri: uri.to_string() });
+            } else if let Some((name, col)) = rest_ident("fn ") {
+                out.push(SymbolInfo { kind: "fn", name, detail: trimmed.to_string(), line: line_idx, col, uri: uri.to_string() });
+            } else if let Some((name, col)) = rest_ident("context ") {
+                out.push(SymbolInfo { kind: "context", name, detail: trimmed.to_string(), line: line_idx, col, uri: uri.to_string() });
             } else if let Some((name, col)) = rest_ident("state ") {
                 out.push(SymbolInfo { kind: "state", name, detail: trimmed.to_string(), line: line_idx, col, uri: uri.to_string() });
             }

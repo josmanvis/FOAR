@@ -4,7 +4,8 @@
 
 const KEYWORDS = new Set([
   'view', 'state', 'store', 'effect', 'render', 'transition', 'emit', 'data', 'theme', 'style', 'css',
-  'import', 'extern', 'if', 'else', 'for', 'in', 'let', 'const', 'return', 'on_enter', 'on_exit', 'on_unmount', 'async', 'await', 'match',
+  'import', 'extern', 'context', 'use', 'if', 'else', 'for', 'in', 'let', 'const', 'return',
+  'on_enter', 'on_exit', 'on_error', 'on_unmount', 'on_key', 'async', 'await', 'match',
   'while', 'break', 'continue', 'fn', 'mut', 'new', 'typeof', 'of', 'enum', 'loop',
 ]);
 const LITERALS = new Set(['true', 'false', 'null', 'undefined', 'None', 'Some']);

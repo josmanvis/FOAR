@@ -417,12 +417,51 @@ Column {
   and `route.hash`, and effects can call `navigate("/path")` or
   `replace("/path")`.
 
-## Composition: Slots, Portals, Lifecycle & Error Boundaries
+## Shared Contexts & Pure Functions
+
+Declare shared singleton reactive state with `context` and subscribe from any
+view with `use`:
+
+```foar
+fn format_usd(cents: i32) -> String {
+    return "$" + (cents / 100).toFixed(2);
+}
+
+context Cart {
+    store cents: i32 = 0;
+    let label: String = format_usd(cents);
+
+    effect Add(delta: i32) { cents += delta; }
+    effect Clear() { cents = 0; }
+}
+
+view Navbar {
+    use Cart;
+    state Ready {
+        render {
+            Row {
+                Text(Cart.label)
+                Button("Clear", disabled: Cart.cents == 0) -> on_click(Cart.Clear)
+            }
+        }
+    }
+}
+```
+
+- Pure top-level `fn` declarations are statically checked at declaration and
+  call sites and run identically on client and server (SSR) without JS host
+  bindings.
+- Context stores serialize into `__foar_state__` on SSR and restore on
+  `hydrate()`.
+
+## Composition: Slots, Portals, Forms, Hotkeys & Error Boundaries
 
 - **Slots (`Slot()` / `Slot(name: "header")`)**: project caller children into a reusable child view while keeping them bound to the caller's reactive scope and events. Provide fallback content inside `Slot() { Text("Empty") }`, and assign named slots with `slot: "header"`.
 - **Portals (`Portal(target: "#modal-root") { … }`)**: render modals, popovers, and toasts into another DOM container (default `document.body`) with full delegated FOAR events and automatic cleanup on unmount.
-- **Lifecycle hooks (`on_enter`, `on_unmount`)**: states support `on_enter { … }`, `on_exit { … }` (for async transitions), and `on_unmount { … }`; views also support view-level `on_unmount { … }` run on disposal.
+- **Native forms & universal props**: `Form { … } -> on_submit(Save)` (auto-`preventDefault()`), `Select(value: x) { Option(value: "a", "Alpha") } -> on_change(Pick)`, `Slider(value: v, min: 0, max: 100, step: 1) -> on_input(Set)`, `Progress(value: v, max: 100)`, plus reactive `disabled:`, `class:`, and `id:` on any element.
+- **Lifecycle hooks, async results & state-scoped hotkeys**: states support `on_enter { … }`, `on_exit(res: Type) { … }` (receives the resolved async transition value), `on_error(err: String) { … }` (handles rejections), `on_unmount { … }`, and `on_key("Escape") { … }` / `on_key("Mod+K") { … }` shortcuts active only while in that state. Views also support view-level `on_unmount { … }`.
 - **Error boundaries (`Catch { … } Fallback { err => … }`)**: isolate runtime and SSR errors in a subtree without crashing sibling views. The `err` binding has typed `CatchError` fields (`err.message` and `err.view`), and `callbacks.onError(errObj, rawErr)` notifies host telemetry.
+- **Partial Islands (`Island(client: "visible" | "idle" | "load") { … }`)**: emit island hydration markers during SSR so `hydrateIslands(document, program)` hydrates only interactive islands while leaving static server HTML untouched.
 
 ## Server-side rendering, streaming and hydration
 

@@ -45,7 +45,7 @@
 // `@drop-over {}` in styles). on_context_menu effects receive { x, y };
 // Shift+right-click is left to the browser.
 
-const EVENT_TYPES = ['click', 'dblclick', 'input', 'change', 'keydown', 'contextmenu', 'focusout'];
+const EVENT_TYPES = ['click', 'dblclick', 'input', 'change', 'submit', 'keydown', 'contextmenu', 'focusout'];
 const DRAG_TYPES = ['dragstart', 'dragover', 'dragleave', 'drop', 'dragend'];
 const RTL = new Set(['ar', 'he', 'fa', 'ur', 'yi', 'ps', 'sd', 'ug', 'dv']);
 const EVENT_MAP = {
@@ -53,6 +53,7 @@ const EVENT_MAP = {
   on_double_click: 'dblclick',
   on_input: 'input',
   on_change: 'change',
+  on_submit: 'submit',
   on_enter: 'keydown',
   on_context_menu: 'contextmenu',
   on_blur: 'focusout',
@@ -259,6 +260,52 @@ function inlineStyleToCss(key, val) {
   return `${key}:${val}`;
 }
 
+function buildFunctions(ast, env) {
+  const fns = ast.functions || [];
+  if (!fns.length) return {};
+  const out = {};
+  const allNames = dedupe([...Object.keys(env), ...fns.map((f) => f.name)]).filter((n) => /^[A-Za-z_$][\w$]*$/.test(n));
+  for (const f of fns) {
+    const pNames = (f.params || []).map((p) => p.name);
+    const extNames = allNames.filter((n) => !pNames.includes(n));
+    let raw;
+    try {
+      raw = new Function(...pNames, ...extNames, `"use strict";\n${f.jsBody}`);
+    } catch (err) {
+      console.error(`FOAR: cannot compile fn ${f.name}: ${err.message}`);
+      raw = () => undefined;
+    }
+    out[f.name] = (...args) => {
+      const vals = pNames.map((_, i) => args[i]);
+      for (const n of extNames) vals.push(out[n] !== undefined ? out[n] : env[n]);
+      return raw.apply(null, vals);
+    };
+  }
+  return out;
+}
+
+function matchesKeyCombo(e, combo) {
+  const parts = String(combo || '').split('+').map((p) => p.trim().toLowerCase()).filter(Boolean);
+  if (!parts.length) return false;
+  const key = parts[parts.length - 1];
+  const mods = new Set(parts.slice(0, -1));
+  const wantMod = mods.has('mod');
+  const wantCtrl = mods.has('ctrl') || mods.has('control');
+  const wantMeta = mods.has('meta') || mods.has('cmd');
+  const wantAlt = mods.has('alt') || mods.has('option');
+  const wantShift = mods.has('shift');
+  if (wantMod) {
+    if (!(e.metaKey || e.ctrlKey)) return false;
+  } else {
+    if (Boolean(e.ctrlKey) !== wantCtrl) return false;
+    if (Boolean(e.metaKey) !== wantMeta) return false;
+  }
+  if (Boolean(e.altKey) !== wantAlt) return false;
+  if (Boolean(e.shiftKey) !== wantShift) return false;
+  const evKey = (e.key || '').toLowerCase();
+  return evKey === key || (key === 'esc' && evKey === 'escape') || (key === 'space' && evKey === ' ');
+}
+
 export function createFoarRuntime(ast, container, callbacks = {}) {
   const rootViewDecl = ast.views[0];
   if (!rootViewDecl) {
@@ -271,7 +318,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
   const viewMap = new Map(ast.views.map((v) => [v.name, v]));
   const instances = new Map(); // key -> instance (live registry)
-  const handlers = new WeakMap(); // element -> { [eventType]: fn }
+  const HANDLERS = Symbol('f4-handlers'); // element[HANDLERS] -> { [eventType]: fn } (proxy-safe & GC-safe)
   const dragSources = new WeakMap(); // element -> () => { payload, text }
   const dropTargets = new WeakMap(); // element -> () => (payload) => void
   let dragging = null; // { payload, el }
@@ -394,11 +441,74 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   // t_key("a.b") marks a key that is stored now and translated later (gettext's N_()).
   const t_key = (key) => key;
   const externs = Object.assign(Object.create(null), { random_uuid, t, t_key, route, navigate, replace }, callbacks.bindings || {});
+  const programFns = buildFunctions(ast, externs);
+  Object.assign(externs, programFns);
+
+  // ---- shared reactive contexts (`context Name { store ...; let ...; effect ... }`) ----
+  const contexts = new Map();
+  const initialContexts = initialState?.contexts || null;
+  for (const ctxDecl of ast.contexts || []) {
+    const storeNames = ctxDecl.stores.map((s) => s.name);
+    const derivedNames = (ctxDecl.derived || []).map((d) => d.name);
+    const varNames = dedupe([...storeNames, ...derivedNames]);
+    const ctxObj = {};
+    const ctxRec = { decl: ctxDecl, storeNames, derivedNames, varNames, derived: [], obj: ctxObj };
+    contexts.set(ctxDecl.name, ctxRec);
+    externs[ctxDecl.name] = ctxObj;
+  }
   const externNames = Object.keys(externs).filter((n) => /^[A-Za-z_$][\w$]*$/.test(n));
   const effectCache = new Map();
   let destroyed = false;
   let scheduled = false;
   let catchDepth = 0;
+
+  function recomputeContext(ctx) {
+    for (const d of ctx.derived) {
+      ctx.obj[d.name] = safeEval(d.fn, ctx.obj, externs, d.expr);
+    }
+  }
+  for (const ctx of contexts.values()) {
+    const savedCtx = hydrating && initialContexts && initialContexts[ctx.decl.name];
+    const extForCtx = externNames.filter((n) => !ctx.varNames.includes(n));
+    for (const st of ctx.decl.stores) {
+      if (savedCtx && Object.prototype.hasOwnProperty.call(savedCtx, st.name)) {
+        ctx.obj[st.name] = savedCtx[st.name];
+      } else {
+        const fn = compileExpr(st.initExpr, ctx.varNames, extForCtx);
+        ctx.obj[st.name] = safeEval(fn, ctx.obj, externs, st.initExpr);
+      }
+    }
+    ctx.derived = (ctx.decl.derived || []).map((d) => ({
+      name: d.name,
+      expr: d.expr,
+      fn: compileExpr(d.expr, ctx.varNames, extForCtx),
+    }));
+    recomputeContext(ctx);
+    const ctxNoop = () => {};
+    for (const ef of ctx.decl.effects || []) {
+      const compiled = compileEffect(ef, ctx.storeNames, ctx.derivedNames, externNames, effectCache);
+      ctx.obj[ef.name] = (...args) => {
+        if (destroyed) return;
+        recomputeContext(ctx);
+        const vals = [];
+        for (let i = 0; i < compiled.names.length; i++) {
+          const n = compiled.names[i];
+          const pi = compiled.paramNames.indexOf(n);
+          vals.push(pi !== -1 ? args[pi] : ctx.obj[n]);
+        }
+        vals.push(ctxNoop, ctxNoop, ctxNoop);
+        for (const n of compiled.externs) vals.push(externs[n]);
+        try {
+          const out = compiled.fn.apply(null, vals);
+          if (out) for (let i = 0; i < ctx.storeNames.length; i++) ctx.obj[ctx.storeNames[i]] = out[i];
+          recomputeContext(ctx);
+        } catch (err) {
+          console.error(`FOAR: error in context effect ${ctx.decl.name}.${ef.name}:`, err);
+        }
+        invalidate();
+      };
+    }
+  }
 
   // ---- styles ---------------------------------------------------------------
   // The Rust compiler emits all static CSS (themes, named styles, keyframes,
@@ -563,26 +673,34 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       });
       invalidate();
 
-      const finish = () => {
+      const finishOk = (result) => {
         if (destroyed || inst.disposed || inst.state !== next) return;
         const st = inst.meta.states.get(next);
         if (st && st.decl.onExit) {
-          runEffect(inst, st.decl.onExit, []);
+          runEffect(inst, st.decl.onExit, result === undefined ? [] : [result]);
           invalidate();
+        }
+      };
+      const finishErr = (err) => {
+        if (destroyed || inst.disposed || inst.state !== next) return;
+        const st = inst.meta.states.get(next);
+        if (st && st.decl.onError) {
+          runEffect(inst, st.decl.onError, [err?.message || String(err)]);
+          invalidate();
+        } else {
+          console.error(`FOAR: binding ${apiName} failed:`, err);
+          finishOk(undefined);
         }
       };
       const binding = callbacks.bindings && callbacks.bindings[apiName];
       if (typeof binding === 'function') {
         Promise.resolve()
           .then(() => binding(...apiArgs))
-          .then(finish, (err) => {
-            console.error(`FOAR: binding ${apiName} failed:`, err);
-            finish();
-          });
+          .then(finishOk, finishErr);
       } else {
         const t = setTimeout(() => {
           asyncTimers.delete(t);
-          finish();
+          finishOk(undefined);
         }, callbacks.asyncDelay ?? 1400);
         asyncTimers.add(t);
       }
@@ -614,6 +732,14 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
 
   function invokeEffect(inst, effectName, argValue) {
     if (inst.disposed) return;
+    if (effectName && effectName.includes('.')) {
+      const [ctxName, efName] = effectName.split('.');
+      const ctx = contexts.get(ctxName);
+      if (ctx && typeof ctx.obj[efName] === 'function') {
+        ctx.obj[efName](argValue);
+      }
+      return;
+    }
     const st = inst.meta.states.get(inst.state);
     if (!st) return;
     const eff = st.effects.get(effectName);
@@ -736,7 +862,26 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     if (node.tag === 'Slot') return mountSlot(node, inst, localNames, locals, path);
     if (node.tag === 'Portal') return mountPortal(node, inst, localNames, locals, path);
     if (node.tag === 'Catch') return mountCatch(node, inst, localNames, locals, path);
+    if (node.tag === 'Island') return mountIsland(node, inst, localNames, locals, path);
     return mountElement(node, inst, localNames, locals, path);
+  }
+
+  function mountIsland(node, inst, localNames, locals, path) {
+    const c = claim('div');
+    const el = c.el;
+    if (!c.claimed) {
+      el.className = 'f4-island';
+      el.style.display = 'contents';
+    }
+    enterHydrate(el, c.claimed);
+    const children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/isl${i}`));
+    for (const ch of children) if (ch.el.parentNode !== el) el.appendChild(ch.el);
+    leaveHydrate();
+    return {
+      el,
+      update() { for (const ch of children) ch.update(); },
+      dispose() { for (const ch of children) ch.dispose(); },
+    };
   }
 
   function registerEvents(el, node, inst) {
@@ -747,8 +892,18 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       map = map || {};
       switch (evName) {
         case 'on_input':
-          // RichText reports its HTML; form controls their value.
-          map.input = () => invokeEffect(inst, handlerName, node.tag === 'RichText' ? el.innerHTML : el.value);
+          // RichText reports its HTML; Slider reports a Number; form controls their value.
+          map.input = () => invokeEffect(
+            inst,
+            handlerName,
+            node.tag === 'RichText' ? el.innerHTML : node.tag === 'Slider' ? Number(el.value) : el.value,
+          );
+          break;
+        case 'on_submit':
+          map.submit = (e) => {
+            e.preventDefault();
+            invokeEffect(inst, handlerName);
+          };
           break;
         case 'on_blur':
           map.focusout = () => invokeEffect(inst, handlerName, el.value);
@@ -777,7 +932,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
           map[domType] = (payload) => invokeEffect(inst, handlerName, payload);
           break;
         case 'on_change':
-          map.change = (e) => invokeEffect(inst, handlerName, e.target.checked);
+          map.change = (e) => invokeEffect(inst, handlerName, node.tag === 'Checkbox' ? e.target.checked : e.target.value);
           break;
         case 'on_enter':
           map.keydown = (e) => {
@@ -802,7 +957,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         };
       }
     }
-    if (map) handlers.set(el, map);
+    if (map) el[HANDLERS] = map;
   }
 
   function mountElement(node, inst, localNames, locals, path) {
@@ -869,7 +1024,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
           applyRoute(currentHref, replaceNav ? 'replace' : 'push');
           if (node.events.on_click) invokeEffect(inst, node.events.on_click);
         };
-        handlers.set(el, { click: navClick });
+        el[HANDLERS] = { click: navClick };
         break;
       }
       case 'Input': {
@@ -990,6 +1145,71 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         else if (!c.claimed) txt.textContent = 'Loading...';
         break;
       }
+      case 'Form': {
+        const c = claim('form');
+        el = c.el;
+        if (!c.claimed) el.className = 'f4-form';
+        enterHydrate(el, c.claimed);
+        children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/${i}`));
+        for (const ch of children) if (ch.el.parentNode !== el) el.appendChild(ch.el);
+        leaveHydrate();
+        break;
+      }
+      case 'Select': {
+        const c = claim('select');
+        el = c.el;
+        if (!c.claimed) el.className = 'f4-select';
+        enterHydrate(el, c.claimed);
+        children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/${i}`));
+        for (const ch of children) if (ch.el.parentNode !== el) el.appendChild(ch.el);
+        leaveHydrate();
+        const valueExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
+        if (valueExpr !== undefined) {
+          bind(valueExpr, (v) => {
+            const s = v == null ? '' : String(v);
+            if (el.value !== s) el.value = s;
+          }, true);
+        }
+        break;
+      }
+      case 'Option': {
+        const c = claim('option');
+        el = c.el;
+        if (!c.claimed) el.className = 'f4-option';
+        const valExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
+        const lblExpr = node.namedArgs.value !== undefined ? (node.args[0] ?? valExpr) : (node.args[1] ?? node.args[0]);
+        if (valExpr !== undefined) bind(valExpr, (v) => { el.value = v == null ? '' : String(v); });
+        if (lblExpr !== undefined) bind(lblExpr, (v) => { el.textContent = v ?? ''; });
+        break;
+      }
+      case 'Slider': {
+        const c = claim('input');
+        el = c.el;
+        if (!c.claimed) {
+          el.className = 'f4-slider';
+          el.type = 'range';
+        }
+        if (node.namedArgs.min !== undefined) bind(node.namedArgs.min, (v) => setAttr(el, 'min', v == null ? null : String(v)));
+        if (node.namedArgs.max !== undefined) bind(node.namedArgs.max, (v) => setAttr(el, 'max', v == null ? null : String(v)));
+        if (node.namedArgs.step !== undefined) bind(node.namedArgs.step, (v) => setAttr(el, 'step', v == null ? null : String(v)));
+        const valueExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
+        if (valueExpr !== undefined) {
+          bind(valueExpr, (v) => {
+            const s = v == null ? '0' : String(v);
+            if (el.value !== s) el.value = s;
+          }, true);
+        }
+        break;
+      }
+      case 'Progress': {
+        const c = claim('progress');
+        el = c.el;
+        if (!c.claimed) el.className = 'f4-progress';
+        if (node.namedArgs.max !== undefined) bind(node.namedArgs.max, (v) => setAttr(el, 'max', v == null ? null : String(v)));
+        const valueExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
+        if (valueExpr !== undefined) bind(valueExpr, (v) => { el.value = Number(v ?? 0); });
+        break;
+      }
       case 'Row':
       case 'Column': {
         const c = claim('div');
@@ -1024,6 +1244,22 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     if (na.label !== undefined) bind(na.label, (v) => setAttr(el, 'aria-label', v));
     if (na.role !== undefined) bind(na.role, (v) => setAttr(el, 'role', v));
     if (na.tab_index !== undefined) bind(na.tab_index, (v) => setAttr(el, 'tabindex', v == null ? v : String(v)));
+    if (na.id !== undefined) bind(na.id, (v) => setAttr(el, 'id', v));
+    if (na.disabled !== undefined) {
+      bind(na.disabled, (v) => {
+        const dis = Boolean(v);
+        if ('disabled' in el) el.disabled = dis;
+        setAttr(el, 'aria-disabled', dis ? 'true' : null);
+      });
+    }
+    if (na.class !== undefined) {
+      let prevExtra = [];
+      bind(na.class, (v) => {
+        for (const cls of prevExtra) el.classList.remove(cls);
+        prevExtra = v ? String(v).split(/\s+/).filter(Boolean) : [];
+        for (const cls of prevExtra) el.classList.add(cls);
+      });
+    }
     if (na.aria !== undefined) {
       let prev = [];
       bind(na.aria, (obj) => {
@@ -1623,7 +1859,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const root = e.currentTarget || container;
     let t = e.target;
     while (t && t !== root) {
-      const h = handlers.get(t);
+      const h = t[HANDLERS];
       const fn = h && h[e.type];
       // Innermost handler wins: a button inside a clickable row must not
       // also trigger the row. A handler returns false to pass the event on.
@@ -1650,7 +1886,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     setDropOver(null);
     const { el, payload } = dragging;
     dragging = null;
-    handlers.get(el)?.dragend?.(payload);
+    el[HANDLERS]?.dragend?.(payload);
   }
   function onDrag(e) {
     const root = e.currentTarget || container;
@@ -1665,7 +1901,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         e.dataTransfer.setData('application/x-foar', String(rid));
         src.classList.add('f4-drag-source');
         container.classList.add('f4-dragging');
-        handlers.get(src)?.dragstart?.(payload);
+        src[HANDLERS]?.dragstart?.(payload);
         return;
       }
       case 'dragover': {
@@ -1696,11 +1932,31 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     }
   }
 
+  // ---- state-scoped keyboard shortcuts (`on_key("Escape") { ... }`) ----------
+  const hasKeyHandlers = ast.views.some((v) => v.states.some((s) => s.keyHandlers && s.keyHandlers.length));
+  function onDocKeyDown(e) {
+    if (destroyed) return;
+    for (const inst of [...instances.values()]) {
+      if (inst.disposed) continue;
+      const st = inst.meta.states.get(inst.state);
+      if (!st || !st.decl.keyHandlers || !st.decl.keyHandlers.length) continue;
+      for (const kh of st.decl.keyHandlers) {
+        if (matchesKeyCombo(e, kh.combo)) {
+          e.preventDefault();
+          runEffect(inst, kh.body, []);
+          invalidate();
+          return;
+        }
+      }
+    }
+  }
+
   function destroy() {
     if (destroyed) return;
     destroyed = true;
     for (const t of asyncTimers) clearTimeout(t);
     asyncTimers.clear();
+    if (hasKeyHandlers) doc.removeEventListener('keydown', onDocKeyDown);
     if (win && (routerMode === 'history' || routerMode === 'hash')) {
       win.removeEventListener(routerMode === 'hash' ? 'hashchange' : 'popstate', onPopState);
     }
@@ -1712,7 +1968,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   }
 
   // ---- boot ----------------------------------------------------------------
-  const rootInst = createInstance('root', rootViewDecl, {}, null, null);
+  const rootInst = createInstance(callbacks.rootKey || 'root', rootViewDecl, callbacks.props || {}, null, null);
   if (!hydrating) container.textContent = '';
   const rootEl = mountInstance(rootInst);
   if (rootEl.parentNode !== container) container.appendChild(rootEl);
@@ -1721,6 +1977,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   hyStack.length = 0;
   for (const type of EVENT_TYPES) container.addEventListener(type, dispatch);
   for (const type of DRAG_TYPES) container.addEventListener(type, onDrag);
+  if (hasKeyHandlers) doc.addEventListener('keydown', onDocKeyDown);
   callbacks.onRender?.(getSnapshot());
 
   return {
@@ -1757,12 +2014,103 @@ export function hydrate(ast, container, callbacks = {}) {
 }
 
 /**
+ * Partial Islands Hydration: discovers `[data-f4-island]` boundaries inside
+ * `root` and hydrates only interactive islands according to their `client:`
+ * strategy (`"load"`, `"idle"`, or `"visible"`), leaving static HTML untouched.
+ */
+export function hydrateIslands(root, ast, callbacks = {}) {
+  const doc = root?.ownerDocument || root || (typeof document !== 'undefined' ? document : null);
+  if (!doc) return { islands: [], destroy() {} };
+  const scope = root && typeof root.querySelectorAll === 'function' ? root : doc;
+  const nodes = Array.from(scope.querySelectorAll('[data-f4-island]'));
+  const active = [];
+  const observers = [];
+  const timers = [];
+
+  let initialState = callbacks.initialState || null;
+  if (!initialState) {
+    const stateEl = doc.getElementById('__foar_state__');
+    if (stateEl?.textContent) {
+      try { initialState = JSON.parse(stateEl.textContent); } catch {}
+    }
+  }
+
+  function hydrateOne(el) {
+    if (el.dataset.f4Hydrated === 'true') return null;
+    const viewName = el.dataset.f4Island;
+    const viewDecl = ast.views.find((v) => v.name === viewName);
+    if (!viewDecl) return null;
+    el.dataset.f4Hydrated = 'true';
+    let props = {};
+    if (el.dataset.f4Props) {
+      try { props = JSON.parse(el.dataset.f4Props); } catch {}
+    }
+    const subAst = {
+      ...ast,
+      views: [viewDecl, ...ast.views.filter((v) => v !== viewDecl)],
+    };
+    const rootKey = el.firstElementChild?.dataset?.key || `island:${viewName}`;
+    const rt = createFoarRuntime(subAst, el, {
+      ...callbacks,
+      hydrate: true,
+      initialState,
+      rootKey,
+      props,
+    });
+    const rec = { el, viewName, runtime: rt };
+    active.push(rec);
+    return rt;
+  }
+
+  for (const el of nodes) {
+    const mode = (el.dataset.f4Hydrate || 'load').toLowerCase();
+    if (mode === 'idle') {
+      const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+      if (win && typeof win.requestIdleCallback === 'function') {
+        const id = win.requestIdleCallback(() => hydrateOne(el));
+        timers.push(() => win.cancelIdleCallback(id));
+      } else {
+        const id = setTimeout(() => hydrateOne(el), 1);
+        timers.push(() => clearTimeout(id));
+      }
+    } else if (mode === 'visible') {
+      const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+      if (win && typeof win.IntersectionObserver === 'function') {
+        const obs = new win.IntersectionObserver((entries) => {
+          if (entries.some((e) => e.isIntersecting)) {
+            obs.disconnect();
+            hydrateOne(el);
+          }
+        });
+        obs.observe(el);
+        observers.push(obs);
+      } else {
+        hydrateOne(el);
+      }
+    } else {
+      hydrateOne(el);
+    }
+  }
+
+  return {
+    islands: active,
+    hydrateElement: hydrateOne,
+    destroy() {
+      for (const cancel of timers) cancel();
+      for (const obs of observers) obs.disconnect();
+      for (const rec of active) rec.runtime?.destroy?.();
+      active.length = 0;
+    },
+  };
+}
+
+/**
  * Zero-DOM Server-Side Rendering (runs in Node, Deno, Bun, Edge workers).
  * Returns `{ html, css, state, head }`.
  */
 export function renderToString(ast, options = {}) {
   const rootViewDecl = ast.views[0];
-  if (!rootViewDecl) return { html: '', css: '', state: { route: '/', instances: {} }, head: '' };
+  if (!rootViewDecl) return { html: '', css: '', state: { route: '/', instances: {}, contexts: {} }, head: '' };
 
   const viewMap = new Map(ast.views.map((v) => [v.name, v]));
   const i18n = options.i18n && typeof options.i18n.t === 'function' ? options.i18n : createI18n(options.i18n || {});
@@ -1772,8 +2120,9 @@ export function renderToString(ast, options = {}) {
   const route = { path: parsed.path, query: parsed.query, hash: parsed.hash, params: {} };
   const noop = () => {};
   const externs = Object.assign(Object.create(null), { random_uuid, t, t_key, route, navigate: noop, replace: noop }, options.bindings || {});
-  const externNames = Object.keys(externs).filter((n) => /^[A-Za-z_$][\w$]*$/.test(n));
+  Object.assign(externs, buildFunctions(ast, externs));
   const serializedInstances = {};
+  const serializedContexts = {};
   let ssrCatchDepth = 0;
 
   const evalSafe = (expr, vn, vars, ln, locals) => {
@@ -1784,6 +2133,28 @@ export function renderToString(ast, options = {}) {
       return undefined;
     }
   };
+
+  for (const ctxDecl of ast.contexts || []) {
+    externs[ctxDecl.name] = {};
+  }
+  const externNames = Object.keys(externs).filter((n) => /^[A-Za-z_$][\w$]*$/.test(n));
+  for (const ctxDecl of ast.contexts || []) {
+    const storeNames = ctxDecl.stores.map((s) => s.name);
+    const derivedNames = (ctxDecl.derived || []).map((d) => d.name);
+    const varNames = dedupe([...storeNames, ...derivedNames]);
+    const ctxExt = externNames.filter((n) => !varNames.includes(n));
+    const obj = externs[ctxDecl.name];
+    const snap = {};
+    for (const st of ctxDecl.stores) {
+      obj[st.name] = evalSafe(st.initExpr, varNames, obj, ctxExt, externs);
+      snap[st.name] = obj[st.name];
+    }
+    for (const d of ctxDecl.derived || []) {
+      obj[d.name] = evalSafe(d.expr, varNames, obj, ctxExt, externs);
+    }
+    for (const ef of ctxDecl.effects || []) obj[ef.name] = noop;
+    serializedContexts[ctxDecl.name] = snap;
+  }
 
   function attrsStr(pairs) {
     let s = '';
@@ -1867,6 +2238,30 @@ export function renderToString(ast, options = {}) {
         inner = node.children.map((c, i) => renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/fallback/${i}`, slotCtx)).join('');
       }
       return `<div class="f4-slot" style="display:contents">${inner}</div>`;
+    }
+    if (node.tag === 'Island') {
+      const clientExpr = node.namedArgs.client !== undefined ? node.namedArgs.client : node.args[0];
+      const strategy = clientExpr !== undefined ? String(evalSafe(clientExpr, vn, vars, ln, locals) ?? 'load') : 'load';
+      const firstChild = node.children[0];
+      const isView = firstChild && viewMap.has(firstChild.tag);
+      let islandAttrs = [['class', 'f4-island'], ['style', 'display:contents']];
+      if (isView) {
+        const childDecl = viewMap.get(firstChild.tag);
+        const islandProps = {};
+        firstChild.args.forEach((expr, i) => {
+          const p = childDecl.params[i];
+          if (p) islandProps[p.name] = evalSafe(expr, vn, vars, ln, locals);
+        });
+        for (const [name, expr] of Object.entries(firstChild.namedArgs || {})) {
+          if (name === 'slot') continue;
+          islandProps[name] = evalSafe(expr, vn, vars, ln, locals);
+        }
+        islandAttrs.push(['data-f4-island', firstChild.tag]);
+        islandAttrs.push(['data-f4-hydrate', strategy]);
+        if (Object.keys(islandProps).length) islandAttrs.push(['data-f4-props', JSON.stringify(islandProps)]);
+      }
+      const inner = node.children.map((c, i) => renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/isl${i}`, slotCtx)).join('');
+      return `<div${attrsStr(islandAttrs)}>${inner}</div>`;
     }
     if (node.tag === 'Portal') {
       const targetExpr = node.namedArgs.target !== undefined ? node.namedArgs.target : node.args[0];
@@ -1963,10 +2358,16 @@ export function renderToString(ast, options = {}) {
     // Standard elements
     const na = node.namedArgs || {};
     const commonAttrs = (baseCls, extra = []) => {
-      const cls = [baseCls, node.style?.cls].filter(Boolean).join(' ');
+      const extraCls = na.class !== undefined ? evalSafe(na.class, vn, vars, ln, locals) : null;
+      const cls = [baseCls, node.style?.cls, extraCls].filter(Boolean).join(' ');
       const out = [['class', cls], ...extra];
       const st = styleAttr(node.style, vn, vars, ln, locals);
       if (st) out.push(['style', st]);
+      if (na.id !== undefined) out.push(['id', evalSafe(na.id, vn, vars, ln, locals)]);
+      if (na.disabled !== undefined && Boolean(evalSafe(na.disabled, vn, vars, ln, locals))) {
+        out.push(['disabled', '']);
+        out.push(['aria-disabled', 'true']);
+      }
       if (na.title !== undefined && node.tag !== 'Image') out.push(['title', evalSafe(na.title, vn, vars, ln, locals)]);
       if (na.label !== undefined) out.push(['aria-label', evalSafe(na.label, vn, vars, ln, locals)]);
       if (na.role !== undefined) out.push(['role', evalSafe(na.role, vn, vars, ln, locals)]);
@@ -2029,6 +2430,47 @@ export function renderToString(ast, options = {}) {
         const txt = node.args[0] ? evalSafe(node.args[0], vn, vars, ln, locals) ?? '' : 'Loading...';
         return `<div${commonAttrs('f4-spinner-wrap')}><div class="f4-spinner-ring"></div><span>${escapeHtml(txt)}</span></div>`;
       }
+      case 'Form': {
+        const inner = node.children.map((c, i) => renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/${i}`, slotCtx)).join('');
+        return `<form${commonAttrs('f4-form')}>${inner}</form>`;
+      }
+      case 'Select': {
+        const valExpr = na.value !== undefined ? na.value : node.args[0];
+        const selVal = valExpr !== undefined ? String(evalSafe(valExpr, vn, vars, ln, locals) ?? '') : null;
+        const inner = node.children.map((c, i) => {
+          if (c.tag === 'Option') {
+            const cna = c.namedArgs || {};
+            const ovExpr = cna.value !== undefined ? cna.value : c.args[0];
+            const olExpr = cna.value !== undefined ? (c.args[0] ?? ovExpr) : (c.args[1] ?? c.args[0]);
+            const ov = ovExpr !== undefined ? String(evalSafe(ovExpr, vn, vars, ln, locals) ?? '') : '';
+            const ol = olExpr !== undefined ? String(evalSafe(olExpr, vn, vars, ln, locals) ?? '') : '';
+            return `<option class="f4-option" value="${escapeHtml(ov)}"${selVal === ov ? ' selected' : ''}>${escapeHtml(ol)}</option>`;
+          }
+          return renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/${i}`, slotCtx);
+        }).join('');
+        return `<select${commonAttrs('f4-select')}>${inner}</select>`;
+      }
+      case 'Option': {
+        const ovExpr = na.value !== undefined ? na.value : node.args[0];
+        const olExpr = na.value !== undefined ? (node.args[0] ?? ovExpr) : (node.args[1] ?? node.args[0]);
+        const ov = ovExpr !== undefined ? String(evalSafe(ovExpr, vn, vars, ln, locals) ?? '') : '';
+        const ol = olExpr !== undefined ? String(evalSafe(olExpr, vn, vars, ln, locals) ?? '') : '';
+        return `<option${commonAttrs('f4-option', [['value', ov]])}>${escapeHtml(ol)}</option>`;
+      }
+      case 'Slider': {
+        const valExpr = na.value !== undefined ? na.value : node.args[0];
+        const val = valExpr !== undefined ? String(evalSafe(valExpr, vn, vars, ln, locals) ?? '0') : '0';
+        const min = na.min !== undefined ? String(evalSafe(na.min, vn, vars, ln, locals)) : null;
+        const max = na.max !== undefined ? String(evalSafe(na.max, vn, vars, ln, locals)) : null;
+        const step = na.step !== undefined ? String(evalSafe(na.step, vn, vars, ln, locals)) : null;
+        return `<input${commonAttrs('f4-slider', [['type', 'range'], ['value', val], ['min', min], ['max', max], ['step', step]])}>`;
+      }
+      case 'Progress': {
+        const valExpr = na.value !== undefined ? na.value : node.args[0];
+        const val = valExpr !== undefined ? String(evalSafe(valExpr, vn, vars, ln, locals) ?? '0') : '0';
+        const max = na.max !== undefined ? String(evalSafe(na.max, vn, vars, ln, locals)) : null;
+        return `<progress${commonAttrs('f4-progress', [['value', val], ['max', max]])}></progress>`;
+      }
       case 'Row':
       case 'Column': {
         const base = node.tag === 'Row' ? 'f4-row' : 'f4-column';
@@ -2042,7 +2484,7 @@ export function renderToString(ast, options = {}) {
 
   const html = renderView('root', rootViewDecl, {}, null);
   const css = `${BASE_CSS}\n${ast.css || ''}`;
-  const state = { route: options.url || '/', instances: serializedInstances };
+  const state = { route: options.url || '/', instances: serializedInstances, contexts: serializedContexts };
   const safeState = JSON.stringify(state).replace(/</g, '\\u003c');
   const head = `<style data-f4-ssr>${css}</style>\n<script id="__foar_state__" type="application/json">${safeState}</script>`;
   return { html, css, state, head };

@@ -8,7 +8,7 @@ use std::process::exit;
 
 fn usage() -> ! {
     eprintln!(
-        "foar {}\n\nUsage:\n  foar build <file.foar | -> [-o <out>] [--format json|js] [--pretty] [--runtime <path>]\n  foar check <file.foar>\n  foar init [dir]\n  foar add <name> --path <dir> | --git <url> | --version <ver> [--registry <url>]\n  foar install [--frozen]\n  foar pkg [--verify]\n  foar lsp\n  foar i18n <locales-dir> <source files...> [--fallback en] [--format json]\n\n  --format json   program JSON for createFoarRuntime (default)\n  --format js     ES module exporting {{ program, mount, hydrate, renderToString, renderToStringAsync, renderToStream, createI18n }}\n  --runtime       import path of foar-runtime.js in the JS module (default ./foar-runtime.js)\n  -               read source from stdin\n  --project       with -: stdin is a project {{\"entry\", \"files\": {{path: source}}}}\n\nA file is compiled together with its imports (relative paths or @package via foar.toml).",
+        "foar {}\n\nUsage:\n  foar build <file.foar | -> [-o <out>] [--format json|js] [--pretty] [--runtime <path>]\n  foar check <file.foar>\n  foar fmt <files...> [--check]\n  foar init [dir]\n  foar add <name> --path <dir> | --git <url> | --version <ver> [--registry <url>]\n  foar install [--frozen]\n  foar pkg [--verify]\n  foar lsp\n  foar i18n <locales-dir> <source files...> [--fallback en] [--format json]\n\n  --format json   program JSON for createFoarRuntime (default)\n  --format js     ES module exporting {{ program, mount, hydrate, hydrateIslands, renderToString, renderToStringAsync, renderToStream, createI18n }}\n  --runtime       import path of foar-runtime.js in the JS module (default ./foar-runtime.js)\n  -               read source from stdin\n  --project       with -: stdin is a project {{\"entry\", \"files\": {{path: source}}}}\n\nA file is compiled together with its imports (relative paths or @package via foar.toml).",
         foar::version()
     );
     exit(2)
@@ -63,6 +63,10 @@ fn main() {
         }
         "lsp" => {
             foar::lsp::run_stdio();
+            return;
+        }
+        "fmt" => {
+            fmt_cmd(&args[1..]);
             return;
         }
         _ => {}
@@ -522,5 +526,47 @@ fn pkg_cmd(args: &[String]) {
             .map(|p| format!(" [{}]", &p.integrity[..19.min(p.integrity.len())]))
             .unwrap_or_default();
         println!("  @{} -> {}{}", name, loc, hash);
+    }
+}
+
+fn fmt_cmd(args: &[String]) {
+    let mut check = false;
+    let mut files = Vec::new();
+    for a in args {
+        if a == "--check" {
+            check = true;
+        } else {
+            files.push(a.as_str());
+        }
+    }
+    if files.is_empty() {
+        eprintln!("Usage: foar fmt <files...> [--check]");
+        exit(2);
+    }
+    let mut unformatted = 0usize;
+    for path in files {
+        let src = read_source(path);
+        let formatted = foar::fmt::format_source(&src);
+        if path == "-" {
+            print!("{}", formatted);
+            continue;
+        }
+        if formatted != src {
+            if check {
+                eprintln!("✗ {} needs formatting", path);
+                unformatted += 1;
+            } else {
+                std::fs::write(path, formatted).unwrap_or_else(|e| {
+                    eprintln!("foar: cannot write {}: {}", path, e);
+                    exit(1);
+                });
+                println!("✓ formatted {}", path);
+            }
+        } else if !check {
+            println!("✓ {} (already formatted)", path);
+        }
+    }
+    if check && unformatted > 0 {
+        exit(1);
     }
 }

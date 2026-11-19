@@ -56,11 +56,11 @@
       "patterns": [
         {
           "name": "keyword.control.foar",
-          "match": "\\b(?:view|state|render|effect|on_enter|on_exit|on_unmount|transition|emit|match|if|else|for|in|while|loop|return|break|continue|import)\\b"
+          "match": "\\b(?:view|state|render|effect|on_enter|on_exit|on_error|on_unmount|on_key|transition|emit|match|if|else|for|in|while|loop|return|break|continue|import|use)\\b"
         },
         {
           "name": "storage.type.foar",
-          "match": "\\b(?:data|enum|store|let|mut|const|extern|fn|theme|style|css)\\b"
+          "match": "\\b(?:data|enum|context|store|let|mut|const|extern|fn|theme|style|css)\\b"
         },
         {
           "name": "constant.language.foar",
@@ -72,7 +72,7 @@
       "patterns": [
         {
           "name": "support.class.element.foar",
-          "match": "\\b(?:Text|Button|Input|TextArea|Checkbox|RichText|Image|Spinner|Row|Column|List|If|Else|Match|Router|Route|Link|Slot|Portal|Catch|Fallback)\\b"
+          "match": "\\b(?:Text|Button|Input|TextArea|Checkbox|RichText|Image|Spinner|Row|Column|List|If|Else|Match|Router|Route|Link|Slot|Portal|Catch|Fallback|Form|Select|Option|Slider|Progress|Island)\\b"
         },
         {
           "name": "support.function.builtin.foar",

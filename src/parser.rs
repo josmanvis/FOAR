@@ -69,6 +69,7 @@ pub struct Parser<'s> {
 const BUILTIN_ELEMENTS: &[&str] = &[
     "Text", "Button", "Input", "TextArea", "Checkbox", "RichText", "Image", "Spinner",
     "Row", "Column", "List", "If", "Match", "Router", "Route", "Link", "Slot", "Portal", "Catch",
+    "Form", "Select", "Option", "Slider", "Progress", "Island",
 ];
 
 impl<'s> Parser<'s> {
@@ -185,6 +186,8 @@ impl<'s> Parser<'s> {
         let mut chunks: Vec<(u8, std::ops::Range<usize>)> = Vec::new();
         let mut enums = Vec::new();
         let mut externs = Vec::new();
+        let mut functions = Vec::new();
+        let mut contexts = Vec::new();
         while !self.at_end() {
             let first = self.hoisted.rules.len();
             let kind = match self.text(self.peek()) {
@@ -194,7 +197,7 @@ impl<'s> Parser<'s> {
                 "css" => 3,
                 _ => 4,
             };
-            self.parse_top_level(&mut data_decls, &mut views, &mut enums, &mut externs)?;
+            self.parse_top_level(&mut data_decls, &mut views, &mut enums, &mut externs, &mut functions, &mut contexts)?;
             if let Some(e) = self.deferred.borrow_mut().take() {
                 return Err(e);
             }
@@ -215,8 +218,8 @@ impl<'s> Parser<'s> {
             return Err(err_at(self.src, *at, format!("Unknown view or element '{}'{}", tag, hint)));
         }
         // Static type check across the whole program (stores, lets, data literals,
-        // field accesses, view props, effects, transitions, and typed extern fns).
-        crate::typecheck::check_program(self.src, &data_decls, &enums, &externs, &views, &self.check_items)?;
+        // field accesses, view props, effects, transitions, contexts, fns, and extern fns).
+        crate::typecheck::check_program(self.src, &data_decls, &enums, &externs, &functions, &contexts, &views, &self.check_items)?;
         // `style A { @use B; }` then `.style(A)`: the element needs B's class too.
         // Done after parsing because named styles may be declared after their use.
         let mut views = views;
@@ -233,7 +236,7 @@ impl<'s> Parser<'s> {
         if let Some(e) = self.deferred.borrow_mut().take() {
             return Err(e);
         }
-        Ok(Program { kind: "Program", data_decls, enums, externs, views, css: self.hoisted.css() })
+        Ok(Program { kind: "Program", data_decls, enums, externs, functions, contexts, views, css: self.hoisted.css() })
     }
 
     fn parse_top_level(
@@ -242,6 +245,8 @@ impl<'s> Parser<'s> {
         views: &mut Vec<ViewDecl>,
         enums: &mut Vec<EnumDecl>,
         externs: &mut Vec<ExternDecl>,
+        functions: &mut Vec<FnDecl>,
+        contexts: &mut Vec<ContextDecl>,
     ) -> PResult<()> {
         {
             if self.is("import") && self.peek_at(1).kind == Kind::Str {
@@ -252,6 +257,10 @@ impl<'s> Parser<'s> {
                 self.eat(";");
             } else if self.is("extern") {
                 externs.push(self.parse_extern()?);
+            } else if self.is("fn") {
+                functions.push(self.parse_fn()?);
+            } else if self.is("context") {
+                contexts.push(self.parse_context()?);
             } else if self.is("data") {
                 data_decls.push(self.parse_data()?);
             } else if self.is("enum") {
@@ -272,6 +281,104 @@ impl<'s> Parser<'s> {
             }
         }
         Ok(())
+    }
+
+    fn parse_fn(&mut self) -> PResult<FnDecl> {
+        self.expect("fn")?;
+        let name = self.declare("Function")?;
+        self.expect("(")?;
+        let mut params = Vec::new();
+        while !self.at_end() && !self.is(")") {
+            let pname = self.expect_ident()?;
+            self.expect(":")?;
+            let param_type = self.parse_type()?;
+            self.eat(",");
+            params.push(Param { name: pname, param_type });
+        }
+        self.expect(")")?;
+        let return_type = if self.eat("->") { self.parse_type()? } else { "any".to_string() };
+        let body = self.parse_balanced_braces()?;
+        self.check_items.push(crate::typecheck::CheckItem::FnBody {
+            name: name.clone(),
+            params: params.clone(),
+            return_type: return_type.clone(),
+            tokens: body.clone(),
+        });
+        let saved = self.var_types.clone();
+        self.var_types.clear();
+        for p in &params {
+            self.var_types.insert(p.name.clone(), p.param_type.clone());
+        }
+        let js_body = if body.is_empty() { String::new() } else { rust_idioms_to_js(&self.raw_join(&body, true)) };
+        self.var_types = saved;
+        Ok(FnDecl { name, params, return_type, js_body })
+    }
+
+    fn parse_context(&mut self) -> PResult<ContextDecl> {
+        self.expect("context")?;
+        let name = self.declare("Context")?;
+        self.cur_view = Some(format!("@ctx:{}", name));
+        self.var_types.clear();
+        self.expect("{")?;
+        let mut stores = Vec::new();
+        let mut derived = Vec::new();
+        let mut effects = Vec::new();
+        while !self.at_end() && !self.is("}") {
+            if self.is("store") {
+                self.advance();
+                let sat = self.peek().start;
+                let sname = self.expect_ident()?;
+                let store_type = if self.eat(":") { self.parse_type()? } else { "any".to_string() };
+                self.expect("=")?;
+                let mut init = Vec::new();
+                while !self.at_end() && !self.is(";") {
+                    init.push(self.advance());
+                }
+                if init.is_empty() {
+                    return self.err(format!("Expected an initial value for store {}", sname));
+                }
+                self.expect(";")?;
+                self.var_types.insert(sname.clone(), store_type.clone());
+                self.check_items.push(crate::typecheck::CheckItem::StoreInit {
+                    view: format!("@ctx:{}", name),
+                    name: sname.clone(),
+                    declared: store_type.clone(),
+                    tokens: init.clone(),
+                    at: init.first().map(|t| t.start).unwrap_or(sat),
+                });
+                stores.push(Store { name: sname, store_type, init_expr: self.join_js(&init) });
+            } else if self.is("let") {
+                self.advance();
+                let dat = self.peek().start;
+                let dname = self.expect_ident()?;
+                let derived_type = if self.eat(":") { self.parse_type()? } else { "any".to_string() };
+                self.expect("=")?;
+                let mut expr = Vec::new();
+                while !self.at_end() && !self.is(";") {
+                    expr.push(self.advance());
+                }
+                if expr.is_empty() {
+                    return self.err(format!("Expected a value for let {}", dname));
+                }
+                self.expect(";")?;
+                self.var_types.insert(dname.clone(), derived_type.clone());
+                self.check_items.push(crate::typecheck::CheckItem::DerivedInit {
+                    view: format!("@ctx:{}", name),
+                    name: dname.clone(),
+                    declared: derived_type.clone(),
+                    tokens: expr.clone(),
+                    at: expr.first().map(|t| t.start).unwrap_or(dat),
+                });
+                derived.push(Derived { name: dname, derived_type, expr: self.join_js(&expr) });
+            } else if self.is("effect") {
+                effects.push(self.parse_effect()?);
+            } else {
+                return self.err(format!("Unexpected token '{}' inside context {}", self.describe(), name));
+            }
+        }
+        self.expect("}")?;
+        self.cur_view = None;
+        Ok(ContextDecl { name, stores, derived, effects })
     }
 
     fn parse_extern(&mut self) -> PResult<ExternDecl> {
@@ -366,13 +473,22 @@ impl<'s> Parser<'s> {
             self.expect(")")?;
         }
         self.expect("{")?;
+        let mut uses = Vec::new();
         let mut derived = Vec::new();
         let mut stores = Vec::new();
         let mut style = None;
         let mut on_unmount = None;
         let mut states = Vec::new();
         while !self.at_end() && !self.is("}") {
-            if self.is("store") {
+            if self.is("use") {
+                self.advance();
+                let ctx_name = self.expect_ident()?;
+                uses.push(ctx_name);
+                while self.eat(",") {
+                    uses.push(self.expect_ident()?);
+                }
+                self.eat(";");
+            } else if self.is("store") {
                 self.advance();
                 let sat = self.peek().start;
                 let sname = self.expect_ident()?;
@@ -443,11 +559,25 @@ impl<'s> Parser<'s> {
         }
         self.expect("}")?;
         self.cur_view = None;
-        Ok(ViewDecl { kind: "ViewDecl", name, type_params, params, stores, derived, style, on_unmount, states })
+        Ok(ViewDecl { kind: "ViewDecl", name, type_params, params, uses, stores, derived, style, on_unmount, states })
     }
 
     fn compile_style(&mut self, block: &StyleBlock, cls: &str, ctx: &Ctx) -> PResult<Style> {
         css::compile_block(block, cls, ctx, &mut self.hoisted).map_err(|m| err_at(self.src, self.peek().start, m))
+    }
+
+    fn parse_opt_hook_params(&mut self, default_type: &str) -> PResult<Vec<Param>> {
+        let mut params = Vec::new();
+        if self.eat("(") {
+            while !self.at_end() && !self.is(")") {
+                let pname = self.expect_ident()?;
+                let param_type = if self.eat(":") { self.parse_type()? } else { default_type.to_string() };
+                self.eat(",");
+                params.push(Param { name: pname, param_type });
+            }
+            self.expect(")")?;
+        }
+        Ok(params)
     }
 
     fn parse_state(&mut self) -> PResult<StateDecl> {
@@ -458,7 +588,9 @@ impl<'s> Parser<'s> {
         let mut effects = Vec::new();
         let mut on_enter = None;
         let mut on_exit = None;
+        let mut on_error = None;
         let mut on_unmount = None;
+        let mut key_handlers = Vec::new();
         while !self.at_end() && !self.is("}") {
             if self.is("render") {
                 self.advance();
@@ -480,15 +612,42 @@ impl<'s> Parser<'s> {
                 on_enter = Some(self.effect_body(&body));
             } else if self.is("on_exit") {
                 self.advance();
+                let params = self.parse_opt_hook_params("any")?;
                 let body = self.parse_balanced_braces()?;
                 if let Some(view) = &self.cur_view {
                     self.check_items.push(crate::typecheck::CheckItem::EffectBody {
                         view: view.clone(),
-                        params: Vec::new(),
+                        params: params.clone(),
                         tokens: body.clone(),
                     });
                 }
-                on_exit = Some(self.effect_body(&body));
+                let saved = self.var_types.clone();
+                for p in &params {
+                    self.var_types.insert(p.name.clone(), p.param_type.clone());
+                }
+                let mut eb = self.effect_body(&body);
+                eb.params = params;
+                self.var_types = saved;
+                on_exit = Some(eb);
+            } else if self.is("on_error") {
+                self.advance();
+                let params = self.parse_opt_hook_params("String")?;
+                let body = self.parse_balanced_braces()?;
+                if let Some(view) = &self.cur_view {
+                    self.check_items.push(crate::typecheck::CheckItem::EffectBody {
+                        view: view.clone(),
+                        params: params.clone(),
+                        tokens: body.clone(),
+                    });
+                }
+                let saved = self.var_types.clone();
+                for p in &params {
+                    self.var_types.insert(p.name.clone(), p.param_type.clone());
+                }
+                let mut eb = self.effect_body(&body);
+                eb.params = params;
+                self.var_types = saved;
+                on_error = Some(eb);
             } else if self.is("on_unmount") {
                 self.advance();
                 let body = self.parse_balanced_braces()?;
@@ -500,12 +659,30 @@ impl<'s> Parser<'s> {
                     });
                 }
                 on_unmount = Some(self.effect_body(&body));
+            } else if self.is("on_key") {
+                self.advance();
+                self.expect("(")?;
+                if self.peek().kind != Kind::Str {
+                    return self.err("on_key expects a key shortcut string, e.g. `on_key(\"Escape\") { … }`");
+                }
+                let tok = self.advance();
+                let combo = crate::lexer::unescape(self.text(&tok));
+                self.expect(")")?;
+                let body = self.parse_balanced_braces()?;
+                if let Some(view) = &self.cur_view {
+                    self.check_items.push(crate::typecheck::CheckItem::EffectBody {
+                        view: view.clone(),
+                        params: Vec::new(),
+                        tokens: body.clone(),
+                    });
+                }
+                key_handlers.push(KeyHandler { combo, body: self.effect_body(&body) });
             } else {
                 return self.err(format!("Unexpected token '{}' in state {}", self.describe(), name));
             }
         }
         self.expect("}")?;
-        Ok(StateDecl { kind: "StateDecl", name, render, effects, on_enter, on_exit, on_unmount })
+        Ok(StateDecl { kind: "StateDecl", name, render, effects, on_enter, on_exit, on_error, on_unmount, key_handlers })
     }
 
     fn parse_render_block(&mut self) -> PResult<Vec<UiElement>> {
@@ -717,11 +894,15 @@ impl<'s> Parser<'s> {
             if self.eat("->") {
                 let ev = self.expect_ident()?;
                 self.expect("(")?;
-                let handler = self.expect_ident()?;
+                let mut handler = self.expect_ident()?;
+                if self.eat(".") {
+                    handler.push('.');
+                    handler.push_str(&self.expect_ident()?);
+                }
                 self.expect(")")?;
                 el.events.insert(ev, J::String(handler));
             } else if self.is(".") && self.is_at(1, "style") {
-                if matches!(tag.as_str(), "If" | "Match" | "Router" | "Route" | "Slot" | "Portal" | "Catch") {
+                if matches!(tag.as_str(), "If" | "Match" | "Router" | "Route" | "Slot" | "Portal" | "Catch" | "Island") {
                     return self.err(format!("{} has no box of its own to style: style the elements inside it, or wrap it in a Row/Column", tag));
                 }
                 self.advance();
@@ -832,7 +1013,7 @@ impl<'s> Parser<'s> {
             }
         }
         let js_body = if toks.is_empty() { "undefined".to_string() } else { rust_idioms_to_js(&self.raw_join(toks, true)) };
-        EffectBody { transitions, emissions, js_body }
+        EffectBody { params: Vec::new(), transitions, emissions, js_body }
     }
 
     // ---- styles -----------------------------------------------------------

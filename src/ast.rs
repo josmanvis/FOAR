@@ -14,10 +14,40 @@ pub struct Program {
     /// `extern fn name(a: Type) -> RetType;`: typed host JS bindings checked by the compiler.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub externs: Vec<ExternDecl>,
+    /// Top-level pure FOAR functions: `fn name(a: Type) -> RetType { ... }`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub functions: Vec<FnDecl>,
+    /// Shared reactive contexts: `context Auth { store ...; let ...; effect ... }`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contexts: Vec<ContextDecl>,
     pub views: Vec<ViewDecl>,
     /// All generated CSS for the program (themes, named styles, keyframes,
     /// raw css blocks, and every view/element style block).
     pub css: String,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct FnDecl {
+    pub name: String,
+    pub params: Vec<Param>,
+    #[serde(rename = "returnType")]
+    pub return_type: String,
+    #[serde(rename = "jsBody")]
+    pub js_body: String,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct ContextDecl {
+    pub name: String,
+    pub stores: Vec<Store>,
+    pub derived: Vec<Derived>,
+    pub effects: Vec<EffectDecl>,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct KeyHandler {
+    pub combo: String,
+    pub body: EffectBody,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -123,6 +153,8 @@ pub struct ViewDecl {
     #[serde(rename = "typeParams", default, skip_serializing_if = "Vec::is_empty")]
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub uses: Vec<String>,
     pub stores: Vec<Store>,
     pub derived: Vec<Derived>,
     pub style: Option<Style>,
@@ -142,8 +174,12 @@ pub struct StateDecl {
     pub on_enter: Option<EffectBody>,
     #[serde(rename = "onExit")]
     pub on_exit: Option<EffectBody>,
+    #[serde(rename = "onError", skip_serializing_if = "Option::is_none")]
+    pub on_error: Option<EffectBody>,
     #[serde(rename = "onUnmount", skip_serializing_if = "Option::is_none")]
     pub on_unmount: Option<EffectBody>,
+    #[serde(rename = "keyHandlers", default, skip_serializing_if = "Vec::is_empty")]
+    pub key_handlers: Vec<KeyHandler>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -155,6 +191,8 @@ pub struct Transition {
 
 #[derive(Serialize, Debug, Clone)]
 pub struct EffectBody {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<Param>,
     pub transitions: Vec<Transition>,
     pub emissions: Vec<String>,
     #[serde(rename = "jsBody")]

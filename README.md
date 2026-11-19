@@ -13,15 +13,17 @@
 </p>
 
 FOAR is a language for user interfaces. Every component declares its
-**states**, what each state shows, and which events it handles. **Tagged-union
-enums with payloads**, generic `data<T>` / `enum<T>` / `view<T>`, **exhaustive
-`match`**, a **static type checker** (including typed `extern fn` host bindings),
-**Slots**, **Portals**, **error boundaries (`Catch`/`Fallback`)**, lifecycle
-hooks (`on_enter`/`on_unmount`), a built-in **router**, **streaming & async
-zero-DOM SSR + zero-recreation hydration**, `foar.toml` + `foar.lock`
-**packages**, a **Rust LSP server**, **Vite HMR plugin**, and **VS Code
-extension** ship in one **Rust compiler** (native + WebAssembly) targeting a
-21 KB retained-DOM runtime with no virtual DOM.
+**states**, what each state shows, and which events it handles. **Shared
+reactive `context`**, pure typed **`fn`** functions, **tagged-union enums with
+payloads**, generic `data<T>` / `enum<T>` / `view<T>`, **exhaustive `match`**,
+a **static type checker** (including typed `extern fn`), **Slots**, **Portals**,
+**error boundaries (`Catch`/`Fallback`)**, **state-scoped `on_key` hotkeys**,
+typed async **`on_exit(res)` / `on_error(err)`**, native **`Form`/`Select`/`Slider`/`Progress`**,
+a built-in **router**, **streaming & async zero-DOM SSR + zero-recreation full
+& partial-islands hydration (`Island`/`hydrateIslands`)**, `foar.toml` +
+SHA-256 `foar.lock` **packages**, a **Rust LSP server**, **CLI formatter (`foar fmt`)**,
+**Vite HMR plugin**, and **VS Code extension** ship in one **Rust compiler**
+(native + WebAssembly) targeting a 24 KB retained-DOM runtime with no virtual DOM.
 
 ```rust
 enum Status { Draft, Review, Published }
@@ -67,17 +69,23 @@ article.foar:10:13: This match doesn't handle Status.Archived (add an arm for it
 
 ## What you get
 
-- **Explicit state machines & lifecycle hooks.** A view is in exactly one state;
-  effects belong to states; `transition Editing;` swaps only that view's
-  subtree. Async work is a state with `on_exit`, plus `on_enter` and
-  `on_unmount` hooks on states and views.
+- **Explicit state machines, hotkeys & lifecycle hooks.** A view is in exactly
+  one state; effects belong to states; `transition Editing;` swaps only that
+  view's subtree. Async transitions pass resolved values to `on_exit(res)` and
+  rejections to `on_error(err)`, alongside `on_enter`, `on_unmount`, and
+  state-scoped keyboard shortcuts (`on_key("Escape") { … }`).
+- **Shared reactive `context` & pure `fn`.** Declare singleton reactive state
+  with `context Cart { store ...; let ...; effect ... }`, subscribe via
+  `use Cart;`, and write reusable typed pure FOAR functions (`fn format_usd(c: i32) -> String { … }`)
+  that work across views and SSR without external JS.
 - **Tagged-union ADTs, generics & exhaustive `match`.** `enum LoadState<T> { Idle, Ready(T), Failed(String) }`
   and generic `data<T>` / `view<T>`. No fall-through and no `break`; payload
   destructuring (`Ready(user) => …`), literals, `a | b`, ranges, and guards work
   as values, statements, and in `render` (`Match`).
-- **Composition, Portals & Error Boundaries.** Default & named `Slot()`
-  outlets, `Portal(target: "#modal-root")` with delegated events and cleanup,
-  and `Catch { … } Fallback { err => … }` boundaries across client and SSR.
+- **Composition, Forms, Portals & Error Boundaries.** Default & named `Slot()`,
+  `Form -> on_submit`, `Select`/`Option`, `Slider`, `Progress`, reactive
+  `disabled:`/`class:`/`id:`, `Portal(target: "#modal-root")`, and
+  `Catch { … } Fallback { err => … }` boundaries across client and SSR.
 - **Derived values without dependency lists.** `let open = items.filter(|t| !t.done).len();`
 - **Compiled, retained DOM.** Bindings write only changed values, keyed lists
   reuse rows, and inputs keep focus. All static CSS is generated at build time.
@@ -86,18 +94,21 @@ article.foar:10:13: This match doesn't handle Status.Archived (add an arm for it
 - **i18n and accessibility.** `t(key, params)` with plurals and a catalog
   checker; `label:`, `role:`, `aria:` everywhere; clickable elements are
   keyboard-operable by default.
-- **Static type checking & typed `extern fn`.** Stores, derived `let`s, generic
-  `data` literals & fields, tagged-union payloads, view props, assignments,
-  transitions, and declared `extern fn` host calls are checked at compile time
-  with `file:line:col`.
-- **Built-in routing, streaming SSR & hydration.** Declarative `Router` /
-  `Route` / `Link` and `navigate()`, zero-DOM `renderToString`, async loaders
-  (`renderToStringAsync`), Web `ReadableStream` streaming SSR (`renderToStream`),
-  and zero-recreation `hydrate` that adopts server DOM nodes in place.
-- **Packages, lockfiles & editor tooling.** `foar.toml` + SHA-256 `foar.lock`
-  (`foar init` / `add` / `install` / `pkg --verify`), native Rust LSP server
-  (`foar lsp`), Vite HMR plugin (`integrations/vite-plugin-foar.js`), VS Code
-  extension (`editors/vscode/`), and the [browser playground](https://josmanvis.github.io/FOAR/playground/).
+- **Static type checking & typed `extern fn`.** Stores, derived `let`s, pure
+  `fn`s, `context` fields & effects, generic `data` literals & fields,
+  tagged-union payloads, view props, assignments, transitions, and declared
+  `extern fn` host calls are checked at compile time with `file:line:col`.
+- **Built-in routing, streaming SSR & partial islands hydration.** Declarative
+  `Router` / `Route` / `Link` and `navigate()`, zero-DOM `renderToString`, async
+  loaders (`renderToStringAsync`), Web `ReadableStream` streaming SSR
+  (`renderToStream`), zero-recreation `hydrate`, and `Island(client: "visible" | "idle" | "load")`
+  with `hydrateIslands`.
+- **Packages, lockfiles, formatter & editor tooling.** `foar.toml` + SHA-256
+  `foar.lock` (`foar init` / `add` / `install` / `pkg --verify`), `foar fmt`,
+  native Rust LSP server (`foar lsp`), Vite HMR plugin
+  (`integrations/vite-plugin-foar.js`), VS Code extension (`editors/vscode/`),
+  and the [browser playground](https://josmanvis.github.io/FOAR/playground/)
+  with full-viewport standalone app runner.
 
 ## Quick start
 
@@ -137,7 +148,7 @@ mount(document.getElementById('app'), {
 
 ```
 src/                 the Rust compiler (lexer, parser, match/enums, typecheck, CSS, imports/lockfile, i18n, LSP, CLI, WASM)
-web/foar-runtime.js  the DOM + SSR + streaming runtime (one module, ~21 KB gzipped, zero dependencies)
+web/foar-runtime.js  the DOM + SSR + streaming + islands runtime (one module, ~24 KB gzipped, zero dependencies)
 web/foar-compiler.js runs the compiler in the browser (WASM)
 integrations/        Vite plugin with state-preserving HMR (vite-plugin-foar.js)
 editors/vscode/      VS Code extension + TextMate grammar launching `foar lsp`
@@ -155,7 +166,7 @@ pnpm build:wasm    # web/foar.wasm (rustup target add wasm32-unknown-unknown)
 pnpm build:site    # the static website in _site/ (deployed to GitHub Pages)
 ```
 
-For architectural trade-offs and roadmap items (a central hosted public package registry and partial islands hydration), see [trade-offs & roadmap](docs/why.md#trade-offs-and-roadmap).
+For architectural trade-offs and roadmap items (a hosted central public package registry), see [trade-offs & roadmap](docs/why.md#trade-offs-and-roadmap).
 
 ## License
 

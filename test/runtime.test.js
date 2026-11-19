@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { makeDom, tick, fire, compile as parseFoar, loadProject } from './dom.js';
-import { createFoarRuntime, hydrate, renderToString, renderToStringAsync, renderToStream, matchRoute, parseUrl } from '../web/foar-runtime.js';
+import { createFoarRuntime, hydrate, hydrateIslands, renderToString, renderToStringAsync, renderToStream, matchRoute, parseUrl } from '../web/foar-runtime.js';
 
 const todoSrc = loadProject('todo'); // multi-file project
 const counterSrc = fs.readFileSync(new URL('../examples/counter/app.foar', import.meta.url), 'utf8');
@@ -1095,4 +1095,278 @@ view App {
   assert.ok(full.includes('Post #88'), full);
   assert.ok(full.includes('id="__foar_state__"'), full);
   assert.ok(full.endsWith('</body></html>'));
+});
+
+test('Shared reactive Context (context / use) + pure FOAR fn across views, SSR, and hydrate', async () => {
+  const src = `
+fn format_usd(cents: i32) -> String {
+  return "$" + (cents / 100).toFixed(2);
+}
+
+context Cart {
+  store cents: i32 = 250;
+  let total_str: String = format_usd(cents);
+
+  effect Add(delta: i32) { cents += delta; }
+  effect Reset() { cents = 0; }
+}
+
+view Header {
+  use Cart;
+  state Ready {
+    render {
+      Row {
+        Text("Total: {Cart.total_str}")
+        Button("Clear", disabled: Cart.cents == 0) -> on_click(Cart.Reset)
+      }
+    }
+  }
+}
+
+view App {
+  use Cart;
+  state Ready {
+    render {
+      Column {
+        Header()
+        Button("Add $1.50") -> on_click(Buy)
+      }
+    }
+    effect Buy() { Cart.Add(150); }
+  }
+}
+`;
+  const appFirst = src.slice(0, src.indexOf('view Header')) + src.slice(src.indexOf('view App')) + '\n' + src.slice(src.indexOf('view Header'), src.indexOf('view App'));
+  const ast = parseFoar(appFirst);
+
+  // 1. SSR evaluates pure `fn` and `context` stores/lets with zero DOM
+  const ssr = renderToString(ast);
+  assert.ok(ssr.html.includes('Total: $2.50'), ssr.html);
+  assert.deepEqual(ssr.state.contexts, { Cart: { cents: 250 } });
+
+  // 2. Hydrate restores context & updates sibling view reactively on Cart.Add / Cart.Reset
+  const { document, container } = makeDom();
+  document.head.innerHTML = ssr.head;
+  container.innerHTML = ssr.html;
+  const rt = hydrate(ast, container);
+  const clearBtn = q(container, 'button').find((b) => b.textContent === 'Clear');
+  const addBtn = q(container, 'button').find((b) => b.textContent === 'Add $1.50');
+  assert.equal(clearBtn.disabled, false);
+
+  addBtn.click();
+  await tick();
+  assert.equal(container.querySelector('.f4-text').textContent, 'Total: $4.00');
+
+  // Direct `-> on_click(Cart.Reset)` invokes context effect and updates disabled prop!
+  clearBtn.click();
+  await tick();
+  assert.equal(container.querySelector('.f4-text').textContent, 'Total: $0.00');
+  assert.equal(clearBtn.disabled, true);
+  rt.destroy();
+});
+
+test('Forms & controls (Form, Select/Option, Slider, Progress, disabled/class/id) + SSR', async () => {
+  const src = `
+view App {
+  store plan: String = "pro";
+  store level: i32 = 40;
+  store submitted: i32 = 0;
+
+  state Ready {
+    render {
+      Form(id: "cfg-form") {
+        Select(value: plan, class: "picker") {
+          Option(value: "free", "Free")
+          Option(value: "pro", "Pro")
+          Option(value: "team", "Team")
+        } -> on_change(PickPlan)
+        Slider(value: level, min: 0, max: 100, step: 10) -> on_input(SetLevel)
+        Progress(value: level, max: 100)
+        Text("{plan}:{level}:{submitted}", class: submitted > 0 ? "is-saved" : "")
+        Button("Save", disabled: level == 0) -> on_click(Save)
+      } -> on_submit(Save)
+    }
+    effect PickPlan(p: String) { plan = p; }
+    effect SetLevel(v: i32) { level = v; }
+    effect Save() { submitted += 1; }
+  }
+}
+`;
+  const ast = parseFoar(src);
+  const ssr = renderToString(ast);
+  assert.ok(ssr.html.includes('<form class="f4-form" id="cfg-form">'), ssr.html);
+  assert.ok(ssr.html.includes('<option class="f4-option" value="pro" selected>Pro</option>'), ssr.html);
+  assert.ok(ssr.html.includes('<progress class="f4-progress" value="40" max="100"></progress>'), ssr.html);
+
+  const { window, container } = makeDom();
+  const rt = createFoarRuntime(ast, container);
+  const sel = container.querySelector('select');
+  const slider = container.querySelector('input[type="range"]');
+  const prog = container.querySelector('progress');
+  const form = container.querySelector('form');
+  const txt = container.querySelector('.f4-text');
+
+  assert.equal(sel.value, 'pro');
+  assert.equal(Number(prog.value), 40);
+
+  sel.value = 'team';
+  fire(window, sel, 'change');
+  slider.value = '80';
+  fire(window, slider, 'input');
+  fire(window, form, 'submit');
+  await tick();
+
+  assert.equal(txt.textContent, 'team:80:1');
+  assert.equal(Number(prog.value), 80);
+  assert.ok(txt.classList.contains('is-saved'));
+  rt.destroy();
+});
+
+test('State-scoped keyboard shortcuts (on_key) activate only in their owning state', async () => {
+  const src = `
+view App {
+  store note: String = "Draft";
+  state Viewing {
+    on_key("Mod+K") { transition Editing; }
+    render { Text("Viewing: {note}") }
+  }
+  state Editing {
+    on_key("Escape") { transition Viewing; }
+    render { Text("Editing: {note}") }
+  }
+}
+`;
+  const { window, document, container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(src), container);
+  assert.equal(container.querySelector('.f4-text').textContent, 'Viewing: Draft');
+
+  // Escape does nothing in Viewing
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(rt.getSnapshot()[0].state, 'Viewing');
+
+  // Mod+K transitions Viewing -> Editing
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(rt.getSnapshot()[0].state, 'Editing');
+  assert.equal(container.querySelector('.f4-text').textContent, 'Editing: Draft');
+
+  // Escape in Editing transitions back to Viewing
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(rt.getSnapshot()[0].state, 'Viewing');
+  rt.destroy();
+});
+
+test('Async transition result on_exit(res) and rejection hook on_error(err)', async () => {
+  const src = `
+extern fn submit_order(ok: bool) -> Promise<String>;
+
+view App {
+  store message: String = "ready";
+  state Idle {
+    render {
+      Row {
+        Text(message)
+        Button("OK") -> on_click(SendOk)
+        Button("Fail") -> on_click(SendFail)
+      }
+    }
+    effect SendOk() { submit_order(true) -> transition(Sending); }
+    effect SendFail() { submit_order(false) -> transition(Sending); }
+  }
+  state Sending {
+    render { Spinner("Sending...") }
+    on_exit(receipt: String) {
+      message = "Receipt: {receipt}";
+      transition Idle;
+    }
+    on_error(err: String) {
+      message = "Error: {err}";
+      transition Failed;
+    }
+  }
+  state Failed {
+    render { Text(message) }
+  }
+}
+`;
+  const { container } = makeDom();
+  const ast = parseFoar(src);
+  const submit_order = async (ok) => {
+    if (!ok) throw new Error('Card declined');
+    return 'ORD-778';
+  };
+  const rt = createFoarRuntime(ast, container, { bindings: { submit_order } });
+
+  q(container, 'button').find((b) => b.textContent === 'OK').click();
+  await tick();
+  await new Promise((r) => setTimeout(r, 15));
+  assert.equal(rt.getSnapshot()[0].state, 'Idle');
+  assert.equal(container.querySelector('.f4-text').textContent, 'Receipt: ORD-778');
+
+  q(container, 'button').find((b) => b.textContent === 'Fail').click();
+  await tick();
+  await new Promise((r) => setTimeout(r, 15));
+  assert.equal(rt.getSnapshot()[0].state, 'Failed');
+  assert.equal(container.querySelector('.f4-text').textContent, 'Error: Card declined');
+  rt.destroy();
+});
+
+test('Partial Islands Hydration (Island + hydrateIslands) hydrates only the island in place', async () => {
+  const src = `
+view Page {
+  state Static {
+    render {
+      Column {
+        Text("Static Server Article")
+        Island(client: "load") {
+          LikeButton(initial: 5)
+        }
+      }
+    }
+  }
+}
+
+view LikeButton(initial: i32) {
+  store likes: i32 = initial;
+  state Ready {
+    render {
+      Button("Likes: {likes}") -> on_click(Like)
+    }
+    effect Like() { likes += 1; }
+  }
+}
+`;
+  const ast = parseFoar(src);
+  const ssr = renderToString(ast);
+  assert.ok(ssr.html.includes('data-f4-island="LikeButton"'), ssr.html);
+  assert.ok(ssr.html.includes('data-f4-hydrate="load"'), ssr.html);
+
+  const { document, container } = makeDom();
+  document.head.innerHTML = ssr.head;
+  container.innerHTML = ssr.html;
+  const staticNode = container.querySelector('.f4-text');
+  const likeBtn = container.querySelector('button');
+  assert.equal(likeBtn.textContent, 'Likes: 5');
+
+  let created = 0;
+  const origCreate = document.createElement.bind(document);
+  document.createElement = (...a) => { created++; return origCreate(...a); };
+  let mgr;
+  try {
+    mgr = hydrateIslands(container, ast);
+  } finally {
+    document.createElement = origCreate;
+  }
+
+  assert.equal(mgr.islands.length, 1);
+  assert.equal(created, 0, 'island hydration creates 0 DOM elements');
+  assert.equal(container.querySelector('.f4-text'), staticNode, 'static HTML untouched');
+  assert.equal(container.querySelector('button'), likeBtn, 'adopted exact island button');
+
+  likeBtn.click();
+  await tick();
+  assert.equal(likeBtn.textContent, 'Likes: 6');
+  mgr.destroy();
 });

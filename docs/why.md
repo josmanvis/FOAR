@@ -106,9 +106,10 @@ values that changed.
   dynamic values are touched at runtime.
 - Inputs are never re-created, so focus, selection, scroll and CSS
   transitions survive every update.
-- The runtime is one dependency-free module of ≈21 KB gzipped (including the
-  router, Slots, Portals, Catch boundaries, streaming & async zero-DOM SSR,
-  client hydration, i18n, and accessibility helpers).
+- The runtime is one dependency-free module of ≈24 KB gzipped (including the
+  router, shared contexts, pure `fn`, Slots, Portals, Catch boundaries,
+  Form/Select/Slider/Progress, state-scoped `on_key` hotkeys, streaming & async
+  zero-DOM SSR, full & partial-islands hydration, i18n, and accessibility helpers).
 
 ## One language for the whole interface
 
@@ -146,25 +147,24 @@ them in one small language.
 
 ## Trade-offs and roadmap
 
-FOAR ships with built-in routing, streaming SSR + zero-recreation hydration,
-static type checking (with generics, tagged-union ADTs, and `extern fn`),
-Slots, Portals, Catch/Fallback error boundaries, `foar.toml` + SHA-256
-`foar.lock` packages, a native Rust LSP, Vite HMR, and a VS Code extension.
+FOAR ships with built-in routing, streaming SSR + full & partial-islands
+hydration (`Island` / `hydrateIslands`), shared reactive `context` + `use`,
+pure typed `fn`, static type checking (with generics, tagged-union ADTs, and
+`extern fn`), Slots, Portals, native forms, state-scoped `on_key` hotkeys,
+typed async `on_exit(res)` / `on_error(err)`, Catch/Fallback error boundaries,
+`foar.toml` + SHA-256 `foar.lock` packages, `foar fmt`, a native Rust LSP,
+Vite HMR, and a VS Code extension.
 
-Three intentional trade-offs and roadmap items to keep in mind:
+Two intentional trade-offs to keep in mind:
 
 - **Decentralized packages today, hosted central registry on the roadmap.**
   `foar.toml`, SHA-256 `foar.lock`, local path, Git, and custom HTTP registry
   URLs work out of the box without requiring a central server.
-- **Gradual interop at the JS boundary.** Declared `extern fn` calls, generic
-  `data<T>`, tagged-union `enum<T>` payloads, view props, stores, and effects
-  are statically checked at compile time — while undeclared JS host calls and
-  explicit `any` remain opt-in gradual escape hatches so adopting existing JS
-  platform APIs stays frictionless.
-- **Full-document streaming SSR & hydration.** `renderToStream`,
-  `renderToStringAsync`, and zero-recreation `hydrate` run across Node, Deno,
-  Bun, and Edge workers; partial islands / out-of-order suspense streaming
-  boundaries are next on the roadmap.
+- **Gradual interop at the JS boundary.** Declared `extern fn` calls, pure
+  `fn`s, `context` fields/effects, generic `data<T>`, tagged-union `enum<T>`
+  payloads, view props, stores, and effects are statically checked at compile
+  time — while undeclared JS host calls and explicit `any` remain opt-in gradual
+  escape hatches so adopting existing JS platform APIs stays frictionless.
 
 Ready to try it? [Open the playground](https://josmanvis.github.io/FOAR/playground/)
 or read the [guide](./guide.md).

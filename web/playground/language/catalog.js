@@ -11,8 +11,13 @@ export const KEYWORDS = {
   transition: 'Moves the view to another state: `transition Editing;`',
   emit: 'Sends an event to the parent: `emit pick(id);` → the parent handles `-> on_pick(Effect)`.',
   on_enter: 'Runs when the view enters this state (on mount and state transitions).',
-  on_exit: 'Runs when an async transition resolves (`api(...) -> transition(State)`), then usually transitions.',
+  on_exit: 'Runs when an async transition resolves (`on_exit(res: Type) { … }`), then usually transitions.',
+  on_error: 'Runs when an async transition rejects (`on_error(err: String) { … }`).',
   on_unmount: 'Runs when leaving a state or when the view instance is disposed.',
+  on_key: 'State-scoped keyboard shortcut (`on_key("Escape") { … }`, `on_key("Mod+K") { … }`).',
+  context: 'Declares a shared reactive singleton store (`context Auth { store ...; let ...; effect ... }`).',
+  use: 'Subscribes a view to one or more shared reactive contexts (`use Auth;`).',
+  fn: 'Declares a typed pure FOAR function (`fn format_usd(cents: i32) -> String { … }`) or used with `extern fn`.',
   data: 'Declares a typed (optionally generic) data record: `data Page<T> { items: Vec<T>, total: i32 }`.',
   theme: 'Design tokens: CSS custom properties on :root, with `@dark { … }` / `@light { … }` variants.',
   style: '`style Name { … }` declares a named style (apply with `.style(Name)` or `@use Name`); `style { … }` inside a view styles its host element.',
@@ -53,9 +58,16 @@ export const TYPES = {
   CatchError: 'Error info `{ message, view }` passed to `Catch { … } Fallback { err => … }`.',
 };
 
-const COMMON = ['label', 'title', 'role', 'aria', 'tab_index', 'drag', 'drag_text', 'autofocus', 'slot'];
+const COMMON = ['label', 'title', 'role', 'aria', 'tab_index', 'drag', 'drag_text', 'autofocus', 'slot', 'disabled', 'class', 'id'];
 const ARG_DOCS = {
   slot: 'Assigns this child to a named `Slot(name: "...")` outlet in a parent view.',
+  disabled: 'Disables interactive controls when truthy (and sets `aria-disabled`).',
+  class: 'Adds reactive extra CSS class names to the element.',
+  id: 'Sets the HTML `id` attribute.',
+  min: 'Minimum numeric value (Slider).',
+  max: 'Maximum numeric value (Slider / Progress).',
+  step: 'Step increment (Slider).',
+  client: 'Partial hydration strategy for `Island`: `"load"`, `"visible"`, or `"idle"`.',
   label: 'Accessible name (`aria-label`).',
   title: 'Tooltip; for an icon Button without `label`, also its accessible name.',
   role: 'ARIA role.',
@@ -96,13 +108,20 @@ export const ELEMENTS = {
   Slot: { sig: 'Slot() / Slot(name: "header") { fallback }', doc: 'Renders caller children projected into this view (default or named slot) while keeping caller scope & events.', named: ['name'], events: [], snippet: 'Slot(name: "${1:header}")' },
   Portal: { sig: 'Portal(target: "#modal-root") { … }', doc: 'Renders children into another DOM container (default `body`) with delegated events and automatic cleanup on unmount.', named: ['target'], events: [], snippet: 'Portal(target: "${1:#modal-root}") {\n    $0\n}' },
   Catch: { sig: 'Catch { … } Fallback { err => … }', doc: 'Error boundary that isolates runtime and SSR errors in its subtree without crashing sibling views.', named: [], events: [], snippet: 'Catch {\n    $0\n} Fallback { err =>\n    Text("Error: {err.message}")\n}' },
+  Form: { sig: 'Form { … } -> on_submit(Submit)', doc: 'Native `<form>` container with automatic `preventDefault()` on submit.', named: [...COMMON], events: ['on_submit'], snippet: 'Form {\n    $0\n} -> on_submit(${1:Submit})' },
+  Select: { sig: 'Select(value: x) { Option(value: "a", "Alpha") }', doc: 'Native `<select>` dropdown; `on_change` receives the selected string value.', named: ['value', ...COMMON], events: ['on_change', 'on_blur'], snippet: 'Select(value: ${1:val}) {\n    Option(value: "${2:a}", "${3:Alpha}")\n} -> on_change(${4:Pick})' },
+  Option: { sig: 'Option(value: "a", "Alpha")', doc: 'An `<option>` entry inside a `Select`.', named: ['value', 'disabled'], events: [], snippet: 'Option(value: "${1:a}", "${2:Label}")' },
+  Slider: { sig: 'Slider(value: v, min: 0, max: 100, step: 1)', doc: 'Native `<input type="range">` slider; `on_input` receives a numeric value.', named: ['value', 'min', 'max', 'step', ...COMMON], events: ['on_input', 'on_change'], snippet: 'Slider(value: ${1:val}, min: 0, max: 100, step: 1) -> on_input(${2:Set})' },
+  Progress: { sig: 'Progress(value: v, max: 100)', doc: 'Native `<progress>` bar.', named: ['value', 'max', ...COMMON], events: [], snippet: 'Progress(value: ${1:val}, max: ${2:100})' },
+  Island: { sig: 'Island(client: "visible" | "idle" | "load") { View() }', doc: 'Partial hydration boundary for `hydrateIslands`: leaves surrounding SSR HTML static and hydrates only this interactive island.', named: ['client'], events: [], snippet: 'Island(client: "${1:visible}") {\n    $0\n}' },
 };
 
 export const EVENTS = {
   on_click: 'Click (or Enter/Space on a focusable element).',
   on_double_click: 'Double click.',
   on_input: 'Each edit; the effect receives the new value.',
-  on_change: 'Committed change (Checkbox: the new checked value).',
+  on_change: 'Committed change (Checkbox: bool; Select: string).',
+  on_submit: 'Form submission (automatically calls `preventDefault()`).',
   on_enter: 'Enter pressed in a field.',
   on_context_menu: 'Right-click or the Menu key; the effect receives `{ x, y }`.',
   on_blur: 'Focus left the element.',

@@ -1,5 +1,7 @@
-// Fleet Console — showcases Router, Slots (@ui/Panel), Portals, Tagged-Union ADTs,
-// generic enums, on_enter lifecycle hooks, Catch/Fallback error boundaries, and foar.toml packages.
+// Fleet Console — showcases Router, shared Context (`context`/`use`), pure `fn`,
+// Slots (`@ui/Panel`), Portals, Tagged-Union ADTs, generic enums, `on_enter`,
+// state-scoped `on_key("Escape")`, `Form`/`Select`/`Slider`/`Progress`,
+// `Catch`/`Fallback` error boundaries, and verified `foar.toml` + `foar.lock` packages.
 import "@ui/Badge"
 import "@ui/Panel"
 
@@ -17,6 +19,23 @@ enum ProbeState<T> {
     Down(String),
 }
 
+fn format_slo(ms: i32) -> String {
+    return "{ms} ms p95 SLO";
+}
+
+context FleetPrefs {
+    store region: String = "all";
+    store slo_ms: i32 = 100;
+    let slo_label: String = format_slo(slo_ms);
+
+    effect SetRegion(next: String) { region = next; }
+    effect SetSlo(ms: i32) { slo_ms = ms; }
+    effect ResetDefaults() {
+        region = "all";
+        slo_ms = 100;
+    }
+}
+
 style NavLink {
     padding: 6px 12px;
     border-radius: 6px;
@@ -28,6 +47,8 @@ style NavLink {
 }
 
 view App {
+    use FleetPrefs;
+
     store services: Vec<Service> = [
         Service { id: "edge-us", name: "Edge API (US-East)", region: "iad", healthy: true, latency_ms: 14 },
         Service { id: "edge-eu", name: "Edge API (EU-West)", region: "fra", healthy: true, latency_ms: 21 },
@@ -38,6 +59,8 @@ view App {
     store fault_test: bool = false;
     store visits: i32 = 0;
 
+    let visible_services = services.filter(|s| FleetPrefs.region == "all" || s.region == FleetPrefs.region);
+
     style {
         layout: vertical;
         gap: 16px;
@@ -47,6 +70,7 @@ view App {
 
     state Ready {
         on_enter { visits += 1; }
+        on_key("Escape") { modal_open = false; }
 
         render {
             Column {
@@ -54,8 +78,8 @@ view App {
                     Text("Fleet").style({ font-size: 20px; font-weight: 700; margin-right: 12px; })
                     Link("/", "Overview").style(NavLink)
                     Link("/services", "Services").style(NavLink)
-                    Link("/services/edge-us", "US-East").style(NavLink)
-                    Text("path: {route.path}").style({
+                    Link("/settings", "Settings").style(NavLink)
+                    Text("{FleetPrefs.slo_label} · {route.path}").style({
                         margin-left: auto;
                         font-family: monospace;
                         font-size: 12px;
@@ -74,7 +98,7 @@ view App {
                                 Badge(text: "Session #{visits}", tone: "ok")
                             }
 
-                            Text("Router, Slots, Portals, Tagged-Union ADTs, and Catch boundaries share one compiled runtime.").style({ color: #475569; font-size: 14px; })
+                            Text("Router, Context, pure fn, Slots, Portals, Tagged-Union ADTs, and Catch boundaries share one compiled runtime.").style({ color: #475569; font-size: 14px; })
 
                             Match(probe) {
                                 Online(ms) => Badge(text: "Probe OK — {ms} ms", tone: "ok")
@@ -97,16 +121,19 @@ view App {
                         }
                     }
                     Route("/services") {
-                        List(services) { svc =>
+                        List(visible_services, empty: "No services in selected region.") { svc =>
                             Row {
                                 Link("/services/{svc.id}", svc.name).style({ font-weight: 600; color: #0f4c81; text-decoration: none; flex: 1; })
                                 Text("{svc.latency_ms} ms").style({ font-family: monospace; font-size: 13px; color: #64748b; })
-                                Badge(text: svc.healthy ? "Healthy" : "Degraded", tone: svc.healthy ? "ok" : "warn")
+                                Badge(text: svc.latency_ms <= FleetPrefs.slo_ms && svc.healthy ? "Healthy" : "Degraded", tone: svc.latency_ms <= FleetPrefs.slo_ms && svc.healthy ? "ok" : "warn")
                             }.style({ padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; })
                         }.style({ display: flex; flex-direction: column; gap: 8px; })
                     }
                     Route("/services/:id") { params =>
                         ServiceDetail(id: params.id, services: services)
+                    }
+                    Route("/settings") {
+                        SettingsPanel()
                     }
                     Route("*") {
                         Column {
@@ -120,7 +147,7 @@ view App {
                     Portal {
                         Column {
                             Panel(subtitle: "Confirm Rolling Restart") {
-                                Text("This dialog is rendered via Portal into document.body with delegated FOAR events.").style({ color: #475569; font-size: 14px; })
+                                Text("Rendered via Portal into document.body with delegated events. Press Escape or Cancel to dismiss.").style({ color: #475569; font-size: 14px; })
                                 Row(slot: "footer") {
                                     Button("Cancel") -> on_click(CloseModal)
                                     Button("Confirm Restart") -> on_click(ConfirmRestart)
@@ -149,6 +176,55 @@ view App {
             probe = ProbeState.Online(11);
             modal_open = false;
         }
+    }
+}
+
+view SettingsPanel {
+    use FleetPrefs;
+
+    store saved_notice: bool = false;
+
+    state Ready {
+        render {
+            Panel(subtitle: "Fleet Alert Preferences (Shared Context)") {
+                Form {
+                    Column {
+                        Row {
+                            Text("Region filter:").style({ font-weight: 600; width: 130px; })
+                            Select(value: FleetPrefs.region) {
+                                Option(value: "all", "All regions")
+                                Option(value: "iad", "US-East (iad)")
+                                Option(value: "fra", "EU-West (fra)")
+                                Option(value: "sjc", "US-West (sjc)")
+                            } -> on_change(PickRegion)
+                        }
+                        Row {
+                            Text("Latency SLO:").style({ font-weight: 600; width: 130px; })
+                            Slider(value: FleetPrefs.slo_ms, min: 20, max: 200, step: 10) -> on_input(PickSlo)
+                            Text(FleetPrefs.slo_label).style({ font-family: monospace; font-size: 13px; color: #0f4c81; })
+                        }
+                        Progress(value: FleetPrefs.slo_ms, max: 200)
+                        If(saved_notice) {
+                            Badge(text: "Preferences applied across all views", tone: "ok")
+                        }
+                        Row {
+                            Button("Save Preferences") -> on_click(MarkSaved)
+                            Button("Reset Defaults") -> on_click(FleetPrefs.ResetDefaults)
+                        }
+                    }.style({ gap: 12px; })
+                } -> on_submit(MarkSaved)
+            }
+        }
+
+        effect PickRegion(r: String) {
+            FleetPrefs.SetRegion(r);
+            saved_notice = false;
+        }
+        effect PickSlo(ms: i32) {
+            FleetPrefs.SetSlo(ms);
+            saved_notice = false;
+        }
+        effect MarkSaved() { saved_notice = true; }
     }
 }
 

@@ -167,3 +167,21 @@ test('VS Code extension manifests, TextMate grammar, and extension.js are valid'
   // Check JS syntax with `node --check`
   cp.execFileSync(process.execPath, ['--check', path.join(dir, 'extension.js')]);
 });
+
+test('CLI formatter (foar fmt / --check) formats .foar files idempotently', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'foar-fmt-'));
+  try {
+    const file = path.join(tmp, 'app.foar');
+    fs.writeFileSync(file, 'view App {  \nstore n: i32 = 0;\n\n\nstate S {\nrender { Text("{n}") }\n}\n}\n');
+    // --check fails on unformatted file
+    assert.throws(() => cp.execFileSync(BIN, ['fmt', file, '--check'], { stdio: 'pipe' }));
+    // foar fmt formats in place
+    cp.execFileSync(BIN, ['fmt', file], { encoding: 'utf8' });
+    // --check now passes!
+    cp.execFileSync(BIN, ['fmt', file, '--check'], { encoding: 'utf8' });
+    const formatted = fs.readFileSync(file, 'utf8');
+    assert.equal(formatted, 'view App {\n    store n: i32 = 0;\n\n    state S {\n        render { Text("{n}") }\n    }\n}\n');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
