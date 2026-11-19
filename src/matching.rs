@@ -115,7 +115,7 @@ pub(super) fn prescan_enums(src: &str, toks: &[Token]) -> Enums {
             }
             let is_tagged = variants.iter().any(|v| v.payload.is_some());
             out.entry(name).or_insert(EnumInfo { variants, is_tagged });
-            i = j;
+            i = j + 1;
             continue;
         }
         i += 1;
@@ -887,5 +887,19 @@ view App {
         for want in ["for (const x of [1, 2]) {", "for (let i = 0; i < n; i++) {", "for (let i = 1; i <= 3; i++) {", "while (n > 10) {", "let t = (n);", "let v; if ((v = (t)) != null) {", "let z = null;", "\"None stays\""] {
             assert!(js.contains(want), "missing `{}` in {}", want, js);
         }
+    }
+
+    #[test]
+    fn multiple_enums_in_same_file() {
+        let p = compile(
+            "enum A { One = \"1\", Two = \"2\" }\n\
+             enum B { Alpha, Beta }\n\
+             enum C { X = \"\", Y = \"y\" }\n\
+             view App {\n\
+                 store c: C = C.X;\n\
+                 state S { render { Match(c) { X => Text(\"x\") Y => Text(\"y\") } } }\n\
+             }",
+        );
+        assert!(p.is_ok(), "{:?}", p);
     }
 }

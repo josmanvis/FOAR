@@ -1,4 +1,21 @@
-// Data types shared by every view.
+// Data types and enums shared by every view.
+
+enum Layout {
+    List = "list",
+    Gallery = "gallery",
+}
+
+enum SortBy {
+    Edited = "edited",
+    Created = "created",
+    Title = "title",
+}
+
+enum SheetMode {
+    Closed = "",
+    Create = "create",
+    Enter = "enter",
+}
 
 data Note {
     id: String,

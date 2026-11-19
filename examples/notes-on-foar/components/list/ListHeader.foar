@@ -3,7 +3,7 @@ import "styles/shared"
 import "./HeaderBar"
 import "components/menus/MenuItem"
 
-view ListHeader(title: String, count: i32, sort: String, group_dates: bool, layout: String, in_trash: bool, sidebar: bool, locale: String) {
+view ListHeader(title: String, count: i32, sort: SortBy, group_dates: bool, layout: Layout, in_trash: bool, sidebar: bool, locale: String) {
     style { position: relative; flex-shrink: 0; }
 
     state Idle {
@@ -18,18 +18,20 @@ view ListHeader(title: String, count: i32, sort: String, group_dates: bool, layo
     }
 
     state Options {
+        on_key("Escape") { transition Idle; }
+
         render {
             HeaderBar(title: title, count: count, in_trash: in_trash, sidebar: sidebar, open: true)
                 -> on_sidebar(Sidebar) -> on_options(Close) -> on_new(New) -> on_empty(Empty)
             Column(role: "menu", label: t("header.viewOptions")) {
                 Text(t("view.viewAs"), aria: { hidden: true }).style(MenuTitle)
-                MenuItem(label: t("view.list"), value: "list", check: layout == "list") -> on_pick(Layout)
-                MenuItem(label: t("view.gallery"), value: "gallery", check: layout == "gallery") -> on_pick(Layout)
+                MenuItem(label: t("view.list"), value: Layout.List, check: layout == Layout.List) -> on_pick(PickLayout)
+                MenuItem(label: t("view.gallery"), value: Layout.Gallery, check: layout == Layout.Gallery) -> on_pick(PickLayout)
                 Text("", role: "separator").style(MenuSep)
                 Text(t("view.sortBy"), aria: { hidden: true }).style(MenuTitle)
-                MenuItem(label: t("sort.edited"), value: "edited", check: sort == "edited") -> on_pick(Sort)
-                MenuItem(label: t("sort.created"), value: "created", check: sort == "created") -> on_pick(Sort)
-                MenuItem(label: t("sort.title"), value: "title", check: sort == "title") -> on_pick(Sort)
+                MenuItem(label: t("sort.edited"), value: SortBy.Edited, check: sort == SortBy.Edited) -> on_pick(PickSort)
+                MenuItem(label: t("sort.created"), value: SortBy.Created, check: sort == SortBy.Created) -> on_pick(PickSort)
+                MenuItem(label: t("sort.title"), value: SortBy.Title, check: sort == SortBy.Title) -> on_pick(PickSort)
                 Text("", role: "separator").style(MenuSep)
                 MenuItem(label: t("view.group"), value: "group", check: group_dates) -> on_pick(Group)
                 Text("", role: "separator").style(MenuSep)
@@ -39,8 +41,8 @@ view ListHeader(title: String, count: i32, sort: String, group_dates: bool, layo
                 }
             }.style(Menu, { left: auto; right: 10px; top: 46px; })
         }
-        effect Layout(v: String) { emit layout(v); transition Idle; }
-        effect Sort(v: String) { emit sort(v); transition Idle; }
+        effect PickLayout(v: any) { emit layout(v); transition Idle; }
+        effect PickSort(v: any) { emit sort(v); transition Idle; }
         effect Group(v: String) { emit group(true); transition Idle; }
         effect Locale(v: String) { emit locale(v); transition Idle; }
         effect Sidebar(x: any) { emit sidebar(true); transition Idle; }
@@ -51,6 +53,8 @@ view ListHeader(title: String, count: i32, sort: String, group_dates: bool, layo
     }
 
     state ConfirmEmpty {
+        on_key("Escape") { transition Idle; }
+
         render {
             HeaderBar(title: title, count: count, in_trash: in_trash, sidebar: sidebar, open: false)
                 -> on_sidebar(Sidebar) -> on_options(Close) -> on_new(Close) -> on_empty(Close)

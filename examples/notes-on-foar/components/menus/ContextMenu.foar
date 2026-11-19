@@ -11,9 +11,11 @@ view ContextMenu(at: any, items: Vec<any>, label: String) {
         render {
             Column(role: "menu", label: label) {
                 List(items) { it =>
-                    If(it.sep) { Text("", role: "separator").style(MenuSep) }
-                    If(it.title) { Text(it.title, aria: { hidden: true }).style(MenuTitle) }
-                    If(!it.sep && !it.title) {
+                    If(it.sep) {
+                        Text("", role: "separator").style(MenuSep)
+                    } Else If(it.title) {
+                        Text(it.title, aria: { hidden: true }).style(MenuTitle)
+                    } Else {
                         MenuItem(label: it.label, value: it.value, check: it.check, danger: it.danger, hint: it.hint) -> on_pick(Pick)
                     }
                 }

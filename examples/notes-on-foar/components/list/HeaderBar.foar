@@ -11,8 +11,11 @@ view HeaderBar(title: String, count: i32, in_trash: bool, sidebar: bool, open: b
                     Text(t("list.count", { count: count })).style(Count)
                 }.style({ flex: 1; gap: 0; min-width: 0; padding-left: 4px; })
                 Button("☰", title: t("header.viewOptions"), aria: { haspopup: "menu", expanded: open }) -> on_click(Options).style(IconButton)
-                If(!in_trash) { Button("✎", title: t("header.newNote")) -> on_click(New).style(IconButton) }
-                If(in_trash && count > 0) { Button(t("header.deleteAll")) -> on_click(Empty).style(TextButton) }
+                If(!in_trash) {
+                    Button("✎", title: t("header.newNote")) -> on_click(New).style(IconButton)
+                } Else If(count > 0) {
+                    Button(t("header.deleteAll")) -> on_click(Empty).style(TextButton)
+                }
             }.style(Toolbar)
         }
         effect Sidebar() { emit sidebar(true); }

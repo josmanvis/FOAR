@@ -3,6 +3,9 @@ import "styles/shared"
 import "./MenuItem"
 
 view NoteMenu(note: Note, folders: Vec<Folder>, unlocked: bool, at: any) {
+    let is_deleted: bool = note.deleted_at > 0;
+    let can_read: bool = !note.locked || unlocked;
+
     style {
         position: {at ? "fixed" : ""};
         left: {at ? at.x + "px" : ""};
@@ -13,12 +16,18 @@ view NoteMenu(note: Note, folders: Vec<Folder>, unlocked: bool, at: any) {
     state Main {
         render {
             Column(role: "menu", label: t("note.menuLabel")) {
-                If(note.deleted_at == 0) {
+                If(is_deleted) {
+                    MenuItem(label: t("note.recover"), value: "recover") -> on_pick(Act)
+                    MenuItem(label: t("note.purge"), value: "purge", danger: true) -> on_pick(AskPurge)
+                } Else {
                     MenuItem(label: note.pinned ? t("note.unpin") : t("note.pin"), value: "pin") -> on_pick(Act)
-                    If(!note.locked) { MenuItem(label: t("note.lock"), value: "lock") -> on_pick(Act) }
-                    If(note.locked && unlocked) { MenuItem(label: t("note.removeLock"), value: "remove_lock") -> on_pick(Act) }
+                    If(!note.locked) {
+                        MenuItem(label: t("note.lock"), value: "lock") -> on_pick(Act)
+                    } Else If(unlocked) {
+                        MenuItem(label: t("note.removeLock"), value: "remove_lock") -> on_pick(Act)
+                    }
                     MenuItem(label: t("note.moveTo"), value: "move") -> on_pick(StartMove)
-                    If(!note.locked || unlocked) {
+                    If(can_read) {
                         MenuItem(label: t("note.duplicate"), value: "duplicate") -> on_pick(Act)
                         Text("", role: "separator").style(MenuSep)
                         MenuItem(label: t("note.exportMd"), value: "export_md") -> on_pick(Act)
@@ -28,10 +37,6 @@ view NoteMenu(note: Note, folders: Vec<Folder>, unlocked: bool, at: any) {
                     Text("", role: "separator").style(MenuSep)
                     MenuItem(label: t("note.delete"), value: "delete", danger: true, hint: "Ctrl/⌘ ⌫") -> on_pick(Act)
                 }
-                If(note.deleted_at > 0) {
-                    MenuItem(label: t("note.recover"), value: "recover") -> on_pick(Act)
-                    MenuItem(label: t("note.purge"), value: "purge", danger: true) -> on_pick(AskPurge)
-                }
             }.style(Menu, { position: at ? static : absolute; })
         }
         effect Act(kind: String) { emit action({ kind: kind, id: note.id }); }
@@ -40,6 +45,8 @@ view NoteMenu(note: Note, folders: Vec<Folder>, unlocked: bool, at: any) {
     }
 
     state Moving {
+        on_key("Escape") { transition Main; }
+
         render {
             Column(role: "menu", label: t("note.moveTitle")) {
                 Text(t("note.moveTitle"), aria: { hidden: true }).style(MenuTitle)
@@ -52,6 +59,8 @@ view NoteMenu(note: Note, folders: Vec<Folder>, unlocked: bool, at: any) {
     }
 
     state ConfirmPurge {
+        on_key("Escape") { transition Main; }
+
         render {
             Column(role: "alertdialog", label: t("note.purgeConfirm")) {
                 Text(t("note.purgeConfirm")).style({ font-weight: 700; padding: 6px 8px 0; })

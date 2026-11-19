@@ -9,39 +9,48 @@ view NoteEditor(note: Note, unlocked: bool, folders: Vec<Folder>, gallery: bool,
     store pw: String = "";
     store edit_at: any = null;
     store edit_items: Vec<any> = [];
+
+    let is_deleted: bool = note.deleted_at > 0;
+    let is_locked_screen: bool = note.locked && !unlocked;
+    let can_edit: bool = !is_deleted && !is_locked_screen;
+    let pw_hint: String = password_hint();
+
     style { layout: vertical; flex: 1; min-height: 0; min-width: 0; }
 
     state Open {
         render {
             Row(role: "toolbar", label: t("editor.toolbar")) {
-                If(gallery) { Button("‹  " + t("editor.gallery"), title: t("editor.backHint")) -> on_click(Back).style(TextButton, { margin-right: 6px; }) }
-                If(note.deleted_at == 0 && (unlocked || !note.locked)) { FormatBar() }
+                If(gallery) {
+                    Button("‹  " + t("editor.gallery"), title: t("editor.backHint"))
+                        -> on_click(Back).style(TextButton, { margin-right: 6px; })
+                }
+                If(can_edit) { FormatBar() }
                 Text("").style({ flex: 1; })
-                If(note.deleted_at == 0) {
-                    Button(note.locked ? (unlocked ? "🔓" : "🔒") : "🔒", title: lock_title(note, unlocked))
+                If(!is_deleted) {
+                    Button(note.locked && unlocked ? "🔓" : "🔒", title: lock_title(note, unlocked))
                         -> on_click(LockButton)
                         .style(IconButton, { opacity: note.locked ? 1 : 0.55; })
                 }
-                Button("⋯", title: t("editor.more"), aria: { haspopup: "menu", expanded: menu }) -> on_click(OpenMenu).style(IconButton, { font-weight: 700; })
+                Button("⋯", title: t("editor.more"), aria: { haspopup: "menu", expanded: menu })
+                    -> on_click(OpenMenu).style(IconButton, { font-weight: 700; })
                 If(menu) {
                     NoteMenu(note: note, folders: folders, unlocked: unlocked, at: null) -> on_action(Act)
                 }
             }.style(EditorToolbar)
 
-            If(note.locked && !unlocked) {
+            If(is_locked_screen) {
                 Column(role: "form", label: t("lock.isLocked")) {
                     Text("🔒", aria: { hidden: true }).style({ font-size: 44px; })
                     Text(t("lock.isLocked"), role: "heading", aria: { level: 2 }).style({ font-size: 17px; font-weight: 700; })
                     Text(t("lock.enterPw")).style({ color: var(--muted); margin-bottom: 8px; })
-                    Input(value: pw, secure: true, placeholder: t("lock.password"), label: t("lock.password"), autofocus: true) -> on_input(Pw) -> on_enter(Unlock)
+                    Input(value: pw, secure: true, placeholder: t("lock.password"), label: t("lock.password"), autofocus: true)
+                        -> on_input(Pw) -> on_enter(Unlock)
                         .style(Field, { width: 240px; text-align: center; })
                     If(lock_error != "") { Text(lock_error, role: "alert").style({ color: var(--danger); font-size: 12px; }) }
-                    If(password_hint() != "") { Text(t("lock.hint", { hint: password_hint() })).style({ color: var(--muted); font-size: 12px; }) }
+                    If(pw_hint != "") { Text(t("lock.hint", { hint: pw_hint })).style({ color: var(--muted); font-size: 12px; }) }
                 }.style({ flex: 1; align-items: center; justify-content: center; gap: 6px; padding-bottom: 80px; animation: fade-in 0.2s; })
-            }
-
-            If(!note.locked || unlocked) {
-                If(note.deleted_at > 0) {
+            } Else {
+                If(is_deleted) {
                     Row(role: "note") {
                         Text(t("editor.deletedBanner")).style({ flex: 1; })
                         Button(t("editor.recover")) -> on_click(Recover).style(TextButton)
@@ -54,10 +63,11 @@ view NoteEditor(note: Note, unlocked: bool, folders: Vec<Folder>, gallery: bool,
                     })
                 }
                 Text(fmt_long(note.updated)).style({ color: var(--muted); font-size: 12px; text-align: center; padding: 0 0 14px; flex-shrink: 0; })
-                RichText(value: note.html, editable: note.deleted_at == 0, autofocus: fresh, label: t("editor.label"))
+                RichText(value: note.html, editable: !is_deleted, autofocus: fresh, label: t("editor.label"))
                     -> on_input(Edit) -> on_context_menu(EditMenu)
                 If(edit_at != null) {
-                    ContextMenu(at: edit_at, items: edit_items, label: t("editor.menuLabel")) -> on_pick(EditPick) -> on_close(CloseEditMenu)
+                    ContextMenu(at: edit_at, items: edit_items, label: t("editor.menuLabel"))
+                        -> on_pick(EditPick) -> on_close(CloseEditMenu)
                 }
             }
         }
@@ -86,7 +96,7 @@ view NoteEditor(note: Note, unlocked: bool, folders: Vec<Folder>, gallery: bool,
         // commands when the caret is in one.
         effect EditMenu(p: any) {
             let ctx = fmt("context", "");
-            let editable = note.deleted_at == 0;
+            let editable = !is_deleted;
             let items = [
                 { label: t("menu.cut"), value: "cut", hint: "Ctrl/⌘ X", disabled: !editable },
                 { label: t("menu.copy"), value: "copy", hint: "Ctrl/⌘ C" },

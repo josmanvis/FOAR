@@ -1,35 +1,9 @@
 // Notes on FOAR
-// A macOS Notes-style app written in FOAR.
-//
-// This is the entry file: its first view (NotesApp) is the root. Everything
-// else lives in the files it imports, one component per file:
-//
-//   models.foar              data types (Note, Folder)
-//   styles/theme.foar        design tokens, light/dark, animations, content CSS
-//   styles/shared.foar       named styles shared by components
-//   components/sidebar/      FolderRow, NewFolderRow, TagChip
-//   components/list/         ListHeader, HeaderBar, NoteRow, GalleryCard
-//   components/menus/        MenuItem, ContextMenu, NoteMenu
-//   components/editor/       NoteEditor, FormatBar, FormatButtons, Key, Swatch
-//   components/              Toast, PasswordSheet
-//
-// Every popup, sheet and inline editor is an explicit state of a view
-// (FolderRow: Idle/Menu/Renaming/ConfirmDelete, FormatBar: Idle/Styles/Colors/
-// Linking/Table, ...) instead of a pile of boolean flags.
-//
-// What the app shows off:
-//   * i18n: every string is t(key, params); catalogs live in locales/*.json
-//     and `foar i18n` checks them on every build. The language switches live
-//     (View options ▸ Language).
-//   * Accessibility: landmarks, listbox/option rows with a roving tabindex,
-//     menus with role=menu, labelled icon buttons, a live region for toasts,
-//     focus rings, reduced motion.
-//   * Drag and drop: drag notes onto folders or Recently Deleted (`drag:` and
-//     `-> on_drop`, styled with `@drop-over`).
-//   * Context menus at the pointer (on_context_menu receives { x, y }).
-//
-// Host functions (storage, encryption, rich-text commands, dates) live in
-// host/*.js and are called by name.
+// A macOS Notes-style app written in idiomatic FOAR:
+//   * Enums (Layout, SortBy, SheetMode) + exhaustive `Match` & `match`
+//   * Derived `let` values (no repeated inline queries)
+//   * Explicit state machines for every popup, sheet, and inline editor
+//   * State-scoped `on_key("Escape")` shortcuts, i18n, a11y, drag & drop
 
 import "models"
 import "styles/theme"
@@ -46,9 +20,9 @@ import "components/PasswordSheet"
 import "components/Toast"
 
 view NotesApp {
-    store sort: String = load_pref("sort", "edited");
+    store sort: SortBy = load_pref("sort", SortBy.Edited);
     store group_dates: bool = load_pref("group_dates", true);
-    store layout: String = load_pref("layout", "list");
+    store layout: Layout = load_pref("layout", Layout.List);
     store sidebar: bool = load_pref("sidebar", true);
     store locale: String = current_locale();
     store notes: Vec<Note> = load_notes();
@@ -60,12 +34,22 @@ view NotesApp {
     store gallery_open: bool = false;
     store has_pw: bool = password_exists();
     store unlocked: bool = false;
-    store sheet: String = "";
+    store sheet: SheetMode = SheetMode.Closed;
     store pending_lock: String = "";
     store lock_error: String = "";
     store menu_at: any = null;
     store menu_items: Vec<any> = [];
     store toast: any = null;
+
+    // Derived values — automatically kept in sync on every update.
+    let in_trash: bool = view == "deleted";
+    let header_title: String = view_title(view, folders);
+    let groups = note_groups(notes, view, query, sort, group_dates, folders);
+    let visible_count: i32 = count_visible(notes, view, query, sort, group_dates, folders);
+    let deleted_count: i32 = count_in(notes, "deleted");
+    let tags = all_tags(notes);
+    let selected_notes = notes.filter(|n| n.id == selected_id);
+    let show_folder_badge: bool = view == "all" || view.startsWith("tag:") || query != "";
 
     style {
         layout: horizontal;
@@ -81,8 +65,20 @@ view NotesApp {
     }
 
     state Ready {
+        on_key("Escape") {
+            if menu_at != null {
+                menu_at = null;
+            } else if sheet != SheetMode.Closed {
+                sheet = SheetMode.Closed;
+                pending_lock = "";
+                lock_error = "";
+            } else if gallery_open {
+                gallery_open = false;
+            }
+        }
+
         render {
-            // ---- Sidebar ------------------------------------------------------
+            // ---- Sidebar ----------------------------------------------------
             If(sidebar) {
                 Column(role: "navigation", label: t("sidebar.label")) {
                     Row { }.style(Toolbar)
@@ -102,115 +98,117 @@ view NotesApp {
                             -> on_delete(DeleteFolder)
                             -> on_drop_note(DropOnFolder)
                     }
-                    If(count_in(notes, "deleted") > 0) {
-                        Row(aria: { current: view == "deleted" ? "page" : null }, title: t("sidebar.dropToDelete")) {
+
+                    If(deleted_count > 0) {
+                        Row(aria: { current: in_trash ? "page" : null }, title: t("sidebar.dropToDelete")) {
                             Text("🗑", aria: { hidden: true }).style(SidebarIcon)
                             Text(t("sidebar.deleted")).style({ @use Ellipsis; flex: 1; })
-                            Text(count_in(notes, "deleted")).style(Count)
+                            Text(deleted_count).style(Count)
                         } -> on_click(ShowDeleted) -> on_drop(DropOnTrash)
-                            .style(SidebarItem, { background: view == "deleted" ? var(--sidebar-selection) : transparent; })
+                            .style(SidebarItem, { background: in_trash ? var(--sidebar-selection) : transparent; })
                     }
 
-                    If(all_tags(notes).length > 0) {
+                    If(tags.len() > 0) {
                         Text(t("sidebar.tags"), role: "heading", aria: { level: 2 }).style(SectionLabel)
-                        List(all_tags(notes), role: "list") { tg =>
+                        List(tags, role: "list") { tg =>
                             TagChip(tag: tg, selected: view == "tag:" + tg.name) -> on_pick(Pick)
                         }.style({ display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 8px; })
                     }
 
                     Text("").style({ flex: 1; min-height: 20px; })
                     If(unlocked) {
-                        Button("🔒  " + t("sidebar.lockAll"), title: t("sidebar.lockAllHint")) -> on_click(CloseLocked)
-                            .style(SidebarFooterButton)
+                        Button("🔒  " + t("sidebar.lockAll"), title: t("sidebar.lockAllHint"))
+                            -> on_click(CloseLocked).style(SidebarFooterButton)
                     }
                     NewFolderRow() -> on_create(CreateFolder)
-                } -> on_context_menu(SidebarMenu)
-                    .style(Sidebar)
+                } -> on_context_menu(SidebarMenu).style(Sidebar)
+
                 Row(role: "separator", label: t("sidebar.resize"), tab_index: 0, aria: { orientation: "vertical" }) { }
                     .style(SidebarSplitter)
             }
 
-            // ---- List layout ----------------------------------------------------
-            If(layout == "list") {
-                Column(role: "region", label: t("list.label")) {
-                    ListHeader(
-                        title: view_title(view, folders),
-                        count: count_visible(notes, view, query, sort, group_dates, folders),
-                        sort: sort, group_dates: group_dates, layout: layout,
-                        in_trash: view == "deleted", sidebar: sidebar, locale: locale
-                    )
-                        -> on_new(NewNote) -> on_sort(SetSort) -> on_group(ToggleGroup)
-                        -> on_layout(SetLayout) -> on_empty(EmptyTrash) -> on_sidebar(ToggleSidebar)
-                        -> on_locale(SetLocale)
+            // ---- Main Area (exhaustive Match on Layout enum) ----------------
+            Match(layout) {
+                List => {
+                    Column(role: "region", label: t("list.label")) {
+                        ListHeader(
+                            title: header_title, count: visible_count, sort: sort,
+                            group_dates: group_dates, layout: layout, in_trash: in_trash,
+                            sidebar: sidebar, locale: locale
+                        )
+                            -> on_new(NewNote) -> on_sort(SetSort) -> on_group(ToggleGroup)
+                            -> on_layout(SetLayout) -> on_empty(EmptyTrash) -> on_sidebar(ToggleSidebar)
+                            -> on_locale(SetLocale)
 
-                    Input(value: query, placeholder: t("list.search"), label: t("list.searchLabel")) -> on_input(Search)
-                        .style(Field, { margin: 0 12px 6px; flex-shrink: 0; })
+                        Input(value: query, placeholder: t("list.search"), label: t("list.searchLabel"))
+                            -> on_input(Search)
+                            .style(Field, { margin: 0 12px 6px; flex-shrink: 0; })
 
-                    List(note_groups(notes, view, query, sort, group_dates, folders), empty: empty_text(view, query),
-                        role: "listbox", label: view_title(view, folders)) { g =>
-                        If(g.label != "") { Text(g.label, role: "presentation").style(GroupLabel) }
-                        List(g.notes) { note =>
-                            NoteRow(
-                                note: note, selected: note.id == selected_id, folders: folders, unlocked: unlocked,
-                                date: sort == "created" ? note.created : note.updated,
-                                folder_label: view == "all" || view.startsWith("tag:") || query != "" ? folder_name(folders, note.folder) : ""
-                            ) -> on_select(Select) -> on_action(NoteAction)
-                        }.style({ display: contents; })
-                    } -> on_context_menu(ListMenu)
-                        .style(NoteScroller)
-                }.style(ListPane)
-                Row(role: "separator", label: t("list.resize"), tab_index: 0, aria: { orientation: "vertical" }) { }
-                    .style(ListSplitter)
+                        List(groups, empty: empty_text(view, query), role: "listbox", label: header_title) { g =>
+                            If(g.label != "") { Text(g.label, role: "presentation").style(GroupLabel) }
+                            List(g.notes) { note =>
+                                NoteRow(
+                                    note: note, selected: note.id == selected_id, folders: folders, unlocked: unlocked,
+                                    date: sort == SortBy.Created ? note.created : note.updated,
+                                    folder_label: show_folder_badge ? folder_name(folders, note.folder) : ""
+                                ) -> on_select(Select) -> on_action(NoteAction)
+                            }.style({ display: contents; })
+                        } -> on_context_menu(ListMenu).style(NoteScroller)
+                    }.style(ListPane)
 
-                List(notes.filter(|n| n.id == selected_id), empty: "") { note =>
-                    NoteEditor(note: note, unlocked: unlocked, folders: folders, gallery: false, fresh: note.id == fresh_id, lock_error: lock_error)
-                        -> on_edit(EditNote) -> on_action(NoteAction) -> on_unlock(UnlockFromPane) -> on_close_locked(CloseLocked)
-                }.style(EditorPane)
+                    Row(role: "separator", label: t("list.resize"), tab_index: 0, aria: { orientation: "vertical" }) { }
+                        .style(ListSplitter)
+
+                    List(selected_notes, empty: "") { note =>
+                        NoteEditor(note: note, unlocked: unlocked, folders: folders, gallery: false, fresh: note.id == fresh_id, lock_error: lock_error)
+                            -> on_edit(EditNote) -> on_action(NoteAction) -> on_unlock(UnlockFromPane) -> on_close_locked(CloseLocked)
+                    }.style(EditorPane)
+                }
+
+                Gallery => If(gallery_open) {
+                    List(selected_notes, empty: "") { note =>
+                        NoteEditor(note: note, unlocked: unlocked, folders: folders, gallery: true, fresh: note.id == fresh_id, lock_error: lock_error)
+                            -> on_edit(EditNote) -> on_action(NoteAction) -> on_unlock(UnlockFromPane)
+                            -> on_close_locked(CloseLocked) -> on_back(CloseGallery)
+                    }.style(EditorPane)
+                } Else {
+                    Column(role: "region", label: t("list.label")) {
+                        ListHeader(
+                            title: header_title, count: visible_count, sort: sort,
+                            group_dates: group_dates, layout: layout, in_trash: in_trash,
+                            sidebar: sidebar, locale: locale
+                        )
+                            -> on_new(NewNote) -> on_sort(SetSort) -> on_group(ToggleGroup)
+                            -> on_layout(SetLayout) -> on_empty(EmptyTrash) -> on_sidebar(ToggleSidebar)
+                            -> on_locale(SetLocale)
+
+                        Input(value: query, placeholder: t("list.search"), label: t("list.searchLabel"))
+                            -> on_input(Search)
+                            .style(Field, { width: 320px; margin: 0 22px 6px; flex-shrink: 0; })
+
+                        List(groups, empty: empty_text(view, query), role: "listbox", label: header_title) { g =>
+                            If(g.label != "") { Text(g.label, role: "presentation").style(GroupLabel) }
+                            List(g.notes) { note =>
+                                GalleryCard(note: note, selected: note.id == selected_id, folders: folders, unlocked: unlocked)
+                                    -> on_select(Select) -> on_open(OpenNote) -> on_action(NoteAction)
+                            }.style(GalleryGrid)
+                        } -> on_context_menu(ListMenu).style(GalleryScroller)
+                    }.style({ flex: 1; gap: 0; min-width: 0; background: var(--list-bg); })
+                }
             }
 
-            // ---- Gallery layout -------------------------------------------------
-            If(layout == "gallery" && !gallery_open) {
-                Column(role: "region", label: t("list.label")) {
-                    ListHeader(
-                        title: view_title(view, folders),
-                        count: count_visible(notes, view, query, sort, group_dates, folders),
-                        sort: sort, group_dates: group_dates, layout: layout,
-                        in_trash: view == "deleted", sidebar: sidebar, locale: locale
-                    )
-                        -> on_new(NewNote) -> on_sort(SetSort) -> on_group(ToggleGroup)
-                        -> on_layout(SetLayout) -> on_empty(EmptyTrash) -> on_sidebar(ToggleSidebar)
-                        -> on_locale(SetLocale)
-
-                    Input(value: query, placeholder: t("list.search"), label: t("list.searchLabel")) -> on_input(Search)
-                        .style(Field, { width: 320px; margin: 0 22px 6px; flex-shrink: 0; })
-
-                    List(note_groups(notes, view, query, sort, group_dates, folders), empty: empty_text(view, query),
-                        role: "listbox", label: view_title(view, folders)) { g =>
-                        If(g.label != "") { Text(g.label, role: "presentation").style(GroupLabel) }
-                        List(g.notes) { note =>
-                            GalleryCard(note: note, selected: note.id == selected_id, folders: folders, unlocked: unlocked)
-                                -> on_select(Select) -> on_open(OpenNote) -> on_action(NoteAction)
-                        }.style(GalleryGrid)
-                    } -> on_context_menu(ListMenu)
-                        .style(GalleryScroller)
-                }.style({ flex: 1; gap: 0; min-width: 0; background: var(--list-bg); })
-            }
-            If(layout == "gallery" && gallery_open) {
-                List(notes.filter(|n| n.id == selected_id), empty: "") { note =>
-                    NoteEditor(note: note, unlocked: unlocked, folders: folders, gallery: true, fresh: note.id == fresh_id, lock_error: lock_error)
-                        -> on_edit(EditNote) -> on_action(NoteAction) -> on_unlock(UnlockFromPane)
-                        -> on_close_locked(CloseLocked) -> on_back(CloseGallery)
-                }.style(EditorPane)
-            }
-
-            // ---- Overlays ---------------------------------------------------------
+            // ---- Overlays ---------------------------------------------------
             If(menu_at != null) {
-                ContextMenu(at: menu_at, items: menu_items, label: t("menu.label")) -> on_pick(MenuPick) -> on_close(CloseMenu)
+                ContextMenu(at: menu_at, items: menu_items, label: t("menu.label"))
+                    -> on_pick(MenuPick) -> on_close(CloseMenu)
             }
-            If(sheet != "") {
-                PasswordSheet(mode: sheet, error: lock_error, hint: password_hint())
+
+            Match(sheet) {
+                Create | Enter => PasswordSheet(mode: sheet, error: lock_error, hint: password_hint())
                     -> on_submit(SubmitPassword) -> on_cancel(CloseSheet)
+                Closed => Text("").style({ display: none; })
             }
+
             // Live region: toasts are announced by screen readers.
             Column(role: "status", aria: { live: "polite" }) {
                 If(toast != null) {
@@ -219,7 +217,7 @@ view NotesApp {
             }.style({ display: contents; })
         }
 
-        // ---- navigation ---------------------------------------------------------
+        // ---- navigation -----------------------------------------------------
         effect ShowAll() {
             view = "all";
             query = "";
@@ -245,7 +243,6 @@ view NotesApp {
         effect OpenNote(id: String) { selected_id = id; gallery_open = true; }
         effect CloseGallery(x: any) { gallery_open = false; }
 
-        // ↑/↓ in the note list (host/ux.js), Home/End with dir = -999/999.
         effect Nav(dir: i32) {
             let next = neighbor_of(notes, view, query, sort, group_dates, folders, selected_id, dir);
             if next != "" { selected_id = next; }
@@ -257,18 +254,17 @@ view NotesApp {
             if !query.is_empty() && first != "" { selected_id = first; }
         }
 
-        // ---- notes ----------------------------------------------------------------
+        // ---- notes ----------------------------------------------------------
         effect NewNote(x: any) {
             let id = random_uuid();
             let now = Date.now();
             let target = folders.some(|f| f.id == view) ? view : "notes";
             notes = [Note { id: id, folder: target, title: "", html: "<h1><br></h1>", created: now, updated: now, pinned: false, deleted_at: 0, locked: false }, ...notes];
-            if view == "deleted" { view = "all"; }
-            if view.startsWith("tag:") { view = "all"; }
+            if view == "deleted" || view.startsWith("tag:") { view = "all"; }
             query = "";
             selected_id = id;
             fresh_id = id;
-            if layout == "gallery" { gallery_open = true; }
+            if layout == Layout.Gallery { gallery_open = true; }
             persist(notes);
         }
 
@@ -279,56 +275,66 @@ view NotesApp {
 
         effect NoteAction(a: any) {
             let now = Date.now();
-            if a.kind == "pin" {
-                notes = notes.map(|n| n.id == a.id ? { ...n, pinned: !n.pinned } : n);
-            } else if a.kind == "move" {
-                let before = notes.find(|n| n.id == a.id);
-                if before != null && before.folder != a.folder {
-                    notes = notes.map(|n| n.id == a.id ? { ...n, folder: a.folder } : n);
-                    if !a.quiet {
-                        toast = { id: random_uuid(), key: t_key("toast.moved"), params: { folder: folder_name(folders, a.folder) }, undo: { kind: "move", id: a.id, folder: before.folder, quiet: true } };
-                        later("HideToast", toast.id, 6000);
+            match a.kind {
+                "pin" => {
+                    notes = notes.map(|n| n.id == a.id ? { ...n, pinned: !n.pinned } : n);
+                }
+                "move" => {
+                    let before = notes.find(|n| n.id == a.id);
+                    if before != null && before.folder != a.folder {
+                        notes = notes.map(|n| n.id == a.id ? { ...n, folder: a.folder } : n);
+                        if !a.quiet {
+                            toast = { id: random_uuid(), key: t_key("toast.moved"), params: { folder: folder_name(folders, a.folder) }, undo: { kind: "move", id: a.id, folder: before.folder, quiet: true } };
+                            later("HideToast", toast.id, 6000);
+                        }
+                    }
+                    if !a.dropped { selected_id = a.id; }
+                    if a.dropped && view != "all" && !view.startsWith("tag:") && selected_id == a.id {
+                        selected_id = first_in(notes, view, query, sort, group_dates, folders);
                     }
                 }
-                if !a.dropped { selected_id = a.id; }
-                if a.dropped && view != "all" && !view.startsWith("tag:") && selected_id == a.id {
+                "duplicate" => {
+                    let src = notes.find(|n| n.id == a.id);
+                    let copy = { ...src, id: random_uuid(), created: now, updated: now, pinned: false };
+                    notes = [copy, ...notes];
+                    selected_id = copy.id;
+                }
+                "delete" => {
+                    notes = notes.map(|n| n.id == a.id ? { ...n, deleted_at: now, pinned: false } : n);
+                    if selected_id == a.id { selected_id = first_in(notes, view, query, sort, group_dates, folders); }
+                    toast = { id: random_uuid(), key: t_key("toast.deleted"), params: null, undo: { kind: "recover", id: a.id, quiet: true } };
+                    later("HideToast", toast.id, 6000);
+                }
+                "recover" => {
+                    notes = notes.map(|n| n.id == a.id ? { ...n, deleted_at: 0, folder: folders.some(|f| f.id == n.folder) ? n.folder : "notes" } : n);
+                    if a.quiet {
+                        selected_id = a.id;
+                        if view == "deleted" { view = "all"; }
+                    } else {
+                        selected_id = first_in(notes, view, query, sort, group_dates, folders);
+                    }
+                }
+                "purge" => {
+                    notes.retain(|n| n.id != a.id);
                     selected_id = first_in(notes, view, query, sort, group_dates, folders);
                 }
-            } else if a.kind == "duplicate" {
-                let src = notes.find(|n| n.id == a.id);
-                let copy = { ...src, id: random_uuid(), created: now, updated: now, pinned: false };
-                notes = [copy, ...notes];
-                selected_id = copy.id;
-            } else if a.kind == "delete" {
-                notes = notes.map(|n| n.id == a.id ? { ...n, deleted_at: now, pinned: false } : n);
-                if selected_id == a.id { selected_id = first_in(notes, view, query, sort, group_dates, folders); }
-                toast = { id: random_uuid(), key: t_key("toast.deleted"), params: null, undo: { kind: "recover", id: a.id, quiet: true } };
-                later("HideToast", toast.id, 6000);
-            } else if a.kind == "recover" {
-                notes = notes.map(|n| n.id == a.id ? { ...n, deleted_at: 0, folder: folders.some(|f| f.id == n.folder) ? n.folder : "notes" } : n);
-                if a.quiet {
-                    selected_id = a.id;
-                    if view == "deleted" { view = "all"; }
-                } else {
-                    selected_id = first_in(notes, view, query, sort, group_dates, folders);
+                "lock" => {
+                    if !has_pw {
+                        pending_lock = a.id;
+                        sheet = SheetMode.Create;
+                    } else if !unlocked {
+                        pending_lock = a.id;
+                        sheet = SheetMode.Enter;
+                    } else {
+                        notes = notes.map(|n| n.id == a.id ? { ...n, locked: true } : n);
+                    }
                 }
-            } else if a.kind == "purge" {
-                notes.retain(|n| n.id != a.id);
-                selected_id = first_in(notes, view, query, sort, group_dates, folders);
-            } else if a.kind == "lock" {
-                if !has_pw {
-                    pending_lock = a.id;
-                    sheet = "create";
-                } else if !unlocked {
-                    pending_lock = a.id;
-                    sheet = "enter";
-                } else {
-                    notes = notes.map(|n| n.id == a.id ? { ...n, locked: true } : n);
+                "remove_lock" => {
+                    notes = notes.map(|n| n.id == a.id ? { ...n, locked: false } : n);
                 }
-            } else if a.kind == "remove_lock" {
-                notes = notes.map(|n| n.id == a.id ? { ...n, locked: false } : n);
-            } else {
-                note_command(a.kind, notes.find(|n| n.id == a.id));
+                _ => {
+                    note_command(a.kind, notes.find(|n| n.id == a.id));
+                }
             }
             persist(notes);
         }
@@ -353,7 +359,7 @@ view NotesApp {
             persist(notes);
         }
 
-        // ---- folders ----------------------------------------------------------------
+        // ---- folders --------------------------------------------------------
         effect CreateFolder(name: String) {
             let id = random_uuid();
             folders = [...folders, { id: id, name: unique_name(name, folders) }];
@@ -378,7 +384,7 @@ view NotesApp {
             persist_folders(folders);
         }
 
-        // ---- context menus (sidebar background, list background) --------------------
+        // ---- context menus (sidebar background, list background) ------------
         effect SidebarMenu(p: any) {
             menu_items = [
                 { label: t("sidebar.newFolder"), value: "new-folder", hint: "Ctrl/⌘ ⇧ N" },
@@ -389,16 +395,16 @@ view NotesApp {
         }
         effect ListMenu(p: any) {
             menu_items = [
-                { label: t("menu.newNote"), value: "new-note", hint: "Ctrl/⌘ ⌥ N", disabled: view == "deleted" },
-                { sep: true, disabled: view == "deleted" },
+                { label: t("menu.newNote"), value: "new-note", hint: "Ctrl/⌘ ⌥ N", disabled: in_trash },
+                { sep: true, disabled: in_trash },
                 { title: t("view.viewAs") },
-                { label: t("view.list"), value: "layout:list", check: layout == "list" },
-                { label: t("view.gallery"), value: "layout:gallery", check: layout == "gallery" },
+                { label: t("view.list"), value: "layout:list", check: layout == Layout.List },
+                { label: t("view.gallery"), value: "layout:gallery", check: layout == Layout.Gallery },
                 { sep: true },
                 { title: t("view.sortBy") },
-                { label: t("sort.edited"), value: "sort:edited", check: sort == "edited" },
-                { label: t("sort.created"), value: "sort:created", check: sort == "created" },
-                { label: t("sort.title"), value: "sort:title", check: sort == "title" },
+                { label: t("sort.edited"), value: "sort:edited", check: sort == SortBy.Edited },
+                { label: t("sort.created"), value: "sort:created", check: sort == SortBy.Created },
+                { label: t("sort.title"), value: "sort:title", check: sort == SortBy.Title },
                 { sep: true },
                 { label: t("view.group"), value: "group", check: group_dates },
             ].filter(|i| !i.disabled);
@@ -406,28 +412,45 @@ view NotesApp {
         }
         effect MenuPick(v: String) {
             menu_at = null;
-            if v == "new-folder" {
-                start_new_folder();
-            } else if v == "new-note" {
-                later("NewNote", true, 0);
-            } else if v == "sidebar" {
-                sidebar = !sidebar;
-                save_pref("sidebar", sidebar);
-            } else if v == "group" {
-                group_dates = !group_dates;
-                save_pref("group_dates", group_dates);
-            } else if v.startsWith("layout:") {
-                layout = v.slice(7);
-                gallery_open = false;
-                save_pref("layout", layout);
-            } else if v.startsWith("sort:") {
-                sort = v.slice(5);
-                save_pref("sort", sort);
+            match v {
+                "new-folder" => start_new_folder(),
+                "new-note" => later("NewNote", true, 0),
+                "sidebar" => {
+                    sidebar = !sidebar;
+                    save_pref("sidebar", sidebar);
+                }
+                "group" => {
+                    group_dates = !group_dates;
+                    save_pref("group_dates", group_dates);
+                }
+                "layout:list" => {
+                    layout = Layout.List;
+                    gallery_open = false;
+                    save_pref("layout", layout);
+                }
+                "layout:gallery" => {
+                    layout = Layout.Gallery;
+                    gallery_open = false;
+                    save_pref("layout", layout);
+                }
+                "sort:edited" => {
+                    sort = SortBy.Edited;
+                    save_pref("sort", sort);
+                }
+                "sort:created" => {
+                    sort = SortBy.Created;
+                    save_pref("sort", sort);
+                }
+                "sort:title" => {
+                    sort = SortBy.Title;
+                    save_pref("sort", sort);
+                }
+                _ => {}
             }
         }
         effect CloseMenu(x: any) { menu_at = null; }
 
-        // ---- toasts ---------------------------------------------------------------------
+        // ---- toasts ---------------------------------------------------------
         effect UndoToast(u: any) {
             toast = null;
             later("NoteAction", u, 0);
@@ -440,20 +463,19 @@ view NotesApp {
             if toast != null && (id == true || toast.id == id) { toast = null; }
         }
 
-        // ---- view options -----------------------------------------------------------
-        effect SetSort(s: String) { sort = s; save_pref("sort", s); }
+        // ---- view options ---------------------------------------------------
+        effect SetSort(s: any) { sort = s; save_pref("sort", s); }
         effect ToggleGroup(x: any) { group_dates = !group_dates; save_pref("group_dates", group_dates); }
-        effect SetLayout(l: String) { layout = l; gallery_open = false; save_pref("layout", l); }
+        effect SetLayout(l: any) { layout = l; gallery_open = false; save_pref("layout", l); }
         effect ToggleSidebar(x: any) { sidebar = !sidebar; save_pref("sidebar", sidebar); }
         effect SetLocale(l: String) { locale = l; set_locale(l); }
 
-        // ---- locked notes -----------------------------------------------------------
+        // ---- locked notes ---------------------------------------------------
         effect SubmitPassword(p: any) {
             lock_error = "";
-            if sheet == "create" {
-                create_password(p.password, p.hint);
-            } else {
-                unlock_notes(p.password);
+            match sheet {
+                SheetMode.Create => create_password(p.password, p.hint),
+                SheetMode.Enter | SheetMode.Closed => unlock_notes(p.password),
             }
         }
 
@@ -462,11 +484,10 @@ view NotesApp {
             unlock_notes(pw);
         }
 
-        // Called by host/lock.js once the password is set up.
         effect PasswordCreated(x: any) {
             has_pw = true;
             unlocked = true;
-            sheet = "";
+            sheet = SheetMode.Closed;
             if pending_lock != "" {
                 notes = notes.map(|n| n.id == pending_lock ? { ...n, locked: true } : n);
                 pending_lock = "";
@@ -474,11 +495,10 @@ view NotesApp {
             }
         }
 
-        // Called by host/lock.js with { [noteId]: decryptedHtml }.
         effect Unlocked(plain: any) {
             notes = notes.map(|n| plain[n.id] !== undefined ? { ...n, html: plain[n.id] } : n);
             unlocked = true;
-            sheet = "";
+            sheet = SheetMode.Closed;
             lock_error = "";
             if pending_lock != "" {
                 notes = notes.map(|n| n.id == pending_lock ? { ...n, locked: true } : n);
@@ -496,17 +516,17 @@ view NotesApp {
         }
 
         effect CloseSheet(x: any) {
-            sheet = "";
+            sheet = SheetMode.Closed;
             pending_lock = "";
             lock_error = "";
         }
 
-        // Esc
+        // Esc (also callable from host/ux.js)
         effect Cancel() {
             if menu_at != null {
                 menu_at = null;
-            } else if sheet != "" {
-                sheet = "";
+            } else if sheet != SheetMode.Closed {
+                sheet = SheetMode.Closed;
                 pending_lock = "";
                 lock_error = "";
             } else if gallery_open {
