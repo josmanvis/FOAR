@@ -1,0 +1,19 @@
+// Data of the order tracker.
+
+// Where an order is. Each variant compiles to a string ("Pending", …,
+// "canceled"); the compiler makes every `match` on it handle all five.
+enum Status {
+    Pending,
+    Paid,
+    Shipped,
+    Delivered,
+    Cancelled = "canceled",
+}
+
+data Order {
+    id: String,
+    customer: String,
+    items: i32,
+    total: f64,
+    status: Status,
+}

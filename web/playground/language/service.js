@@ -111,7 +111,9 @@ export function createLanguageService() {
     if (view) {
       for (const s of view.stores) items.push({ label: s.name, kind: 'variable', detail: `store ${s.name}: ${s.type}`, insert: s.name });
       for (const p of view.params) items.push({ label: p.name, kind: 'variable', detail: `param ${p.name}: ${p.type}`, insert: p.name });
+      for (const l of view.lets ?? []) items.push({ label: l.name, kind: 'variable', detail: `let ${l.name}`, doc: 'Derived value (recomputed on every update).', insert: l.name });
     }
+    for (const en of index.enums.values()) items.push({ label: en.name, kind: 'type', detail: `enum ${en.name}`, doc: en.variants.map((v) => v.name).join(' | '), insert: `${en.name}.`, retrigger: true, sort: '7' });
     for (const p of r?.params ?? []) items.push({ label: p.name, kind: 'variable', detail: `${p.name}: ${p.type}`, insert: p.name, sort: '0' });
     for (const l of localsAt(f, r, offset)) items.push({ label: l, kind: 'variable', detail: 'list item', insert: l, sort: '0' });
     items.push({ label: 't', kind: 'function', detail: 't(key, params)', doc: 'Translated string from the locale catalogs.', insert: 't("${1:key}")' });
@@ -145,6 +147,12 @@ export function createLanguageService() {
     const view = r?.view ? f.views.find((v) => v.name === r.view) : null;
     const state = view?.states.find((s) => s.name === r?.state);
     let m;
+
+    // Layout.<variant>
+    if ((m = /\b([A-Z]\w*)\.(\w*)$/.exec(before)) && index.enums.has(m[1])) {
+      const en = index.enums.get(m[1]);
+      return { ...word(), items: en.variants.map((v) => ({ label: v.name, kind: 'value', detail: `${en.name}.${v.name} = ${v.value}`, insert: v.name })) };
+    }
 
     // transition <State>
     if (view && (m = /\btransition\s*\(?\s*(\w*)$/.exec(before))) {
@@ -219,6 +227,7 @@ export function createLanguageService() {
       const items = [
         ...Object.entries(TYPES).map(([n, d]) => ({ label: n, kind: 'type', doc: d, insert: n === 'Vec' || n === 'Option' ? `${n}<$1>` : n })),
         ...[...index.datas.values()].map((d) => ({ label: d.name, kind: 'type', detail: `data ${d.name}`, doc: d.fields.map((x) => `${x.name}: ${x.type}`).join(', '), insert: d.name })),
+        ...[...index.enums.values()].map((en) => ({ label: en.name, kind: 'type', detail: `enum ${en.name}`, doc: en.variants.map((v) => v.name).join(' | '), insert: en.name })),
       ];
       return { ...word(), items };
     }
@@ -317,6 +326,11 @@ export function createLanguageService() {
       const defs = index.cssVars.get(word);
       return at(word, defs ? defs.map((d) => `${d.dark ? '🌙 ' : ''}${d.value}   (${d.path}:${lineOf(index.files.get(d.path).text, d.offset)})`).join('\n') : 'Not defined in any theme or style.');
     }
+    const owner = /([A-Z]\w*)\.$/.exec(f.text.slice(Math.max(0, s - 40), s))?.[1];
+    if (owner && index.enums.has(owner)) {
+      const v = index.enums.get(owner).variants.find((x) => x.name === word);
+      if (v) return at(`${owner}.${v.name}`, `= ${v.value}`);
+    }
     const v = index.views.get(word);
     if (v) {
       const states = v.states.map((st) => st.name).join(' · ');
@@ -335,6 +349,8 @@ export function createLanguageService() {
     }
     const d = index.datas.get(word);
     if (d) return at(`data ${d.name} {\n${d.fields.map((x) => `    ${x.name}: ${x.type},`).join('\n')}\n}`, d.path);
+    const en = index.enums.get(word);
+    if (en) return at(`enum ${en.name} {\n${en.variants.map((v) => `    ${v.name}${v.value !== JSON.stringify(v.name) ? ` = ${v.value}` : ''},`).join('\n')}\n}`, `${KEYWORDS.enum.split('. ')[0]}.\n${en.path}`);
     if (view) {
       const sd = view.states.find((x) => x.name === word);
       if (sd) return at(`state ${word}`, `of ${view.name}${sd.effects.length ? `\nEffects: ${sd.effects.map((x) => x.name).join(', ')}` : ''}`);
@@ -342,6 +358,8 @@ export function createLanguageService() {
       if (ef) return at(`effect ${ef.name}(${ef.params.map((p) => `${p.name}: ${p.type}`).join(', ')})`, `in state ${ef.state} of ${view.name}`);
       const store = view.stores.find((x) => x.name === word);
       if (store) return at(`store ${store.name}: ${store.type}`, `of ${view.name}`);
+      const lt = (view.lets ?? []).find((x) => x.name === word);
+      if (lt) return at(`let ${lt.name}`, `derived value of ${view.name}, recomputed on every update`);
       const param = view.params.find((x) => x.name === word);
       if (param) return at(`${param.name}: ${param.type}`, `parameter of ${view.name}`);
       const ep = r?.params?.find((x) => x.name === word);
@@ -370,11 +388,17 @@ export function createLanguageService() {
     const { word } = wordAt(f.text, offset);
     const at = (x) => x && { path: x.path, offset: x.offset };
     if (word.startsWith('--')) return at(index.cssVars.get(word)?.[0]);
-    const g = index.views.get(word) ?? index.styles.get(word) ?? index.datas.get(word) ?? index.keyframes.get(word);
+    const owner = /([A-Z]\w*)\.$/.exec(f.text.slice(Math.max(0, offset - word.length - 40), wordAt(f.text, offset).s))?.[1];
+    if (owner && index.enums.has(owner)) {
+      const en = index.enums.get(owner);
+      const v = en.variants.find((x) => x.name === word);
+      if (v) return { path: en.path, offset: v.offset };
+    }
+    const g = index.views.get(word) ?? index.styles.get(word) ?? index.datas.get(word) ?? index.enums.get(word) ?? index.keyframes.get(word);
     if (g) return at(g);
     const view = viewAt(f, offset);
     if (view) {
-      const x = view.states.find((s) => s.name === word) ?? allEffects(view).find((s) => s.name === word) ?? view.stores.find((s) => s.name === word) ?? view.params.find((s) => s.name === word);
+      const x = view.states.find((s) => s.name === word) ?? allEffects(view).find((s) => s.name === word) ?? view.stores.find((s) => s.name === word) ?? (view.lets ?? []).find((s) => s.name === word) ?? view.params.find((s) => s.name === word);
       if (x) return { path, offset: x.offset };
     }
     return null;
@@ -391,12 +415,14 @@ export function createLanguageService() {
     if (index.views.has(word)) return { name: word, kind: 'view', scope: 'project', s, e };
     if (index.styles.has(word)) return { name: word, kind: 'style', scope: 'project', s, e };
     if (index.datas.has(word)) return { name: word, kind: 'data', scope: 'project', s, e };
+    if (index.enums.has(word)) return { name: word, kind: 'enum', scope: 'project', s, e };
     const view = viewAt(f, offset);
     if (!view) return null;
     const scope = { path, s: view.start, e: view.end };
     if (view.states.some((x) => x.name === word)) return { name: word, kind: 'state', scope, view, s, e };
     if (allEffects(view).some((x) => x.name === word)) return { name: word, kind: 'effect', scope, view, s, e };
     if (view.stores.some((x) => x.name === word)) return { name: word, kind: 'store', scope, view, s, e };
+    if ((view.lets ?? []).some((x) => x.name === word)) return { name: word, kind: 'let', scope, view, s, e };
     if (view.params.some((x) => x.name === word)) return { name: word, kind: 'param', scope, view, s, e };
     return null;
   }
@@ -433,7 +459,7 @@ export function createLanguageService() {
     const valid = sym.kind === 'cssvar' ? /^--[\w-]+$/ : /^[A-Za-z_]\w*$/;
     if (!valid.test(newName)) return { error: `'${newName}' is not a valid name` };
     if (KEYWORDS[newName] || ELEMENTS[newName]) return { error: `'${newName}' is reserved` };
-    if (['view', 'style', 'data'].includes(sym.kind) && (index.views.has(newName) || index.styles.has(newName) || index.datas.has(newName))) return { error: `'${newName}' already exists` };
+    if (['view', 'style', 'data', 'enum'].includes(sym.kind) && (index.views.has(newName) || index.styles.has(newName) || index.datas.has(newName) || index.enums.has(newName))) return { error: `'${newName}' already exists` };
     if (sym.view && (sym.view.states.some((x) => x.name === newName) || allEffects(sym.view).some((x) => x.name === newName) || sym.view.stores.some((x) => x.name === newName) || sym.view.params.some((x) => x.name === newName))) return { error: `'${newName}' is already used in ${sym.view.name}` };
     const occ = occurrences(sym);
     const edits = {};
@@ -486,6 +512,12 @@ export function createLanguageService() {
           push(f.path, ev.s, ev.e, 'warning', `${ev.tag} doesn't fire ${ev.name}.${ELEMENTS[ev.tag].events.length ? ` It fires: ${ELEMENTS[ev.tag].events.join(', ')}.` : ''}`);
         }
       }
+      f.toks.forEach((t, i) => {
+        if (t.k !== 'id' || !index.enums.has(t.v) || f.toks[i + 1]?.v !== '.' || f.toks[i + 2]?.k !== 'id' || f.toks[i - 1]?.v === '.') return;
+        const en = index.enums.get(t.v);
+        const v = f.toks[i + 2];
+        if (!en.variants.some((x) => x.name === v.v)) push(f.path, v.s, v.e, 'error', `${en.name} has no variant '${v.v}'.${didYouMean(v.v, en.variants.map((x) => x.name))} Variants: ${en.variants.map((x) => x.name).join(', ')}.`);
+      });
       for (const imp of f.imports) {
         const t = resolveSpec(f.path, imp.spec);
         if (t && !index.files.has(t)) push(f.path, imp.s, imp.e, 'error', `Cannot find ${t}.`);

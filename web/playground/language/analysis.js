@@ -77,6 +77,7 @@ export function analyzeFile(path, text) {
     cssVars: [],
     keyframes: [],
     imports: [],
+    enums: [],
     regions: [],
     refs: { transitions: [], handlers: [], styleUses: [], varUses: [], events: [], elements: [], stateStyles: [] },
   };
@@ -182,7 +183,7 @@ export function analyzeFile(path, text) {
   function parseView(i) {
     const nameTok = toks[i + 1];
     if (nameTok?.k !== 'id') return i + 1;
-    const view = { name: nameTok.v, offset: nameTok.s, path, params: [], stores: [], states: [], emits: new Set(), start: toks[i].s, end: text.length };
+    const view = { name: nameTok.v, offset: nameTok.s, path, params: [], stores: [], lets: [], states: [], emits: new Set(), start: toks[i].s, end: text.length };
     let j = i + 2;
     if (is(j, '(')) {
       region('params', j, { view: view.name });
@@ -213,6 +214,17 @@ export function analyzeFile(path, text) {
           m++;
         }
         view.stores.push({ name: n.v, type: typeToks.join(''), offset: n.s });
+        k = m + 1;
+      } else if (t.v === 'let' && toks[k + 1]?.k === 'id') {
+        const n = toks[k + 1];
+        let m = k + 2;
+        const typeToks = [];
+        if (is(m, ':')) {
+          m++;
+          while (m < bodyClose && !is(m, '=') && !is(m, ';')) typeToks.push(toks[m++].v);
+        }
+        while (m < bodyClose && !is(m, ';')) m = toks[m].k === 'p' && OPEN[toks[m].v] ? end(m) + 1 : m + 1;
+        view.lets.push({ name: n.v, type: typeToks.join('') || 'derived', offset: n.s });
         k = m + 1;
       } else if (t.v === 'style' && is(k + 1, '{')) {
         region('style', k + 1, { view: view.name });
@@ -281,6 +293,21 @@ export function analyzeFile(path, text) {
       region('css', i + 1);
       scanStyle(i + 2, end(i + 1), {});
       i = end(i + 1) + 1;
+    } else if (t.k === 'id' && t.v === 'enum' && toks[i + 1]?.k === 'id' && is(i + 2, '{')) {
+      const close = end(i + 2);
+      const en = { name: toks[i + 1].v, offset: toks[i + 1].s, path, variants: [] };
+      for (let j = i + 3; j < close; j++) {
+        if (toks[j].k !== 'id') continue;
+        let value = JSON.stringify(toks[j].v);
+        if (is(j + 1, '=') && toks[j + 2]) {
+          value = toks[j + 2].v;
+          en.variants.push({ name: toks[j].v, value, offset: toks[j].s });
+          j += 2;
+        } else en.variants.push({ name: toks[j].v, value, offset: toks[j].s });
+      }
+      f.enums.push(en);
+      region('enum', i + 2, { enum: en.name });
+      i = close + 1;
     } else if (t.k === 'id' && t.v === 'data' && toks[i + 1]?.k === 'id' && is(i + 2, '{')) {
       const d = { name: toks[i + 1].v, offset: toks[i + 1].s, path, fields: [] };
       const close = end(i + 2);
@@ -313,7 +340,7 @@ export function analyzeFile(path, text) {
 
 /** Index of a whole project: { files: Map<path, file>, views, styles, datas, cssVars, keyframes }. */
 export function analyzeProject(files, prev = null) {
-  const out = { files: new Map(), views: new Map(), styles: new Map(), datas: new Map(), cssVars: new Map(), keyframes: new Map() };
+  const out = { files: new Map(), views: new Map(), styles: new Map(), datas: new Map(), cssVars: new Map(), keyframes: new Map(), enums: new Map() };
   for (const [path, text] of Object.entries(files)) {
     const old = prev?.files.get(path);
     const f = old && old.text === text ? old : analyzeFile(path, text);
@@ -321,6 +348,7 @@ export function analyzeProject(files, prev = null) {
     for (const v of f.views) if (!out.views.has(v.name)) out.views.set(v.name, v);
     for (const s of f.styles) if (!out.styles.has(s.name)) out.styles.set(s.name, s);
     for (const d of f.datas) if (!out.datas.has(d.name)) out.datas.set(d.name, d);
+    for (const e of f.enums) if (!out.enums.has(e.name)) out.enums.set(e.name, e);
     for (const k of f.keyframes) out.keyframes.set(k.name, k);
     for (const c of f.cssVars) {
       if (!out.cssVars.has(c.name)) out.cssVars.set(c.name, []);

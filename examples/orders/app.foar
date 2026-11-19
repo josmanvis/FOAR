@@ -1,0 +1,81 @@
+// Orders — enums and exhaustive match: every status gets a badge, a colour and next steps, and the compiler makes sure none is forgotten
+// Split into files:
+//   app.foar                   the root view (this file)
+//   models.foar                enum Status, data Order
+//   components/OrderRow.foar   one order: badge + actions picked by `Match`
+import "models"
+import "components/OrderRow"
+
+view Orders {
+    store orders: Vec<Order> = [
+        Order { id: "A-1001", customer: "Ana", items: 1, total: 18.0, status: Status.Pending },
+        Order { id: "A-1002", customer: "Ben", items: 3, total: 64.5, status: Status.Paid },
+        Order { id: "A-1003", customer: "Chloé", items: 12, total: 410.0, status: Status.Shipped },
+        Order { id: "A-1004", customer: "Dev", items: 2, total: 31.9, status: Status.Delivered },
+        Order { id: "A-1005", customer: "Eli", items: 5, total: 99.0, status: Status.Cancelled },
+    ];
+    store hide_closed: bool = false;
+
+    // Derived values: recomputed on every update
+    let open = orders.filter(|o| match o.status {
+        Status.Delivered | Status.Cancelled => false,
+        _ => true,
+    });
+    let visible = hide_closed ? open : orders;
+    let revenue = orders
+        .filter(|o| o.status != Status.Cancelled)
+        .map(|o| o.total)
+        .reduce(|sum, t| sum + t, 0);
+    let summary = "{open.length} open · revenue $" + revenue.toFixed(2);
+
+    style {
+        layout: vertical;
+        gap: 14px;
+        padding: 28px;
+        max-width: 640px;
+        font-family: system-ui;
+    }
+
+    state Ready {
+        render {
+            Text("Orders").style({ font-size: 28px; font-weight: 700; })
+            Row {
+                Text(summary).style({ flex: 1; color: #57606a; })
+                Checkbox(checked: hide_closed) -> on_change(HideClosed)
+                Text("Hide closed")
+            }
+            List(visible, empty: "No open orders.") { order =>
+                OrderRow(order: order) -> on_advance(Advance) -> on_cancel(Cancel)
+            }
+        }
+
+        effect HideClosed(on: bool) { hide_closed = on; }
+
+        // `match` as a value: the next status of each one
+        effect Advance(id: String) {
+            for o in orders {
+                if o.id == id {
+                    o.status = match o.status {
+                        Status.Pending => Status.Paid,
+                        Status.Paid => Status.Shipped,
+                        Status.Shipped => Status.Delivered,
+                        Status.Delivered | Status.Cancelled => o.status,
+                    };
+                }
+            }
+        }
+
+        // `match` as a statement, with a guard
+        effect Cancel(id: String) {
+            for o in orders {
+                if o.id == id {
+                    match o.status {
+                        Status.Pending | Status.Paid => o.status = Status.Cancelled,
+                        s if s == Status.Shipped => o.status = Status.Cancelled,
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+}

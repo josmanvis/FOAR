@@ -20,3 +20,12 @@ style Field {
     from { opacity: 0; transform: translateY(-4px); }
     to   { opacity: 1; transform: none; }
 }
+
+style FilterButton {
+    border: 0;
+    background: transparent;
+    padding: 4px 8px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    @hover { background: var(--row-hover); }
+}

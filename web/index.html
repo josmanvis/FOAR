@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FOAR: interfaces as state machines</title>
+  <meta name="description" content="FOAR is a UI language where every component is an explicit state machine, with exhaustive match and enums, compiled by a Rust compiler (native and WebAssembly) to a 13 KB retained-DOM runtime.">
+  <meta property="og:title" content="FOAR: interfaces as state machines">
+  <meta property="og:description" content="A UI language with explicit states, exhaustive match, and a Rust → WebAssembly compiler. Try it in the browser.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-nav">
+  <a class="logo" href="./" aria-label="FOAR home"><img src="favicon.svg" alt="" width="26" height="26"> <span>FOAR</span></a>
+  <nav aria-label="Site">
+    <a href="docs/">Docs</a>
+    <a href="playground/">Playground</a>
+    <a class="hide-sm" href="#examples">Examples</a>
+    <a href="https://github.com/josmanvis/FOAR" rel="noopener">GitHub</a>
+  </nav>
+</header>
+
+<main id="main">
+  <!-- hero -->
+  <section class="hero">
+    <div class="wrap">
+      <span class="eyebrow">A UI language · Rust → WebAssembly compiler</span>
+      <h1>Interfaces are state machines. <span class="grad">Write them that way.</span></h1>
+      <p class="lede">
+        In FOAR every component declares its states, what each state shows, and which events
+        it handles. No boolean flags that disagree, no dependency arrays, no forgotten
+        <code>switch</code> cases: the compiler checks them. It compiles to a tiny runtime that
+        updates the DOM in place.
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="playground/">Open the playground →</a>
+        <a class="btn ghost" href="docs/">Read the guide</a>
+        <a class="btn ghost" href="https://github.com/josmanvis/FOAR" rel="noopener">GitHub</a>
+      </div>
+      <ul class="facts">
+        <li>13 KB runtime (gzip), no dependencies</li>
+        <li>Rust compiler: native CLI and 210 KB WebAssembly</li>
+        <li>No virtual DOM</li>
+        <li>In-browser IDE with a full language service</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- states -->
+  <section>
+    <div class="wrap split">
+      <div class="window">
+        <div class="window-bar"><i></i><i></i><i></i><span>Note.foar</span></div>
+<pre><code class="foar">view Note {
+    store text: String = "";
+
+    state Viewing {
+        render {
+            Text(text)
+            Button("Edit") -> on_click(Edit)
+        }
+        effect Edit() { transition Editing; }
+    }
+
+    state Editing {
+        render {
+            Input(value: text) -> on_input(Type)
+            Button("Save") -> on_click(Save)
+        }
+        effect Type(t: String) { text = t; }
+        effect Save() { save_note(text) -> transition(Saving); }
+    }
+
+    state Saving {
+        render { Spinner("Saving…") }
+        on_exit { transition Viewing; }
+    }
+}</code></pre>
+      </div>
+      <div>
+        <span class="eyebrow">States, not flags</span>
+        <h2>One state at a time, and the code says which.</h2>
+        <p class="lede">A view is always in exactly one state. Each state lists what it renders and the events it handles, so <em>save while saving</em> isn't a bug you guard against: it has no handler. Loading is a state you enter and leave, not a flag you set in one place and forget to clear in another.</p>
+        <div class="diagram" role="img" aria-label="State diagram: Viewing goes to Editing on Edit, Editing goes to Saving on Save, Saving returns to Viewing when the save finishes">
+          <svg viewBox="0 0 420 150">
+            <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color: var(--muted)"/></marker></defs>
+            <rect class="node on" x="10" y="20" width="110" height="40" rx="20"/><text x="65" y="45" text-anchor="middle">Viewing</text>
+            <rect class="node" x="155" y="20" width="110" height="40" rx="20"/><text x="210" y="45" text-anchor="middle">Editing</text>
+            <rect class="node" x="300" y="20" width="110" height="40" rx="20"/><text x="355" y="45" text-anchor="middle">Saving</text>
+            <path class="edge" d="M120 40 H153"/><text class="edge-label" x="137" y="14" text-anchor="middle">Edit</text>
+            <path class="edge" d="M265 40 H298"/><text class="edge-label" x="282" y="14" text-anchor="middle">Save</text>
+            <path class="edge" d="M355 62 C355 120 65 120 65 63"/><text class="edge-label" x="210" y="134" text-anchor="middle">save_note resolves → on_exit</text>
+          </svg>
+        </div>
+        <p class="caption">The playground draws this from the source and shows each component's live state.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- flags vs states -->
+  <section>
+    <div class="wrap">
+      <div class="center">
+        <span class="eyebrow">The problem</span>
+        <h2>Four booleans, sixteen combinations, three that make sense.</h2>
+        <p class="lede">Flags describe states indirectly, and every combination nobody designed is a bug waiting for the right order of clicks.</p>
+      </div>
+      <div class="split even" style="margin-top: 40px">
+        <div>
+          <div class="window">
+            <div class="window-bar"><i></i><i></i><i></i><span>Note.jsx</span></div>
+<pre><code><span class="js-kw">const</span> [editing, setEditing] = <span class="js-fn">useState</span>(<span class="js-kw">false</span>);
+<span class="js-kw">const</span> [saving, setSaving] = <span class="js-fn">useState</span>(<span class="js-kw">false</span>);
+<span class="js-kw">const</span> [error, setError] = <span class="js-fn">useState</span>(<span class="js-kw">null</span>);
+
+<span class="js-kw">async function</span> <span class="js-fn">save</span>() {
+  <span class="js-kw">if</span> (saving) <span class="js-kw">return</span>;      <span class="js-com">// guard the impossible</span>
+  <span class="js-fn">setSaving</span>(<span class="js-kw">true</span>);
+  <span class="js-kw">try</span> { <span class="js-kw">await</span> <span class="js-fn">saveNote</span>(text); <span class="js-fn">setEditing</span>(<span class="js-kw">false</span>); }
+  <span class="js-kw">catch</span> (e) { <span class="js-fn">setError</span>(e); }
+  <span class="js-kw">finally</span> { <span class="js-fn">setSaving</span>(<span class="js-kw">false</span>); }
+}
+
+<span class="js-kw">return</span> saving ? &lt;<span class="js-fn">Spinner</span> /&gt;
+  : editing ? &lt;<span class="js-fn">Editor</span> … /&gt;
+  : &lt;<span class="js-fn">Viewer</span> … /&gt;;</code></pre>
+          </div>
+          <p class="caption">The real state is reconstructed from flags on every render, and every handler guards against combinations it can't handle.</p>
+        </div>
+        <div>
+          <div class="window">
+            <div class="window-bar"><i></i><i></i><i></i><span>Note.foar</span></div>
+<pre><code class="foar">state Editing {
+    render { Editor(text: text) -> on_save(Save) }
+    effect Save() {
+        save_note(text) -> transition(Saving);
+    }
+}
+
+state Saving {
+    render { Spinner("Saving…") }
+    on_exit { transition Viewing; }
+}
+
+state Viewing {
+    render { Viewer(text: text) -> on_edit(Edit) }
+    effect Edit() { transition Editing; }
+}</code></pre>
+          </div>
+          <p class="caption">Each state is written once. Impossible combinations can't be expressed, so there's nothing to guard.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- match -->
+  <section>
+    <div class="wrap split">
+      <div>
+        <span class="eyebrow">Enums &amp; exhaustive match</span>
+        <h2>A better <code>switch</code>: the compiler checks every case.</h2>
+        <p class="lede"><code>match</code> has no fall-through and no <code>break</code>. It must handle every variant of an enum, or <code>true</code> and <code>false</code>, or have a <code>_</code> arm, and arms that can never run are errors. Add a variant and every match that forgets it stops compiling, with a message saying which.</p>
+        <p>Patterns cover literals, <code>a | b</code>, ranges like <code>1..=9</code>, and <code>name if guard</code>. A match is a value, a statement, or, as <code>Match(…)</code>, a piece of UI that swaps only when the arm changes. Enum values compile to plain strings, so the safety costs nothing at runtime or in your JSON.</p>
+      </div>
+      <div style="display: grid; gap: 14px">
+        <div class="window">
+          <div class="window-bar"><i></i><i></i><i></i><span>checkout.foar</span></div>
+<pre><code class="foar">enum Payment { Card, Transfer, Invoice }
+
+let fee = match method {
+    Payment.Card => 0.29,
+    Payment.Transfer => 0,
+};
+
+Match(cart.len()) {
+    0 => Text("Your cart is empty"),
+    1..=9 => CartList(items: cart),
+    n => Text("{n} items · showing the first 9"),
+}</code></pre>
+        </div>
+        <div class="window terminal">
+          <div class="window-bar"><i></i><i></i><i></i><span>foar check</span></div>
+<pre><span class="dim">$</span> foar check app.foar
+<span class="err">checkout.foar:3:11: This match doesn't handle Payment.Invoice
+(add an arm for it or `_ => …`)</span></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- features -->
+  <section>
+    <div class="wrap">
+      <div class="center">
+        <span class="eyebrow">What's in the box</span>
+        <h2>One small language for the whole interface.</h2>
+      </div>
+      <div class="grid">
+        <div class="card"><div class="ico" aria-hidden="true">⇄</div><h3>Explicit state machines</h3><p>Views declare states, effects belong to states, transitions are one statement. Async work is a state with an <code>on_exit</code>.</p></div>
+        <div class="card"><div class="ico" aria-hidden="true">✓</div><h3>Checked at compile time</h3><p>Exhaustive <code>match</code> on enums. Unknown views, states, effects, styles, variants and imports are reported with file, line and a "did you mean".</p></div>
+        <div class="card"><div class="ico" aria-hidden="true">⚡</div><h3>No virtual DOM</h3><p>Elements compile to blocks with bindings. Updates write only changed values, keyed lists reuse rows, and inputs keep focus and selection.</p></div>
+        <div class="card"><div class="ico" aria-hidden="true">🎨</div><h3>Styling built in</h3><p>Scoped CSS with themes, dark mode, nested <code>@hover</code>/<code>@media</code>, and <code>@state Editing { … }</code>: styles that follow the state machine.</p></div>
+        <div class="card"><div class="ico" aria-hidden="true">🌍</div><h3>i18n &amp; accessibility</h3><p><code>t(key, params)</code> with plurals and right-to-left, plus a catalog checker. <code>label:</code>, <code>role:</code>, <code>aria:</code> everywhere, and keyboard-operable by default.</p></div>
+        <div class="card"><div class="ico" aria-hidden="true">🦀</div><h3>Rust compiler, browser IDE</h3><p>One Rust compiler builds a native CLI and WebAssembly. The playground has completions, hover docs, live errors, rename, references and a formatter.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- numbers -->
+  <section>
+    <div class="wrap">
+      <span class="eyebrow">By the numbers</span>
+      <h2>Small, and fast by construction.</h2>
+      <div class="stats">
+        <div class="stat"><b>13 KB</b><span>gzipped runtime, one ES module, zero dependencies</span></div>
+        <div class="stat"><b>32 ms</b><span>to compile a 21-file, 2,000-line app, natively or as WebAssembly in the browser</span></div>
+        <div class="stat"><b>0</b><span>elements created per keystroke when filtering a 500-row list that keeps the same rows</span></div>
+        <div class="stat"><b>≈2 ms</b><span>per keystroke or checkbox toggle with 500 rows, measured in happy-dom</span></div>
+      </div>
+      <p class="note">Measured with <code>pnpm bench</code> and the Notes app in this repository. happy-dom is a JavaScript DOM without layout or paint, much slower than a browser's, so treat its times as relative; "elements created" is the real work metric.</p>
+    </div>
+  </section>
+
+  <!-- compare -->
+  <section>
+    <div class="wrap">
+      <span class="eyebrow">How it compares</span>
+      <h2>The best ideas, in one language.</h2>
+      <p class="lede">FOAR takes Elm's exhaustive pattern matching, Svelte's compiled updates, and the statechart idea behind XState, and makes them the syntax.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th></th><th>React</th><th>Svelte</th><th>Elm</th><th class="foar">FOAR</th></tr></thead>
+          <tbody>
+            <tr><td>Component state</td><td>flags in hooks</td><td>variables</td><td>one model + messages</td><td class="foar">explicit states per view</td></tr>
+            <tr><td>Exhaustive branching</td><td>opt-in via TypeScript</td><td>no</td><td>yes</td><td class="foar">yes: enums, bools, guards</td></tr>
+            <tr><td>Derived values</td><td><code>useMemo</code> + dependency list</td><td><code>$derived</code></td><td>functions of the model</td><td class="foar"><code>let</code>, no dependency list</td></tr>
+            <tr><td>Updates</td><td>virtual DOM diff</td><td>compiled, fine-grained</td><td>virtual DOM diff</td><td class="foar">compiled bindings, retained DOM</td></tr>
+            <tr><td>Styling</td><td>external / CSS-in-JS</td><td>scoped <code>&lt;style&gt;</code></td><td>external / elm-css</td><td class="foar">in the language, state-aware</td></tr>
+            <tr><td>Compiler</td><td>JS (Babel/TS)</td><td>JS</td><td>Haskell</td><td class="foar">Rust: native + WebAssembly</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">FOAR is young: no router, no server-side rendering, and no package ecosystem yet, and effect code compiles to JavaScript without a full type checker. <a href="docs/why.html#what-foar-is-not-yet">Read the trade-offs.</a></p>
+    </div>
+  </section>
+
+  <!-- examples -->
+  <section id="examples">
+    <div class="wrap">
+      <span class="eyebrow">Try it</span>
+      <h2>Open an example in the browser.</h2>
+      <p class="lede">Each one opens in the playground: edit it, and the app updates as you type.</p>
+      <div class="grid">
+        <a class="card" href="playground/?example=starter"><div class="ico" aria-hidden="true">✦</div><h3>Starter</h3><p>The smallest multi-file app: a root view and a component.</p><div class="go">Open →</div></a>
+        <a class="card" href="playground/?example=counter"><div class="ico" aria-hidden="true">⏱</div><h3>Counter</h3><p>Three states and an async transition with <code>on_exit</code>.</p><div class="go">Open →</div></a>
+        <a class="card" href="playground/?example=todo"><div class="ico" aria-hidden="true">☑</div><h3>Todo</h3><p>Components with their own state machines, keyed lists, a filter enum and derived values.</p><div class="go">Open →</div></a>
+        <a class="card" href="playground/?example=orders"><div class="ico" aria-hidden="true">📦</div><h3>Orders</h3><p>An order status enum drives badges, colours and actions through exhaustive matches.</p><div class="go">Open →</div></a>
+      </div>
+    </div>
+  </section>
+
+  <!-- real app -->
+  <section>
+    <div class="wrap split">
+      <img class="shot" src="assets/notes.png" alt="A macOS Notes-style app written in FOAR: folders, a note list and a rich-text editor" width="1280" height="800" loading="lazy">
+      <div>
+        <span class="eyebrow">Built with FOAR</span>
+        <h2>A full Notes app in 21 files.</h2>
+        <p class="lede">Folders, tags, pinned and locked notes, a rich-text editor with checklists and tables, drag and drop, context menus, keyboard navigation, three languages and dark mode.</p>
+        <p>Every popup, sheet and inline editor is a state: a folder row is <code>Idle → Menu → Renaming / ConfirmDelete</code>, the formatting bar is <code>Idle → Styles / Colors / Table / Linking</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- get started -->
+  <section>
+    <div class="wrap">
+      <span class="eyebrow">Get started</span>
+      <h2>Try it in the browser, or run it locally.</h2>
+      <ol class="steps">
+        <li><div><strong>No install:</strong> open the <a href="playground/">playground</a>. The Rust compiler runs there as WebAssembly.</div></li>
+        <li><div><strong>Locally:</strong> you need Rust and Node.
+<pre class="cmd">git clone https://github.com/josmanvis/FOAR && cd FOAR
+pnpm install && pnpm dev        # http://localhost:3000</pre></div></li>
+        <li><div><strong>Build an app:</strong>
+<pre class="cmd">foar build app.foar --format js -o dist/app.js</pre>
+          Then <code>mount(element, { bindings })</code>. See the <a href="docs/">guide</a>.</div></li>
+      </ol>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>FOAR: interfaces as state machines.</span>
+    <span><a href="docs/">Docs</a> · <a href="playground/">Playground</a> · <a href="https://github.com/josmanvis/FOAR" rel="noopener">GitHub</a></span>
+  </div>
+</footer>
+
+<script type="module">
+  import { highlightFoar } from './playground/language/highlight.js';
+  for (const el of document.querySelectorAll('code.foar')) el.innerHTML = highlightFoar(el.textContent);
+</script>
+</body>
+</html>

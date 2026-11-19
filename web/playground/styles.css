@@ -1609,3 +1609,7 @@ button.sb-item:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
   animation: ws-pop 0.12s ease-out;
 }
 .editor-col { position: relative; }
+
+a.brand { color: inherit; text-decoration: none; }
+a.brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+img.brand-logo { background: none; padding: 0; }

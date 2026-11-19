@@ -261,8 +261,13 @@ async function compileAndMount(project) {
 // Examples are project folders in examples/ (GET /examples/index.json lists them
 // with their files). "Scratch" starts as a copy of examples/starter and is kept
 // in this browser.
+// The live-app projects only exist on a developer's machine.
+if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+  exampleSelect.querySelector('optgroup[label="Apps"]')?.remove();
+}
+
 let examples = [];
-const examplesReady = fetch('/examples/index.json', { cache: 'no-store' })
+const examplesReady = fetch(new URL('../examples/index.json', import.meta.url), { cache: 'no-store' })
   .then((r) => (r.ok ? r.json() : []))
   .catch(() => [])
   .then((list) => {
@@ -515,9 +520,11 @@ if (remoteSrc) {
       exampleSelect.value = example;
       loadExample(example);
     } else {
-      // Plain visit: open the Notes app when its dev server is running,
+      // Plain visit: open the Notes app when its dev server is running on
+      // this machine (only probed when the playground itself is local),
       // otherwise the first example.
-      fetch(NOTES_SRC, { method: 'HEAD', signal: AbortSignal.timeout(800) })
+      const local = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+      (local ? fetch(NOTES_SRC, { method: 'HEAD', signal: AbortSignal.timeout(800) }) : Promise.reject(new Error('not local')))
         .then((r) => {
           if (!r.ok) throw new Error();
           location.replace(`?src=${encodeURIComponent(NOTES_SRC)}`);

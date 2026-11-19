@@ -5,6 +5,9 @@
 // Plus helpers for the playground: state-machine extraction and a JS preview.
 
 let wasmPromise = null;
+// next to this module, so the site works under any base path (e.g. GitHub Pages /FOAR/)
+const DEFAULT_WASM = new URL('./foar.wasm', import.meta.url).href;
+const DEFAULT_API = new URL('./api/compile', import.meta.url).href;
 
 async function loadWasm(url) {
   const res = await fetch(url);
@@ -33,7 +36,7 @@ export let compilerBackend = null;
  * object for createFoarRuntime; rejects with a SyntaxError carrying
  * `line`/`col` on compile errors.
  */
-export async function compileFoar(source, { wasmUrl = '/foar.wasm', apiUrl = '/api/compile' } = {}) {
+export async function compileFoar(source, { wasmUrl = DEFAULT_WASM, apiUrl = DEFAULT_API } = {}) {
   if (!wasmPromise) wasmPromise = loadWasm(wasmUrl).catch(() => null);
   const wasm = await wasmPromise;
   let result;
@@ -60,7 +63,7 @@ export async function compileFoar(source, { wasmUrl = '/foar.wasm', apiUrl = '/a
  * files in the program and what each imports. Compile errors reject with a
  * SyntaxError carrying `file`, `line`, `col`.
  */
-export async function compileFoarProject(project, { wasmUrl = '/foar.wasm', apiUrl = '/api/compile' } = {}) {
+export async function compileFoarProject(project, { wasmUrl = DEFAULT_WASM, apiUrl = DEFAULT_API } = {}) {
   if (!wasmPromise) wasmPromise = loadWasm(wasmUrl).catch(() => null);
   const wasm = await wasmPromise;
   const input = JSON.stringify({ entry: project.entry, files: project.files });

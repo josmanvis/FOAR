@@ -1,9 +1,12 @@
 //! Recursive-descent parser for .foar sources.
 use crate::ast::*;
 use crate::css::{self, Ctx, Hoisted, NestedKind, StyleBlock, Value};
-use crate::lexer::{lex, unescape, Kind, Token};
-use crate::transpile::{rust_idioms_to_js, string_literal_to_js};
+use crate::lexer::{lex, Kind, Token};
+use crate::transpile::rust_idioms_to_js;
 use serde_json::{Map, Value as J};
+
+#[path = "matching.rs"]
+mod matching;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CompileError {
@@ -49,15 +52,37 @@ pub struct Parser<'s> {
     declared: std::collections::HashSet<String>,
     /// every element tag used, with its position (checked against views + built-ins)
     tag_refs: Vec<(String, usize)>,
+    /// all enums of the program (pre-scanned, so code can use them before their declaration)
+    enums: matching::Enums,
+    /// first error found while joining expressions (join_js can't return one)
+    deferred: std::cell::RefCell<Option<CompileError>>,
+    match_id: std::cell::Cell<usize>,
+    /// declared types of the current view's params / stores / lets (+ effect params)
+    var_types: std::collections::HashMap<String, String>,
 }
 
 /// Elements the runtime provides (web/foar-runtime.js mountNode/mountElement).
-const BUILTIN_ELEMENTS: &[&str] = &["Text", "Button", "Input", "TextArea", "Checkbox", "RichText", "Image", "Spinner", "Row", "Column", "List", "If"];
+const BUILTIN_ELEMENTS: &[&str] = &["Text", "Button", "Input", "TextArea", "Checkbox", "RichText", "Image", "Spinner", "Row", "Column", "List", "If", "Match"];
 
 impl<'s> Parser<'s> {
     pub fn new(src: &'s str) -> PResult<Self> {
         let toks = lex(src).map_err(|at| err_at(src, at, "Unexpected character".to_string()))?;
-        Ok(Self { src, toks, pos: 0, hoisted: Hoisted::default(), cur_view: None, cls_counter: 0, style_uses: Default::default(), declared: Default::default(), tag_refs: Vec::new() })
+        let enums = matching::prescan_enums(src, &toks);
+        Ok(Self {
+            src,
+            toks,
+            pos: 0,
+            hoisted: Hoisted::default(),
+            cur_view: None,
+            cls_counter: 0,
+            style_uses: Default::default(),
+            declared: Default::default(),
+            tag_refs: Vec::new(),
+            enums,
+            deferred: Default::default(),
+            match_id: Default::default(),
+            var_types: Default::default(),
+        })
     }
 
     // ---- token helpers ----------------------------------------------------
@@ -122,21 +147,12 @@ impl<'s> Parser<'s> {
     // ---- reconstruction ---------------------------------------------------
     /// Tokens -> JS, keeping the author's spacing; strings become JS literals
     /// (template literals when they interpolate), then Rust idioms are rewritten.
+    /// (`Enum.Variant` and `match` are lowered first, see matching.rs.)
     fn join_js(&self, toks: &[Token]) -> String {
         if toks.is_empty() {
             return "undefined".to_string();
         }
-        let mut out = String::new();
-        for (i, t) in toks.iter().enumerate() {
-            if i > 0 && t.start > toks[i - 1].end {
-                out.push(' ');
-            }
-            match t.kind {
-                Kind::Str => out.push_str(&string_literal_to_js(&unescape(self.text(t)))),
-                _ => out.push_str(self.text(t)),
-            }
-        }
-        rust_idioms_to_js(out.trim())
+        rust_idioms_to_js(&self.raw_join(toks, false))
     }
     /// Tokens -> CSS text, keeping the author's spacing.
     fn join_css(&self, toks: &[Token]) -> String {
@@ -158,6 +174,7 @@ impl<'s> Parser<'s> {
         // files never changes the cascade: theme, named styles, keyframes,
         // `css { }` blocks, then view/element styles (which use doubled classes).
         let mut chunks: Vec<(u8, std::ops::Range<usize>)> = Vec::new();
+        let mut enums = Vec::new();
         while !self.at_end() {
             let first = self.hoisted.rules.len();
             let kind = match self.text(self.peek()) {
@@ -167,7 +184,10 @@ impl<'s> Parser<'s> {
                 "css" => 3,
                 _ => 4,
             };
-            self.parse_top_level(&mut data_decls, &mut views)?;
+            self.parse_top_level(&mut data_decls, &mut views, &mut enums)?;
+            if let Some(e) = self.deferred.borrow_mut().take() {
+                return Err(e);
+            }
             chunks.push((kind, first..self.hoisted.rules.len()));
         }
         let mut css_rules = Vec::with_capacity(self.hoisted.rules.len());
@@ -197,10 +217,13 @@ impl<'s> Parser<'s> {
                 }
             }
         }
-        Ok(Program { kind: "Program", data_decls, views, css: self.hoisted.css() })
+        if let Some(e) = self.deferred.borrow_mut().take() {
+            return Err(e);
+        }
+        Ok(Program { kind: "Program", data_decls, enums, views, css: self.hoisted.css() })
     }
 
-    fn parse_top_level(&mut self, data_decls: &mut Vec<DataDecl>, views: &mut Vec<ViewDecl>) -> PResult<()> {
+    fn parse_top_level(&mut self, data_decls: &mut Vec<DataDecl>, views: &mut Vec<ViewDecl>, enums: &mut Vec<EnumDecl>) -> PResult<()> {
         {
             if self.is("import") && self.peek_at(1).kind == Kind::Str {
                 // `import "./components/Row.foar"`: resolved by crate::project
@@ -210,6 +233,8 @@ impl<'s> Parser<'s> {
                 self.eat(";");
             } else if self.is("data") {
                 data_decls.push(self.parse_data()?);
+            } else if self.is("enum") {
+                enums.push(self.parse_enum()?);
             } else if self.is("view") {
                 views.push(self.parse_view()?);
             } else if self.is("theme") {
@@ -270,6 +295,7 @@ impl<'s> Parser<'s> {
         let name = self.declare("View")?;
         self.cur_view = Some(name.clone());
         self.cls_counter = 0;
+        self.var_types.clear();
         let mut params = Vec::new();
         if self.eat("(") {
             while !self.at_end() && !self.is(")") {
@@ -277,11 +303,13 @@ impl<'s> Parser<'s> {
                 self.expect(":")?;
                 let param_type = self.parse_type()?;
                 self.eat(",");
+                self.var_types.insert(pname.clone(), param_type.clone());
                 params.push(Param { name: pname, param_type });
             }
             self.expect(")")?;
         }
         self.expect("{")?;
+        let mut derived = Vec::new();
         let mut stores = Vec::new();
         let mut style = None;
         let mut states = Vec::new();
@@ -299,7 +327,24 @@ impl<'s> Parser<'s> {
                     return self.err(format!("Expected an initial value for store {}", sname));
                 }
                 self.expect(";")?;
+                self.var_types.insert(sname.clone(), store_type.clone());
                 stores.push(Store { name: sname, store_type, init_expr: self.join_js(&init) });
+            } else if self.is("let") {
+                // `let total = items.len();` — a derived value, recomputed on every update
+                self.advance();
+                let dname = self.expect_ident()?;
+                let derived_type = if self.eat(":") { self.parse_type()? } else { "any".to_string() };
+                self.expect("=")?;
+                let mut expr = Vec::new();
+                while !self.at_end() && !self.is(";") {
+                    expr.push(self.advance());
+                }
+                if expr.is_empty() {
+                    return self.err(format!("Expected a value for let {}", dname));
+                }
+                self.expect(";")?;
+                self.var_types.insert(dname.clone(), derived_type.clone());
+                derived.push(Derived { name: dname, derived_type, expr: self.join_js(&expr) });
             } else if self.is("style") {
                 self.advance();
                 self.expect("{")?;
@@ -315,7 +360,7 @@ impl<'s> Parser<'s> {
         }
         self.expect("}")?;
         self.cur_view = None;
-        Ok(ViewDecl { kind: "ViewDecl", name, params, stores, style, states })
+        Ok(ViewDecl { kind: "ViewDecl", name, params, stores, derived, style, states })
     }
 
     fn compile_style(&mut self, block: &StyleBlock, cls: &str, ctx: &Ctx) -> PResult<Style> {
@@ -388,7 +433,12 @@ impl<'s> Parser<'s> {
             children: Vec::new(),
             events: Map::new(),
             style: None,
+            arms: None,
+            else_children: None,
         };
+        if tag == "Else" {
+            return Err(err_at(self.src, at, "Else must follow an If block: `If(cond) { … } Else { … }`".to_string()));
+        }
         if self.eat("(") {
             if tag == "List" {
                 let mut depth = 1;
@@ -447,13 +497,31 @@ impl<'s> Parser<'s> {
                 self.expect(")")?;
             }
         }
-        if self.eat("{") {
+        if tag == "Match" {
+            if el.args.len() != 1 {
+                return Err(err_at(self.src, at, "Match takes one value: `Match(layout) { … }`".to_string()));
+            }
+            self.expect("{")?;
+            let scrut = el.args[0].clone();
+            el.arms = Some(self.parse_render_arms(&scrut, at)?);
+            self.expect("}")?;
+        } else if self.eat("{") {
             if tag == "List" && self.peek().kind == Kind::Ident && self.is_at(1, "=>") {
                 el.list_binding = Some(self.expect_ident()?);
                 self.expect("=>")?;
             }
             el.children = self.parse_render_block()?;
             self.expect("}")?;
+        }
+        if tag == "If" && self.is("Else") {
+            self.advance();
+            if self.is("If") {
+                el.else_children = Some(vec![self.parse_element()?]);
+            } else {
+                self.expect("{")?;
+                el.else_children = Some(self.parse_render_block()?);
+                self.expect("}")?;
+            }
         }
         loop {
             if self.eat("->") {
@@ -463,6 +531,9 @@ impl<'s> Parser<'s> {
                 self.expect(")")?;
                 el.events.insert(ev, J::String(handler));
             } else if self.is(".") && self.is_at(1, "style") {
+                if tag == "If" || tag == "Match" {
+                    return self.err(format!("{} has no box of its own to style: style the elements inside it, or wrap it in a Row/Column", tag));
+                }
                 self.advance();
                 self.advance();
                 self.expect("(")?;
@@ -532,7 +603,12 @@ impl<'s> Parser<'s> {
         }
         self.expect(")")?;
         let body = self.parse_balanced_braces()?;
+        let saved = self.var_types.clone();
+        for p in &params {
+            self.var_types.insert(p.name.clone(), p.param_type.clone());
+        }
         let b = self.effect_body(&body);
+        self.var_types = saved;
         Ok(EffectDecl { kind: "EffectDecl", name, params, transitions: b.transitions, emissions: b.emissions, js_body: b.js_body })
     }
 
@@ -558,7 +634,8 @@ impl<'s> Parser<'s> {
                 }
             }
         }
-        EffectBody { transitions, emissions, js_body: self.join_js(toks) }
+        let js_body = if toks.is_empty() { "undefined".to_string() } else { rust_idioms_to_js(&self.raw_join(toks, true)) };
+        EffectBody { transitions, emissions, js_body }
     }
 
     // ---- styles -----------------------------------------------------------

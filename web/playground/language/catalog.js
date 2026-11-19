@@ -16,7 +16,16 @@ export const KEYWORDS = {
   style: '`style Name { … }` declares a named style (apply with `.style(Name)` or `@use Name`); `style { … }` inside a view styles its host element.',
   css: 'A raw CSS block, copied into the stylesheet as is.',
   import: 'Makes another file part of the program: `import "components/Row"` (root-relative) or `import "./Row"` (relative).',
-  let: 'A local variable in an effect.',
+  let: 'In a view: a derived value, recomputed on every update (`let open = items.filter(|t| !t.done).len();`). In an effect: a local variable.',
+  enum: 'A closed set of named values: `enum Layout { List, Gallery = "grid" }`. Use `Layout.List`; values compile to their strings/numbers, so they serialize and compare with `==`.',
+  match: 'Picks one arm by pattern — no fall-through, and the compiler checks every case is handled (all enum variants, true/false, or a `_` arm). Patterns: literals, `a | b`, ranges `1..=5`, enum variants, `name if guard`, `_`. Works as a statement or as a value.',
+  for: '`for item in items { … }` or `for i in 0..n { … }` (`..=` includes the end).',
+  in: 'In a `for` loop.',
+  while: '`while condition { … }`',
+  loop: '`loop { … }` repeats until `break` or `return`.',
+  Some: '`Some(x)` is a present value; `if let Some(x) = maybe { … }` runs when it is not null.',
+  None: 'No value (null).',
+  Else: '`If(cond) { … } Else If(other) { … } Else { … }`',
   if: 'Conditional in an effect.',
   else: 'Conditional branch in an effect.',
   return: 'Leaves the effect.',
@@ -69,7 +78,8 @@ export const ELEMENTS = {
   Row: { sig: 'Row { … }', doc: 'Lays children out horizontally (flex row, centred).', named: [...COMMON], events: ['on_click', 'on_double_click', 'on_context_menu', 'on_drop', 'on_drag_start', 'on_drag_end'], snippet: 'Row {\n    $0\n}' },
   Column: { sig: 'Column { … }', doc: 'Lays children out vertically (flex column).', named: [...COMMON], events: ['on_click', 'on_double_click', 'on_context_menu', 'on_drop', 'on_drag_start', 'on_drag_end'], snippet: 'Column {\n    $0\n}' },
   List: { sig: 'List(items, empty: element) { item => … }', doc: 'Renders one block per item, keyed by `item.id` (rows are reused, not rebuilt).', named: ['empty', 'role', 'label', 'aria'], events: ['on_context_menu', 'on_drop'], snippet: 'List(${1:items}) { ${2:item} =>\n    $0\n}' },
-  If: { sig: 'If(condition) { … }', doc: 'Shows its children while the condition is true.', named: [], events: [], snippet: 'If(${1:condition}) {\n    $0\n}' },
+  If: { sig: 'If(condition) { … } Else { … }', doc: 'Shows its children while the condition is true; `Else { … }` / `Else If(…) { … }` otherwise.', named: [], events: [], snippet: 'If(${1:condition}) {\n    $0\n}' },
+  Match: { sig: 'Match(value) { pattern => element, … }', doc: 'Shows the first arm whose pattern matches; the compiler checks every case is handled. The arm stays mounted (and updates) until another arm wins.', named: [], events: [], snippet: 'Match(${1:value}) {\n    ${2:pattern} => $0,\n    _ => Text(""),\n}' },
 };
 
 export const EVENTS = {
@@ -160,6 +170,7 @@ export const isCssProp = (p) => CSS_PROPS.includes(p) || p in FOAR_PROPS;
 export const SNIPPETS = {
   top: [
     ['view', 'view ${1:Name} {\n    state ${2:Idle} {\n        render {\n            $0\n        }\n    }\n}', 'A view with one state'],
+    ['enum', 'enum ${1:Name} {\n    ${2:First},\n    ${3:Second},\n}', 'A closed set of named values'],
     ['view (with params)', 'view ${1:Name}(${2:label}: ${3:String}) {\n    state ${4:Idle} {\n        render {\n            $0\n        }\n    }\n}', 'A view that takes parameters'],
     ['data', 'data ${1:Name} {\n    id: String,\n    $0\n}', 'A data type'],
     ['style', 'style ${1:Name} {\n    $0\n}', 'A named style'],
@@ -170,6 +181,7 @@ export const SNIPPETS = {
   ],
   view: [
     ['store', 'store ${1:name}: ${2:String} = ${3:""};', 'View data'],
+    ['let', 'let ${1:name} = ${2:expression};', 'A derived value, recomputed on every update'],
     ['state', 'state ${1:Name} {\n    render {\n        $0\n    }\n}', 'A state'],
     ['style', 'style {\n    $0\n}', 'Styles for the view’s host element'],
   ],
@@ -183,5 +195,8 @@ export const SNIPPETS = {
     ['emit', 'emit ${1:event}(${2});', 'Send an event to the parent'],
     ['let', 'let ${1:name} = ${2:value};', 'Local variable'],
     ['if', 'if ${1:condition} {\n    $0\n}', 'Conditional'],
+    ['match', 'match ${1:value} {\n    ${2:pattern} => $0,\n    _ => {}\n}', 'Pick one arm by pattern (exhaustive)'],
+    ['for', 'for ${1:item} in ${2:items} {\n    $0\n}', 'Loop over a list or a range (0..n)'],
+    ['if let', 'if let Some(${1:value}) = ${2:maybe} {\n    $0\n}', 'Run when a value is present'],
   ],
 };

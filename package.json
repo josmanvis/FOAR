@@ -10,13 +10,15 @@
     "build": "cargo build --release",
     "build:wasm": "cargo build --release --lib --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/foar.wasm web/foar.wasm",
     "test": "cargo test --release && cargo build --release && node --test test/runtime.test.js",
-    "bench": "cargo build --release && node bench/bench.js"
+    "bench": "cargo build --release && node bench/bench.js",
+    "build:site": "node scripts/site.mjs _site"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "packageManager": "pnpm@10.33.0",
   "devDependencies": {
-    "happy-dom": "^15.11.7"
+    "happy-dom": "^15.11.7",
+    "marked": "15.0.12"
   }
 }

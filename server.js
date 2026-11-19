@@ -15,6 +15,9 @@ const MIME_TYPES = {
   '.json': 'application/json; charset=utf-8',
   '.foar': 'text/plain; charset=utf-8',
   '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.md': 'text/markdown; charset=utf-8',
   '.wasm': 'application/wasm',
 };
 
@@ -42,51 +45,46 @@ function compileNative(req, res) {
   });
 }
 
-// examples/<id>/ are project folders: app.foar (entry) + whatever it imports.
-// GET /examples/index.json -> [{ id, title, description, entry, files: { path: source } }]
-function examplesIndex() {
-  const out = [];
-  for (const e of fs.readdirSync(EXAMPLES_DIR, { withFileTypes: true })) {
-    if (!e.isDirectory()) continue;
-    const dir = path.join(EXAMPLES_DIR, e.name);
-    if (!fs.existsSync(path.join(dir, 'app.foar'))) continue;
-    const files = {};
-    for (const rel of fs.readdirSync(dir, { recursive: true })) {
-      if (String(rel).endsWith('.foar')) files[String(rel).split(path.sep).join('/')] = fs.readFileSync(path.join(dir, String(rel)), 'utf8');
-    }
-    // "// Title — description" on the entry's first line
-    const first = /^\/\/\s*(.+)$/m.exec(files['app.foar'])?.[1] ?? e.name;
-    const [title, description = ''] = first.split(/\s+—\s+/);
-    out.push({ id: e.name, title: title.replace(/^FOAR\s+/, ''), description, entry: 'app.foar', files });
-  }
-  const order = ['starter', 'counter', 'todo'];
-  return out.sort((a, b) => (order.indexOf(a.id) + 1 || 99) - (order.indexOf(b.id) + 1 || 99) || a.id.localeCompare(b.id));
-}
+// The site, live: / (landing), /docs/*.html (rendered from docs/*.md),
+// /playground/, /examples/index.json, and web/ for everything else.
+// `pnpm build:site` writes the same pages as static files (scripts/site.mjs).
+const site = await import('./scripts/site.mjs');
 
-const send = (res, status, type, body) => {
-  res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+const send = (res, status, type, body, extra = {}) => {
+  res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store', ...extra });
   res.end(body);
 };
 
 const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/api/compile') return compileNative(req, res);
-  let pathname;
+  let url;
   try {
     // "//x" would parse as a host name: collapse leading slashes first
-    pathname = decodeURIComponent(new URL((req.url || '/').replace(/^\/+/, '/'), 'http://localhost').pathname);
+    url = new URL((req.url || '/').replace(/^\/+/, '/'), 'http://localhost');
+  } catch {
+    return send(res, 400, 'text/plain', 'Bad request');
+  }
+  let pathname;
+  try {
+    pathname = decodeURIComponent(url.pathname);
   } catch {
     return send(res, 400, 'text/plain', 'Bad request');
   }
 
-  if (pathname === '/examples/index.json') return send(res, 200, MIME_TYPES['.json'], JSON.stringify(examplesIndex()));
+  // old links: /?src=… and /?example=… open the playground
+  if (pathname === '/' && (url.searchParams.has('src') || url.searchParams.has('example'))) return send(res, 302, 'text/plain', '', { Location: `/playground/${url.search}` });
+  if (pathname === '/playground' || pathname === '/docs') return send(res, 301, 'text/plain', '', { Location: `${pathname}/${url.search}` });
+  if (pathname === '/examples/index.json') return send(res, 200, MIME_TYPES['.json'], JSON.stringify(site.examplesIndex()));
+  const doc = /^\/docs\/(?:([\w-]+)\.html)?$/.exec(pathname);
+  if (doc) {
+    const html = site.renderDoc(doc[1] ?? 'index');
+    return html ? send(res, 200, MIME_TYPES['.html'], html) : send(res, 404, 'text/plain', 'Not found');
+  }
 
-  // /            -> the playground (web/playground/index.html)
-  // /examples/…  -> example sources
-  // anything else -> web/ (runtime, compiler, wasm, playground modules)
   let filePath;
-  if (pathname === '/' || pathname === '/index.html') filePath = path.join(WEB_DIR, 'playground', 'index.html');
-  else if (pathname.startsWith('/examples/')) filePath = path.join(EXAMPLES_DIR, pathname.slice('/examples/'.length));
+  if (pathname.startsWith('/examples/')) filePath = path.join(EXAMPLES_DIR, pathname.slice('/examples/'.length));
   else filePath = path.join(WEB_DIR, pathname.replace(/^\/+/, ''));
+  if (pathname.endsWith('/')) filePath = path.join(filePath, 'index.html');
   filePath = path.normalize(filePath);
 
   // no directory traversal

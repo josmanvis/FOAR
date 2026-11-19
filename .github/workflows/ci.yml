@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Compiler and runtime tests
+        run: pnpm test
+      - name: Every example compiles
+        run: for f in examples/*/app.foar; do ./target/release/foar check "$f"; done
+      - name: WebAssembly build
+        run: pnpm build:wasm
+      - name: Website builds
+        run: pnpm build:site

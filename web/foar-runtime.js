@@ -273,6 +273,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     if (m) return m;
     const propNames = decl.params.map((p) => p.name);
     const storeNames = decl.stores.map((s) => s.name);
+    const derivedNames = (decl.derived || []).map((d) => d.name);
     const states = new Map();
     for (const s of decl.states) {
       states.set(s.name, { decl: s, effects: new Map(s.effects.map((e) => [e.name, e])) });
@@ -281,15 +282,24 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       decl,
       propNames,
       storeNames,
-      varNames: dedupe([...propNames, ...storeNames]),
+      derivedNames,
+      // `let` values, in order (a later one may use an earlier one)
+      derived: null,
+      varNames: dedupe([...propNames, ...storeNames, ...derivedNames]),
       // host functions visible in this view: its own props/stores win on a name clash
-      externNames: externNames.filter((n) => !propNames.includes(n) && !storeNames.includes(n)),
+      externNames: externNames.filter((n) => !propNames.includes(n) && !storeNames.includes(n) && !derivedNames.includes(n)),
       states,
       firstState: decl.states[0] || null,
       hostStyle: compileStyle(decl.style),
     };
+    m.derived = (decl.derived || []).map((d) => ({ name: d.name, expr: d.expr, fn: compileExpr(d.expr, m.varNames, m.externNames) }));
     viewMeta.set(decl, m);
     return m;
+  }
+
+  // `let` values: recomputed before every update and every effect.
+  function computeDerived(inst) {
+    for (const d of inst.meta.derived) inst.vars[d.name] = safeEval(d.fn, inst.vars, externs, d.expr);
   }
 
   // ---- evaluation helpers --------------------------------------------------
@@ -346,6 +356,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       const fn = compileExpr(st.initExpr, meta.varNames, meta.externNames);
       vars[st.name] = safeEval(fn, vars, initLocals, st.initExpr);
     }
+    computeDerived(inst);
     instances.set(key, inst);
     return inst;
   }
@@ -401,8 +412,10 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   }
 
   function runEffect(inst, eff, args) {
-    const { storeNames, propNames } = inst.meta;
-    const c = compileEffect(eff, storeNames, propNames, externNames, effectCache);
+    const { storeNames, propNames, derivedNames } = inst.meta;
+    if (derivedNames.length) computeDerived(inst);
+    // derived values are read-only inputs, like props
+    const c = compileEffect(eff, storeNames, derivedNames.length ? [...propNames, ...derivedNames] : propNames, externNames, effectCache);
     const { fn, names, paramNames } = c;
     const vals = [];
     for (let i = 0; i < names.length; i++) {
@@ -490,6 +503,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   }
 
   function updateInstance(inst) {
+    if (inst.meta.derived.length) computeDerived(inst);
     if (inst.mountedState !== inst.state) {
       unmountState(inst);
       mountState(inst);
@@ -513,6 +527,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     if (viewMap.has(node.tag)) return mountSubView(node, inst, localNames, locals, path);
     if (node.tag === 'List') return mountList(node, inst, localNames, locals, path);
     if (node.tag === 'If') return mountIf(node, inst, localNames, locals, path);
+    if (node.tag === 'Match') return mountMatch(node, inst, localNames, locals, path);
     return mountElement(node, inst, localNames, locals, path);
   }
 
@@ -831,26 +846,34 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
 
   // If(cond) { children }: mounts children while cond is truthy. The wrapper
   // is `display: contents`, so it does not affect layout.
+  // If(cond) { … } Else { … }: one branch is mounted at a time; switching
+  // branches swaps DOM, staying on one only updates its bindings.
   function mountIf(node, inst, localNames, locals, path) {
     const el = doc.createElement('div');
     el.className = 'f4-if';
     el.style.display = 'contents';
     const expr = node.args[0] !== undefined ? node.args[0] : 'false';
     const fn = compileExpr(expr, inst.meta.varNames, localNames);
+    const branches = [node.children, node.elseChildren || null];
+    let shown = -1;
     let blocks = null;
     function update() {
-      const on = Boolean(safeEval(fn, inst.vars, locals, expr));
-      if (on && !blocks) {
-        blocks = node.children.map((c, i) => mountNode(c, inst, localNames, locals, `${path}/if${i}`));
-        for (const b of blocks) el.appendChild(b.el);
-      } else if (!on && blocks) {
+      const want = safeEval(fn, inst.vars, locals, expr) ? 0 : branches[1] ? 1 : -1;
+      if (want === shown) {
+        if (blocks) for (const b of blocks) b.update();
+        return;
+      }
+      if (blocks) {
         for (const b of blocks) {
           b.dispose();
           b.el.remove();
         }
         blocks = null;
-      } else if (on) {
-        for (const b of blocks) b.update();
+      }
+      shown = want;
+      if (want >= 0) {
+        blocks = branches[want].map((c, i) => mountNode(c, inst, localNames, locals, `${path}/${want ? 'else' : 'if'}${i}`));
+        for (const b of blocks) el.appendChild(b.el);
       }
     }
     update();
@@ -863,6 +886,69 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       },
     };
   }
+
+  // Match(value) { pattern => … }: the compiler made each arm's test an
+  // expression over `__m` (and the arm's binding). The first arm whose test
+  // holds is mounted; it is kept (and updated) until another arm wins.
+  function mountMatch(node, inst, localNames, locals, path) {
+    const el = doc.createElement('div');
+    el.className = 'f4-match';
+    el.style.display = 'contents';
+    const expr = node.args[0];
+    const fn = compileExpr(expr, inst.meta.varNames, localNames);
+    const arms = node.arms.map((a, i) => {
+      const names = a.binding ? [...localNames, '__m', a.binding] : [...localNames, '__m'];
+      return { arm: a, names, test: compileExpr(a.test, inst.meta.varNames, names), path: `${path}/arm${i}` };
+    });
+    let current = -1;
+    let armLocals = null;
+    let blocks = null;
+    function update() {
+      const value = safeEval(fn, inst.vars, locals, expr);
+      let pick = -1;
+      for (let i = 0; i < arms.length; i++) {
+        const a = arms[i];
+        const scope = { ...locals, __m: value };
+        if (a.arm.binding) scope[a.arm.binding] = value;
+        if (safeEval(a.test, inst.vars, scope, a.arm.test)) {
+          pick = i;
+          break;
+        }
+      }
+      if (pick === current && blocks) {
+        armLocals.__m = value;
+        if (arms[pick].arm.binding) armLocals[arms[pick].arm.binding] = value;
+        for (const b of blocks) b.update();
+        return;
+      }
+      if (blocks) {
+        for (const b of blocks) {
+          b.dispose();
+          b.el.remove();
+        }
+        blocks = null;
+      }
+      current = pick;
+      if (pick < 0) return;
+      const a = arms[pick];
+      // inherit (not copy) the outer locals: a List row may update them in place
+      armLocals = Object.create(locals || null);
+      armLocals.__m = value;
+      if (a.arm.binding) armLocals[a.arm.binding] = value;
+      blocks = a.arm.children.map((c, i) => mountNode(c, inst, a.names, armLocals, `${a.path}/${i}`));
+      for (const b of blocks) el.appendChild(b.el);
+    }
+    update();
+    return {
+      el,
+      update,
+      dispose() {
+        if (blocks) for (const b of blocks) b.dispose();
+        blocks = null;
+      },
+    };
+  }
+
 
   function mountList(node, inst, localNames, locals, path) {
     const el = doc.createElement('div');

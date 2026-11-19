@@ -5,3 +5,11 @@ data Todo {
     text: String,
     completed: bool,
 }
+
+// Which todos the list shows. Enum variants compile to plain strings
+// ("All", "Active", "Done"), so they serialize and compare with ==.
+enum Filter {
+    All,
+    Active,
+    Done,
+}

@@ -1,7 +1,7 @@
 // Todo App — sub-views with their own state machines, events, a theme and data
 // Split into files:
 //   app.foar                  the root view (this file)
-//   models.foar               data Todo
+//   models.foar               data Todo, enum Filter
 //   styles/theme.foar         theme, shared styles, animations
 //   components/TodoItem.foar  one todo: Idle / Editing states
 import "models"
@@ -17,6 +17,17 @@ view TodoApp {
     ];
     store search_query: String = "";
     store draft: String = "";
+    store filter: Filter = Filter.All;
+
+    // Derived values: recomputed on every update, no dependency lists
+    let remaining = todos.filter(|t| !t.completed).len();
+    let visible = todos
+        .filter(|t| t.text.contains(search_query))
+        .filter(|t| match filter {
+            Filter.All => true,
+            Filter.Active => !t.completed,
+            Filter.Done => t.completed,
+        });
 
     // Base styling applied to the host element
     style {
@@ -50,14 +61,33 @@ view TodoApp {
                     .style({ background: #007bff; color: white; border-radius: 6px; padding: 0 20px; })
             }
 
-            // List rendering with reactive filtering
-            List(todos.filter(|t| t.text.contains(search_query))) { todo =>
+            // Keyed list: rows are reused, not rebuilt
+            List(visible, empty: "Nothing here.") { todo =>
                 // Instantiate sub-view and listen to its emitted events
                 TodoItem(item: todo)
                     -> on_delete(RemoveTodo)
                     -> on_update(UpdateTodo)
             }
+
+            // Footer: a Match picks the message (the compiler checks every case)
+            Row {
+                Column {
+                    Match(remaining) {
+                        0 => Text("All done 🎉"),
+                        1 => Text("1 item left"),
+                        n => Text("{n} items left"),
+                    }
+                }.style({ flex: 1; color: var(--muted); })
+
+                Button("All") -> on_click(ShowAll).style(FilterButton, { font-weight: filter == Filter.All ? 700 : 400; })
+                Button("Active") -> on_click(ShowActive).style(FilterButton, { font-weight: filter == Filter.Active ? 700 : 400; })
+                Button("Done") -> on_click(ShowDone).style(FilterButton, { font-weight: filter == Filter.Done ? 700 : 400; })
+            }
         }
+
+        effect ShowAll() { filter = Filter.All; }
+        effect ShowActive() { filter = Filter.Active; }
+        effect ShowDone() { filter = Filter.Done; }
 
         // --- Effects (Transitions & Data Mutations) ---
         effect UpdateSearch(query: String) {

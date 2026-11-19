@@ -3,18 +3,19 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FOAR Playground — State-Machine UI Language</title>
-  <link rel="stylesheet" href="/playground/styles.css" />
+  <title>FOAR Playground</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
-      <div class="brand-logo">⚡</div>
+    <a class="brand" href="../" title="FOAR home">
+      <img class="brand-logo" src="../favicon.svg" alt="" width="32" height="32" />
       <div>
         <div class="brand-title">FOAR Playground</div>
-        <div class="brand-subtitle">Topological State-Machine UI Compiler &amp; Browser Runtime</div>
+        <div class="brand-subtitle">State-machine UI language · Rust → WASM compiler</div>
       </div>
-    </div>
+    </a>
 
     <div class="topbar-controls">
       <div class="control-group">
@@ -131,6 +132,6 @@
     </section>
   </main>
 
-  <script type="module" src="/playground/playground.js"></script>
+  <script type="module" src="playground.js"></script>
 </body>
 </html>

@@ -15,6 +15,10 @@ struct Rules {
     transition: Regex,
     emit: Regex,
     if_no_parens: Regex,
+    if_let_some: Regex,
+    for_in: Regex,
+    while_no_parens: Regex,
+    loop_kw: Regex,
 }
 
 fn rules() -> &'static Rules {
@@ -33,6 +37,12 @@ fn rules() -> &'static Rules {
         emit: Regex::new(r"(?-u:\b)emit[ \t\r\n]+([a-zA-Z0-9_]+)[ \t\r\n]*\(([^)]*)\)[ \t\r\n]*;").unwrap(),
         // `if cond {` (no parens) -> `if (cond) {`
         if_no_parens: Regex::new(r"(?-u:\b)if[ \t\r\n]+([^({][^{]*)\{").unwrap(),
+        // `if let Some(x) = expr {` (any expression)
+        if_let_some: Regex::new(r"(?-u:\b)if[ \t\r\n]+let[ \t\r\n]+Some[ \t\r\n]*\([ \t\r\n]*([A-Za-z_][A-Za-z0-9_]*)[ \t\r\n]*\)[ \t\r\n]*=[ \t\r\n]*([^{]+?)[ \t\r\n]*\{").unwrap(),
+        // `for x in items {` / `for i in 0..n {` / `for i in 1..=n {`
+        for_in: Regex::new(r"(?-u:\b)for[ \t\r\n]+([A-Za-z_][A-Za-z0-9_]*)[ \t\r\n]+in[ \t\r\n]+([^{]+?)[ \t\r\n]*\{").unwrap(),
+        while_no_parens: Regex::new(r"(?-u:\b)while[ \t\r\n]+([^({ \t\r\n][^{]*)\{").unwrap(),
+        loop_kw: Regex::new(r"(?-u:\b)loop[ \t\r\n]*\{").unwrap(),
     })
 }
 
@@ -40,6 +50,25 @@ pub fn rust_idioms_to_js(code: &str) -> String {
     let r = rules();
     let mut out = code.to_string();
     out = r.if_let_find.replace_all(&out, "const ${1} = ${2}.findIndex((${3}) => ${4}); if (${1} !== -1)").into_owned();
+    out = r.if_let_some.replace_all(&out, "let ${1}; if ((${1} = (${2})) != null) {").into_owned();
+    out = r
+        .for_in
+        .replace_all(&out, |c: &regex::Captures| {
+            let (var, src) = (&c[1], c[2].trim());
+            match src.split_once("..") {
+                Some((a, b)) if !a.is_empty() && !b.is_empty() && !a.contains('(') => {
+                    let (op, b) = match b.strip_prefix('=') {
+                        Some(b) => ("<=", b),
+                        None => ("<", b),
+                    };
+                    format!("for (let {v} = {a}; {v} {op} {b}; {v}++) {{", v = var, a = a.trim(), b = b.trim(), op = op)
+                }
+                _ => format!("for (const {} of {}) {{", var, src),
+            }
+        })
+        .into_owned();
+    out = r.while_no_parens.replace_all(&out, |c: &regex::Captures| format!("while ({}) {{", c[1].trim())).into_owned();
+    out = r.loop_kw.replace_all(&out, "while (true) {").into_owned();
     out = r.retain.replace_all(&out, "${1} = ${1}.filter((${2}) => ${3})").into_owned();
     out = r.closure.replace_all(&out, "${1}(${2}) => ").into_owned();
     out = r.contains.replace_all(&out, ".toLowerCase().includes(String(${1}).toLowerCase())").into_owned();

@@ -517,3 +517,112 @@ test('List containers take role/label and events (context menu on the background
   assert.deepEqual(rt.getSnapshot()[0].stores.hit, { x: 5, y: 6 });
   rt.destroy();
 });
+
+// ---- enums, match, Match/If-Else, let, loops --------------------------------------------
+const langSrc = `
+enum Filter { All, Active, Done = "completed" }
+
+view App {
+    store filter: Filter = Filter.All;
+    store items: Vec<any> = [{ id: "a", done: false }, { id: "b", done: true }, { id: "c", done: false }];
+    store log: String = "";
+    let open = items.filter(|t| !t.done).len();
+    let shown = match filter {
+        Filter.All => items,
+        Filter.Active => items.filter(|t| !t.done),
+        Filter.Done => items.filter(|t| t.done),
+    };
+
+    state Ready {
+        render {
+            Text("{open} open").style({ color: red; })
+            Match(filter) {
+                All => Text("everything"),
+                Active => { Text("todo") Text("only") }
+                Done => Text("finished"),
+            }
+            If(shown.len() == 0) { Text("none") } Else If(shown.len() == 1) { Text("one") } Else { Text("many") }
+            Match(open) {
+                0 => Text("all done"),
+                n if n > 1 => Text("{n} left"),
+                _ => Text("one left"),
+            }
+            Button("next") -> on_click(Next)
+            Button("finish") -> on_click(FinishAll)
+        }
+        effect Next() {
+            filter = match filter {
+                Filter.All => Filter.Active,
+                Filter.Active => Filter.Done,
+                Filter.Done => Filter.All,
+            };
+        }
+        effect FinishAll() {
+            for t in items { t.done = true; }
+            let mut total = 0;
+            for i in 1..=3 { total += i; }
+            match open {
+                0 => log = "nothing to do",
+                _ => { log = "finished " + total; }
+            }
+        }
+    }
+}
+`;
+
+test('enums + match: values, render Match swaps arms, If/Else chain, let recomputes', async () => {
+  const { window, container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(langSrc), container, {});
+  const textsAll = () => q(container, '.f4-text').map((e) => e.textContent);
+  assert.deepEqual(textsAll(), ['2 open', 'everything', 'many', '2 left']);
+  const head = q(container, '.f4-text')[0];
+  const next = q(container, '.f4-button')[0];
+  next.click();
+  await tick();
+  assert.equal(rt.getSnapshot()[0].stores.filter, 'Active', 'enum values are plain strings');
+  assert.deepEqual(textsAll(), ['2 open', 'todo', 'only', 'many', '2 left']);
+  next.click();
+  await tick();
+  assert.equal(rt.getSnapshot()[0].stores.filter, 'completed', 'explicit enum value');
+  assert.deepEqual(textsAll(), ['2 open', 'finished', 'one', '2 left']);
+  assert.equal(q(container, '.f4-text')[0], head, 'nodes outside the Match are kept');
+  // the same arm stays mounted when the value changes but the arm doesn't
+  const leftNode = q(container, '.f4-text').at(-1);
+  q(container, '.f4-button')[1].click();
+  await tick();
+  assert.deepEqual(textsAll(), ['0 open', 'finished', 'many', 'all done'], 'let values recompute after effects');
+  assert.notEqual(q(container, '.f4-text').at(-1), leftNode, 'a new arm mounts new nodes');
+  assert.equal(rt.getSnapshot()[0].stores.log, 'finished 6', 'for loops and match statements run');
+  rt.destroy();
+});
+
+test('Match keeps an arm mounted while the value changes inside it (binding updates)', async () => {
+  const { window, container } = makeDom();
+  const src = 'view C {\n store n: i32 = 5;\n state S {\n render {\n Match(n) {\n 0 => Text("zero"),\n k if k > 0 => Text("pos {k}"),\n _ => Text("neg"),\n }\n Button("-") -> on_click(Dec)\n }\n effect Dec() { n -= 1; }\n }\n}\n';
+  const rt = createFoarRuntime(parseFoar(src), container, {});
+  const node = q(container, '.f4-text')[0];
+  assert.equal(node.textContent, 'pos 5');
+  q(container, '.f4-button')[0].click();
+  await tick();
+  assert.equal(q(container, '.f4-text')[0], node, 'same arm: node reused');
+  assert.equal(node.textContent, 'pos 4', 'binding updated');
+  rt.destroy();
+});
+
+test('orders example: exhaustive matches drive badges and actions; let values recompute', async () => {
+  const { window, container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(loadProject('orders')), container, {});
+  const row = (i) => [...container.querySelectorAll('.f4-view-OrderRow')[i].querySelectorAll('.f4-text, .f4-button')].map((e) => e.textContent);
+  assert.deepEqual(row(0), ['A-1001 · Ana', '1 item · $18', 'Pending', 'Mark paid', 'Cancel']);
+  assert.deepEqual(row(4).slice(2), ['Cancelled', '—']);
+  const first = container.querySelector('.f4-view-OrderRow');
+  fire(window, first.querySelector('.f4-button'), 'click');
+  await tick();
+  assert.deepEqual(row(0).slice(2), ['Paid', 'Ship', 'Cancel']);
+  assert.equal(rt.getSnapshot()[0].stores.orders[0].status, 'Paid');
+  fire(window, [...first.querySelectorAll('.f4-button')].find((b) => b.textContent === 'Cancel'), 'click');
+  await tick();
+  assert.deepEqual(row(0).slice(2), ['Cancelled', '—']);
+  assert.equal(container.querySelector('.f4-view-Orders > .f4-row .f4-text').textContent, '2 open · revenue $506.40');
+  rt.destroy();
+});
