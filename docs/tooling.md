@@ -3,7 +3,7 @@
 ## The compiler
 
 The compiler is written in Rust and builds two ways from the same source: a
-native command-line tool, and a WebAssembly module (≈237 KB gzipped) that the
+native command-line tool, and a WebAssembly module (≈246 KB gzipped) that the
 playground runs in the browser. Both compile and typecheck the 21-file Notes app
 (≈2,000 lines) in about 30 ms.
 

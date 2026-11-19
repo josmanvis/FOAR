@@ -214,8 +214,8 @@ runtime.
 
 ```foar
 theme {
-    --accent: #4f46e5;
-    @dark { --accent: #818cf8; }
+    --accent: #0f4c81;
+    @dark { --accent: #58a6ff; }
 }
 
 style Card {
@@ -306,6 +306,31 @@ view App {
 `route` exposes `{ path, params, query, hash }` everywhere, and staying on the
 same `Route` updates `params` in place without remounting its view.
 
+## Slots, Portals, Lifecycle & Error Boundaries
+
+Build reusable layout components with `Slot()` / `Slot(name: "header")`, mount
+modals outside the layout tree with `Portal`, hook into `on_enter` / `on_unmount`,
+and isolate runtime or SSR errors with `Catch { … } Fallback { err => … }`:
+
+```foar
+enum LoadState<T> { Idle, Loading, Ready(T), Failed(String) }
+
+view Card(title: String) {
+    state Open {
+        render {
+            Column {
+                Row { Slot(name: "header") { Text(title) } }
+                Slot()
+            }
+        }
+    }
+}
+```
+
+See the [Fleet Console (`router`)](../examples/router) example for a live app
+combining `Router`, `Slot()`, `Portal`, generic `ProbeState<i32>`, `on_enter`,
+and `Catch`/`Fallback`.
+
 ## Typed host code and SSR
 
 Declare JavaScript host bindings with `extern fn` so the compiler checks every
@@ -333,14 +358,16 @@ view Notes {
 function, and runs that state's `on_exit` when it settles. Loading states are
 states, not flags.
 
-Build with `foar build app.foar --format js -o dist/app.js`, then mount on the
-client or render on the server (Node / Edge, zero DOM dependency) and hydrate
-in place:
+Build with `foar build app.foar --format js -o dist/app.js` (or use the Vite HMR
+plugin in `integrations/vite-plugin-foar.js`), then mount on the client or
+render on the server (sync, async loaders, or streaming `ReadableStream`) and
+hydrate in place:
 
 ```js
-// Server (Node / Deno / Bun / Edge)
-import { renderToString } from './dist/app.js';
-const { html, head } = renderToString({ url: req.url, bindings: { load_notes, api_save } });
+// Server (Node / Deno / Bun / Edge): sync, async loaders, or streaming
+import { renderToString, renderToStringAsync, renderToStream } from './dist/app.js';
+const { html, head } = await renderToStringAsync({ url: req.url, bindings: { load_notes, api_save } });
+// Or stream progressively: const stream = renderToStream({ url: req.url, loaders });
 
 // Client (adopts server DOM nodes with zero elements recreated)
 import { hydrate } from './dist/app.js';

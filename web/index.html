@@ -382,7 +382,7 @@ Match(cart.len()) {
                 <td>Opt-in via TypeScript</td>
                 <td>No</td>
                 <td>Yes</td>
-                <td class="col-foar">Yes: enums, bools, guards</td>
+                <td class="col-foar">Yes: tagged unions, enums, bools, guards</td>
               </tr>
               <tr>
                 <td>Derived values</td>
@@ -399,6 +399,13 @@ Match(cart.len()) {
                 <td class="col-foar">Compiled bindings, retained DOM</td>
               </tr>
               <tr>
+                <td>Composition &amp; safety</td>
+                <td>Children, portals, class ErrorBoundary</td>
+                <td>Snippets</td>
+                <td>Functions</td>
+                <td class="col-foar">Built-in: <code>Slot</code>, <code>Portal</code>, <code>Catch</code>/<code>Fallback</code></td>
+              </tr>
+              <tr>
                 <td>Styling</td>
                 <td>External or CSS-in-JS</td>
                 <td>Scoped <code>&lt;style&gt;</code></td>
@@ -410,26 +417,26 @@ Match(cart.len()) {
                 <td>External (TypeScript)</td>
                 <td>External (TS)</td>
                 <td>Built-in</td>
-                <td class="col-foar">Built-in, including <code>extern fn</code></td>
+                <td class="col-foar">Built-in: generics, ADTs, <code>extern fn</code></td>
               </tr>
               <tr>
-                <td>Routing &amp; SSR</td>
+                <td>Routing &amp; Streaming SSR</td>
                 <td>External (Next / Remix)</td>
                 <td>SvelteKit</td>
                 <td>Elm Land</td>
-                <td class="col-foar">Built-in: <code>Router</code>, SSR, <code>hydrate</code></td>
+                <td class="col-foar">Built-in: <code>Router</code>, <code>renderToStream</code>, <code>hydrate</code></td>
               </tr>
               <tr>
-                <td>Compiler</td>
+                <td>Compiler &amp; LSP</td>
                 <td>JS (Babel / TS)</td>
                 <td>JS</td>
                 <td>Haskell</td>
-                <td class="col-foar">Rust: native and WebAssembly</td>
+                <td class="col-foar">Rust: native CLI, <code>foar lsp</code>, and WASM</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <p class="note">FOAR is still young: local and Git <code>foar.toml</code> packages work today without a hosted public registry yet, and undeclared JS host functions remain a gradual escape hatch. <a href="docs/why.html#what-foar-is-not-yet">Read the full list of trade-offs.</a></p>
+        <p class="note">FOAR is still young: local, Git, and custom-registry <code>foar.toml</code> + SHA-256 <code>foar.lock</code> packages work today without a central hosted registry yet, and undeclared JS host functions remain an opt-in gradual escape hatch. <a href="docs/why.html#what-foar-is-not-yet">Read the full list of trade-offs.</a></p>
       </div>
     </div>
   </section>
