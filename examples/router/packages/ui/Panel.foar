@@ -1,0 +1,31 @@
+// Reusable slotted panel component from the @ui package.
+view Panel(subtitle: String) {
+    style {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        background: #ffffff;
+        padding: 16px;
+        layout: vertical;
+        gap: 12px;
+    }
+
+    state Ready {
+        render {
+            Column {
+                Row {
+                    Slot(name: "header") {
+                        Text(subtitle).style({ font-weight: 700; font-size: 16px; })
+                    }
+                }.style({ justify-content: space-between; border-bottom: 1px solid #f1f5f9; padding-bottom: 10px; })
+
+                Column {
+                    Slot()
+                }.style({ gap: 10px; })
+
+                Row {
+                    Slot(name: "footer")
+                }.style({ justify-content: flex-end; gap: 8px; })
+            }.style({ gap: 12px; })
+        }
+    }
+}

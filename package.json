@@ -9,7 +9,7 @@
     "dev": "cargo build --release && node server.js",
     "build": "cargo build --release",
     "build:wasm": "cargo build --release --lib --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/foar.wasm web/foar.wasm",
-    "test": "cargo test --release && cargo build --release && node --test test/runtime.test.js",
+    "test": "cargo test --release && cargo build --release && node --test test/runtime.test.js test/tooling.test.js",
     "bench": "cargo build --release && node bench/bench.js",
     "build:site": "node scripts/site.mjs _site"
   },

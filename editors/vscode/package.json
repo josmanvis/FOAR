@@ -1,0 +1,45 @@
+{
+  "name": "foar-language",
+  "displayName": "FOAR Language Support",
+  "description": "Syntax highlighting, diagnostics, completions, hover docs, and go-to-definition for the FOAR UI language via `foar lsp`.",
+  "version": "0.2.0",
+  "publisher": "foar-lang",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:foar"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "foar",
+        "aliases": ["FOAR", "foar"],
+        "extensions": [".foar"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "foar",
+        "scopeName": "source.foar",
+        "path": "./syntaxes/foar.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "FOAR",
+      "properties": {
+        "foar.serverPath": {
+          "type": "string",
+          "default": "foar",
+          "description": "Path to the `foar` CLI binary (launched with `foar lsp`)."
+        }
+      }
+    }
+  }
+}

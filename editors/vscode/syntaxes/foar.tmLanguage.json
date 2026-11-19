@@ -1,0 +1,104 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "FOAR",
+  "scopeName": "source.foar",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#styleAtRules" },
+    { "include": "#eventArrows" },
+    { "include": "#keywords" },
+    { "include": "#builtins" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.foar", "match": "//.*$" },
+        { "name": "comment.block.foar", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.foar",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "name": "constant.character.escape.foar", "match": "\\\\." },
+        {
+          "name": "meta.interpolation.foar",
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.foar" } },
+          "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.foar" } },
+          "patterns": [
+            { "include": "#strings" },
+            { "include": "#numbers" },
+            { "include": "#keywords" }
+          ]
+        }
+      ]
+    },
+    "styleAtRules": {
+      "name": "keyword.other.at-rule.foar",
+      "match": "@(?:hover|focus|focus-within|active|disabled|checked|placeholder|before|after|dark|light|reduced-motion|media|state|use|keyframes|drag-source|drop-over)\\b"
+    },
+    "eventArrows": {
+      "match": "(->)\\s*([a-z_][a-z0-9_]*)\\s*(\\()([A-Za-z_][A-Za-z0-9_]*)(\\))",
+      "captures": {
+        "1": { "name": "keyword.operator.arrow.foar" },
+        "2": { "name": "entity.other.attribute-name.event.foar" },
+        "4": { "name": "entity.name.function.effect.foar" }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.foar",
+          "match": "\\b(?:view|state|render|effect|on_enter|on_exit|on_unmount|transition|emit|match|if|else|for|in|while|loop|return|break|continue|import)\\b"
+        },
+        {
+          "name": "storage.type.foar",
+          "match": "\\b(?:data|enum|store|let|mut|const|extern|fn|theme|style|css)\\b"
+        },
+        {
+          "name": "constant.language.foar",
+          "match": "\\b(?:true|false|null|Some|None)\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.class.element.foar",
+          "match": "\\b(?:Text|Button|Input|TextArea|Checkbox|RichText|Image|Spinner|Row|Column|List|If|Else|Match|Router|Route|Link|Slot|Portal|Catch|Fallback)\\b"
+        },
+        {
+          "name": "support.function.builtin.foar",
+          "match": "\\b(?:navigate|replace|t|t_key|random_uuid)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.foar",
+          "match": "\\b(?:String|bool|i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|Void|Vec|Option|Promise|Record|Route|CatchError|any)\\b"
+        },
+        {
+          "name": "entity.name.type.foar",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "name": "constant.numeric.foar",
+      "match": "\\b[0-9]+(?:\\.[0-9]+)?(?:px|rem|em|vh|vw|%|ms|s)?\\b"
+    },
+    "operators": {
+      "name": "keyword.operator.foar",
+      "match": "=>|->|\\.\\.=|\\.\\.|&&|\\|\\||\\?\\?|===|!==|==|!=|<=|>=|\\+=|-=|\\*=|/=|[=+\\-*/%!<>|]"
+    }
+  }
+}

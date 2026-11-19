@@ -106,22 +106,24 @@ values that changed.
   dynamic values are touched at runtime.
 - Inputs are never re-created, so focus, selection, scroll and CSS
   transitions survive every update.
-- The runtime is one dependency-free module of ≈18 KB gzipped (including the
-  router, zero-DOM SSR, client hydration, i18n, and accessibility helpers).
+- The runtime is one dependency-free module of ≈21 KB gzipped (including the
+  router, Slots, Portals, Catch boundaries, streaming & async zero-DOM SSR,
+  client hydration, i18n, and accessibility helpers).
 
 ## One language for the whole interface
 
 | | |
 |---|---|
-| **Static typing** | checks `store` initializers, `let` derived values, `data` struct literals & fields, view props, assignments, transitions, and typed `extern fn` host calls at compile time |
+| **Static typing & ADTs** | tagged-union `enum<T>` with payloads, generic `data<T>` / `view<T>`, and static checking of stores, derived `let`s, data literals & fields, view props, assignments, transitions, and typed `extern fn` host calls |
+| **Composition & safety** | default & named `Slot()`, `Portal(target: "...")` with delegated events, `on_enter`/`on_unmount` lifecycle hooks, and `Catch { … } Fallback { err => … }` error boundaries |
 | **Routing** | declarative `Router`, `Route("/orders/:id")`, `Link`, reactive `route`, and `navigate()` / `replace()` with History, Hash, and memory modes |
-| **SSR & hydration** | zero-DOM `renderToString(program, { url })` on Node/Deno/Bun/Edge and zero-recreation `hydrate(program, el)` that adopts server DOM nodes in place |
-| **Packages** | `foar.toml` manifests, `@pkg/Module` imports, and `foar init` / `foar add` / `foar pkg` CLI commands |
+| **Streaming SSR & hydration** | zero-DOM `renderToString`, async loaders (`renderToStringAsync`), Web `ReadableStream` streaming SSR (`renderToStream`), and zero-recreation `hydrate(program, el)` |
+| **Packages & lockfiles** | `foar.toml` manifests, SHA-256 `foar.lock` integrity verification, `@pkg/Module` imports, and `foar init` / `add` / `install` / `pkg --verify` |
 | **Styling** | real CSS, scoped per element, with themes, dark mode, `@hover`/`@media` nesting, and `@state Editing { … }` for styles that follow the state machine |
 | **Accessibility** | `label:`, `role:`, `aria: {…}` on any element; clickable rows become keyboard-operable buttons by default |
 | **i18n** | `t(key, params)` with plurals everywhere; a checker that finds missing and unused keys |
 | **Interaction** | context menus at the pointer, drag and drop with a payload, keyed lists |
-| **Tooling** | a Rust compiler that runs natively and as WebAssembly; a browser IDE with completions, diagnostics, rename and a formatter |
+| **Tooling** | Rust compiler (native + WASM), native Rust LSP (`foar lsp`), Vite HMR plugin, VS Code extension + TextMate grammar, and browser IDE |
 
 ## How it compares
 
@@ -129,13 +131,14 @@ values that changed.
 |---|---|---|---|---|
 | Component state | flags in hooks | variables | one model + messages | **explicit states** per view |
 | Showing a branch | `cond && …`, ternaries | `{#if}`, `{#each}` | `case` | `Match`, `If`/`Else`, `List` |
-| Exhaustive branching | opt-in via TypeScript | — | yes | **yes** (enums, bools) |
-| Type checking | external (TypeScript) | external (TS) | built-in | **built-in** (stores, data, props, effects, `extern fn`) |
-| Routing & SSR | external framework (Next/Remix) | SvelteKit | Elm Land | **built-in** (`Router`, `renderToString`, `hydrate`) |
+| Exhaustive ADTs | opt-in via TypeScript | — | yes | **yes** (tagged unions, enums, bools) |
+| Type checking | external (TypeScript) | external (TS) | built-in | **built-in** (generics, ADTs, props, `extern fn`) |
+| Composition & boundaries | JSX children, portals, class ErrorBoundary | snippets | functions | **built-in** (`Slot`, `Portal`, `Catch`/`Fallback`) |
+| Routing & Streaming SSR | external framework (Next/Remix) | SvelteKit | Elm Land | **built-in** (`Router`, `renderToStream`, `hydrate`) |
 | Derived values | `useMemo` + dependency list | `$derived` | functions of the model | `let` (no dependencies to list) |
 | Updates | virtual DOM diff | compiled, fine-grained | virtual DOM diff | compiled bindings, retained DOM |
 | Styling | external / CSS-in-JS | scoped `<style>` | external / elm-css | in the language, state-aware |
-| Compiler | Babel / TS (JS) | JS | Haskell | **Rust**, native + WASM |
+| Compiler & LSP | Babel / TS (JS) | JS | Haskell | **Rust**, native + WASM + `foar lsp` |
 
 FOAR takes Elm's best idea (exhaustive pattern matching), Svelte's
 (compile the framework away), and XState's (UI as a state machine), and puts
@@ -145,17 +148,17 @@ them in one small language.
 
 Honesty about the remaining limits:
 
-- **No central public package registry yet.** Projects can declare local path
-  and Git dependencies in `foar.toml` and import `@pkg/Module`, but there is no
-  hosted registry like npm or crates.io yet.
-- **Gradual typing at the JS boundary.** `extern fn` declarations are statically
-  checked on every call, and FOAR code is typechecked across stores, data
-  literals, fields, view props, and assignments — but undeclared JS host
-  functions and `any` annotations remain a gradual escape hatch, and FOAR does
-  not yet have user-defined generic views or algebraic data types with payloads.
-- **Synchronous SSR.** `renderToString` and `hydrate` run synchronously with
-  zero DOM dependency and adopt existing DOM nodes in place, but streaming
-  suspense SSR and partial islands hydration are not built yet.
+- **No hosted central package registry yet.** `foar.toml`, `foar.lock` (SHA-256
+  integrity), local path, Git, and custom HTTP registry URLs work today, but
+  there is no central public registry like npm or crates.io yet.
+- **Gradual escape hatch at the JS boundary.** Declared `extern fn` calls,
+  generic `data<T>`, tagged-union `enum<T>` payloads, view props, stores, and
+  effects are statically checked — while undeclared JS host calls and explicit
+  `any` remain opt-in gradual escape hatches.
+- **Full-document hydration (no partial islands yet).** `renderToStream`,
+  `renderToStringAsync`, and zero-recreation `hydrate` run across Node, Deno,
+  Bun, and Edge workers, while partial islands / out-of-order suspense
+  streaming boundaries remain future work.
 
 If those trade-offs work for you, [try it in the playground](https://josmanvis.github.io/FOAR/playground/)
 or read the [guide](./guide.md).

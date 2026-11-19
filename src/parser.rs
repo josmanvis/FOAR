@@ -68,7 +68,7 @@ pub struct Parser<'s> {
 /// Elements the runtime provides (web/foar-runtime.js mountNode/mountElement).
 const BUILTIN_ELEMENTS: &[&str] = &[
     "Text", "Button", "Input", "TextArea", "Checkbox", "RichText", "Image", "Spinner",
-    "Row", "Column", "List", "If", "Match", "Router", "Route", "Link",
+    "Row", "Column", "List", "If", "Match", "Router", "Route", "Link", "Slot", "Portal", "Catch",
 ];
 
 impl<'s> Parser<'s> {
@@ -293,6 +293,18 @@ impl<'s> Parser<'s> {
         Ok(ExternDecl { name, params, return_type })
     }
 
+    fn parse_type_params(&mut self) -> PResult<Vec<String>> {
+        let mut params = Vec::new();
+        if self.eat("<") {
+            while !self.at_end() && !self.is(">") {
+                params.push(self.expect_ident()?);
+                self.eat(",");
+            }
+            self.expect(">")?;
+        }
+        Ok(params)
+    }
+
     fn parse_type(&mut self) -> PResult<String> {
         let base = self.expect_ident()?;
         if self.eat("<") {
@@ -319,6 +331,7 @@ impl<'s> Parser<'s> {
     fn parse_data(&mut self) -> PResult<DataDecl> {
         self.expect("data")?;
         let name = self.declare("Data type")?;
+        let type_params = self.parse_type_params()?;
         self.expect("{")?;
         let mut fields = Vec::new();
         while !self.at_end() && !self.is("}") {
@@ -329,13 +342,14 @@ impl<'s> Parser<'s> {
             fields.push(Field { name: fname, field_type });
         }
         self.expect("}")?;
-        Ok(DataDecl { kind: "DataDecl", name, fields })
+        Ok(DataDecl { kind: "DataDecl", name, type_params, fields })
     }
 
     // ---- views ------------------------------------------------------------
     fn parse_view(&mut self) -> PResult<ViewDecl> {
         self.expect("view")?;
         let name = self.declare("View")?;
+        let type_params = self.parse_type_params()?;
         self.cur_view = Some(name.clone());
         self.cls_counter = 0;
         self.var_types.clear();
@@ -355,6 +369,7 @@ impl<'s> Parser<'s> {
         let mut derived = Vec::new();
         let mut stores = Vec::new();
         let mut style = None;
+        let mut on_unmount = None;
         let mut states = Vec::new();
         while !self.at_end() && !self.is("}") {
             if self.is("store") {
@@ -411,6 +426,15 @@ impl<'s> Parser<'s> {
                 self.expect("}")?;
                 let ctx = Ctx { view: Some(&name), is_host: true, allow_dynamic: true };
                 style = Some(self.compile_style(&block, &format!("f4-{}", name), &ctx)?);
+            } else if self.is("on_unmount") {
+                self.advance();
+                let body = self.parse_balanced_braces()?;
+                self.check_items.push(crate::typecheck::CheckItem::EffectBody {
+                    view: name.clone(),
+                    params: Vec::new(),
+                    tokens: body.clone(),
+                });
+                on_unmount = Some(self.effect_body(&body));
             } else if self.is("state") {
                 states.push(self.parse_state()?);
             } else {
@@ -419,7 +443,7 @@ impl<'s> Parser<'s> {
         }
         self.expect("}")?;
         self.cur_view = None;
-        Ok(ViewDecl { kind: "ViewDecl", name, params, stores, derived, style, states })
+        Ok(ViewDecl { kind: "ViewDecl", name, type_params, params, stores, derived, style, on_unmount, states })
     }
 
     fn compile_style(&mut self, block: &StyleBlock, cls: &str, ctx: &Ctx) -> PResult<Style> {
@@ -432,7 +456,9 @@ impl<'s> Parser<'s> {
         self.expect("{")?;
         let mut render = Vec::new();
         let mut effects = Vec::new();
+        let mut on_enter = None;
         let mut on_exit = None;
+        let mut on_unmount = None;
         while !self.at_end() && !self.is("}") {
             if self.is("render") {
                 self.advance();
@@ -441,6 +467,17 @@ impl<'s> Parser<'s> {
                 self.expect("}")?;
             } else if self.is("effect") {
                 effects.push(self.parse_effect()?);
+            } else if self.is("on_enter") {
+                self.advance();
+                let body = self.parse_balanced_braces()?;
+                if let Some(view) = &self.cur_view {
+                    self.check_items.push(crate::typecheck::CheckItem::EffectBody {
+                        view: view.clone(),
+                        params: Vec::new(),
+                        tokens: body.clone(),
+                    });
+                }
+                on_enter = Some(self.effect_body(&body));
             } else if self.is("on_exit") {
                 self.advance();
                 let body = self.parse_balanced_braces()?;
@@ -452,12 +489,23 @@ impl<'s> Parser<'s> {
                     });
                 }
                 on_exit = Some(self.effect_body(&body));
+            } else if self.is("on_unmount") {
+                self.advance();
+                let body = self.parse_balanced_braces()?;
+                if let Some(view) = &self.cur_view {
+                    self.check_items.push(crate::typecheck::CheckItem::EffectBody {
+                        view: view.clone(),
+                        params: Vec::new(),
+                        tokens: body.clone(),
+                    });
+                }
+                on_unmount = Some(self.effect_body(&body));
             } else {
                 return self.err(format!("Unexpected token '{}' in state {}", self.describe(), name));
             }
         }
         self.expect("}")?;
-        Ok(StateDecl { kind: "StateDecl", name, render, effects, on_exit })
+        Ok(StateDecl { kind: "StateDecl", name, render, effects, on_enter, on_exit, on_unmount })
     }
 
     fn parse_render_block(&mut self) -> PResult<Vec<UiElement>> {
@@ -501,9 +549,13 @@ impl<'s> Parser<'s> {
             style: None,
             arms: None,
             else_children: None,
+            fallback_binding: None,
         };
         if tag == "Else" {
             return Err(err_at(self.src, at, "Else must follow an If block: `If(cond) { … } Else { … }`".to_string()));
+        }
+        if tag == "Fallback" {
+            return Err(err_at(self.src, at, "Fallback must follow a Catch block: `Catch { … } Fallback { err => … }`".to_string()));
         }
         let mut raw_pos_args: Vec<(Vec<Token>, usize)> = Vec::new();
         let mut raw_named_args: Vec<(String, Vec<Token>, usize)> = Vec::new();
@@ -644,6 +696,23 @@ impl<'s> Parser<'s> {
                 self.expect("}")?;
             }
         }
+        if tag == "Catch" && self.is("Fallback") {
+            self.advance();
+            self.expect("{")?;
+            let mut pushed_err = false;
+            if self.peek().kind == Kind::Ident && self.is_at(1, "=>") {
+                let bname = self.expect_ident()?;
+                el.fallback_binding = Some(bname.clone());
+                self.expect("=>")?;
+                self.render_locals.push((bname, Some("CatchError".to_string())));
+                pushed_err = true;
+            }
+            el.else_children = Some(self.parse_render_block()?);
+            if pushed_err {
+                self.render_locals.pop();
+            }
+            self.expect("}")?;
+        }
         loop {
             if self.eat("->") {
                 let ev = self.expect_ident()?;
@@ -652,7 +721,7 @@ impl<'s> Parser<'s> {
                 self.expect(")")?;
                 el.events.insert(ev, J::String(handler));
             } else if self.is(".") && self.is_at(1, "style") {
-                if tag == "If" || tag == "Match" || tag == "Router" || tag == "Route" {
+                if matches!(tag.as_str(), "If" | "Match" | "Router" | "Route" | "Slot" | "Portal" | "Catch") {
                     return self.err(format!("{} has no box of its own to style: style the elements inside it, or wrap it in a Row/Column", tag));
                 }
                 self.advance();
@@ -1029,6 +1098,18 @@ fn expand_element(el: &mut UiElement, uses: &std::collections::HashMap<String, V
     }
     for c in &mut el.children {
         expand_element(c, uses);
+    }
+    if let Some(ec) = &mut el.else_children {
+        for c in ec {
+            expand_element(c, uses);
+        }
+    }
+    if let Some(arms) = &mut el.arms {
+        for a in arms {
+            for c in &mut a.children {
+                expand_element(c, uses);
+            }
+        }
     }
 }
 

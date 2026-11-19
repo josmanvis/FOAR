@@ -398,6 +398,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   const effectCache = new Map();
   let destroyed = false;
   let scheduled = false;
+  let catchDepth = 0;
 
   // ---- styles ---------------------------------------------------------------
   // The Rust compiler emits all static CSS (themes, named styles, keyframes,
@@ -475,6 +476,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     try {
       return fn(vars, locals);
     } catch (err) {
+      if (catchDepth > 0) throw err;
       if (!warned.has(exprText)) {
         warned.add(exprText);
         console.warn(`FOAR: error evaluating \`${exprText}\`:`, err);
@@ -497,7 +499,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   }
 
   // ---- instances -----------------------------------------------------------
-  function createInstance(key, decl, props, parentEmitter, parentInst) {
+  function createInstance(key, decl, props, parentEmitter, parentInst, slotCtx = null) {
     const meta = metaFor(decl);
     const vars = {};
     for (const p of meta.propNames) vars[p] = props[p];
@@ -511,6 +513,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       mountedState: null,
       parentEmitter,
       parentInst,
+      slotCtx,
       host: null,
       badgeState: null,
       hostBindings: [],
@@ -674,9 +677,20 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     for (const b of inst.blocks) {
       if (b.el.parentNode !== inst.host) inst.host.appendChild(b.el);
     }
+    if (st && st.decl.onEnter) {
+      const prevState = inst.state;
+      const prevStores = inst.meta.storeNames.map((n) => inst.vars[n]);
+      runEffect(inst, st.decl.onEnter, []);
+      const changed = inst.state !== prevState || inst.meta.storeNames.some((n, i) => inst.vars[n] !== prevStores[i]);
+      if (changed) invalidate();
+    }
   }
 
   function unmountState(inst) {
+    const prevSt = inst.mountedState ? inst.meta.states.get(inst.mountedState) : null;
+    if (prevSt && prevSt.decl.onUnmount) {
+      runEffect(inst, prevSt.decl.onUnmount, []);
+    }
     for (const b of inst.blocks) {
       b.dispose();
       b.el.remove();
@@ -698,8 +712,16 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   }
 
   function disposeInstance(inst) {
+    if (inst.disposed) return;
+    const activeSt = inst.mountedState ? inst.meta.states.get(inst.mountedState) : null;
+    if (activeSt && activeSt.decl.onUnmount) {
+      runEffect(inst, activeSt.decl.onUnmount, []);
+    }
     for (const b of inst.blocks) b.dispose();
     inst.blocks = [];
+    if (inst.decl.onUnmount) {
+      runEffect(inst, inst.decl.onUnmount, []);
+    }
     inst.disposed = true;
     instances.delete(inst.key);
   }
@@ -711,6 +733,9 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     if (node.tag === 'If') return mountIf(node, inst, localNames, locals, path);
     if (node.tag === 'Match') return mountMatch(node, inst, localNames, locals, path);
     if (node.tag === 'Router') return mountRouter(node, inst, localNames, locals, path);
+    if (node.tag === 'Slot') return mountSlot(node, inst, localNames, locals, path);
+    if (node.tag === 'Portal') return mountPortal(node, inst, localNames, locals, path);
+    if (node.tag === 'Catch') return mountCatch(node, inst, localNames, locals, path);
     return mountElement(node, inst, localNames, locals, path);
   }
 
@@ -1051,6 +1076,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       if (p) propFns.push({ name: p.name, fn: compileExpr(expr, vn, localNames), expr });
     });
     for (const [name, expr] of Object.entries(node.namedArgs)) {
+      if (name === 'slot') continue;
       propFns.push({ name, fn: compileExpr(expr, vn, localNames), expr });
     }
     const props = {};
@@ -1060,7 +1086,10 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       const handlerName = node.events[`on_${event}`];
       if (handlerName) invokeEffect(inst, handlerName, payload);
     };
-    const child = createInstance(`${inst.key}/${path}`, childDecl, props, emitter, inst);
+    const slotCtx = node.children && node.children.length
+      ? { nodes: node.children, inst, localNames, locals, path }
+      : null;
+    const child = createInstance(`${inst.key}/${path}`, childDecl, props, emitter, inst, slotCtx);
     const el = mountInstance(child);
 
     return {
@@ -1074,6 +1103,178 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       },
       dispose() {
         disposeInstance(child);
+      },
+    };
+  }
+
+  function childSlotName(ch, slotInst, slotLocalNames, slotLocals) {
+    const expr = ch.namedArgs && ch.namedArgs.slot;
+    if (expr === undefined) return 'default';
+    const fn = compileExpr(expr, slotInst.meta.varNames, slotLocalNames);
+    const v = safeEval(fn, slotInst.vars, slotLocals, expr);
+    return v == null || v === '' ? 'default' : String(v);
+  }
+
+  // Slot() / Slot(name: "header") { fallback }: projects caller's children
+  // into the child view while keeping them bound to the caller's scope & events.
+  function mountSlot(node, inst, localNames, locals, path) {
+    const c = claim('div');
+    const el = c.el;
+    if (!c.claimed) {
+      el.className = 'f4-slot';
+      el.style.display = 'contents';
+    }
+    const nameExpr = node.namedArgs.name !== undefined ? node.namedArgs.name : node.args[0];
+    const wanted = nameExpr !== undefined
+      ? String(safeEval(compileExpr(nameExpr, inst.meta.varNames, localNames), inst.vars, locals, nameExpr) ?? 'default')
+      : 'default';
+    let blocks = [];
+    enterHydrate(el, c.claimed);
+    const ctx = inst.slotCtx;
+    const projected = ctx
+      ? ctx.nodes.filter((ch) => childSlotName(ch, ctx.inst, ctx.localNames, ctx.locals) === wanted)
+      : [];
+    if (projected.length > 0) {
+      blocks = projected.map((ch, i) => mountNode(ch, ctx.inst, ctx.localNames, ctx.locals, `${ctx.path}/slot-${wanted}/${i}`));
+    } else if (node.children && node.children.length > 0) {
+      blocks = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/fallback/${i}`));
+    }
+    for (const b of blocks) if (b.el.parentNode !== el) el.appendChild(b.el);
+    leaveHydrate();
+    return {
+      el,
+      update() {
+        for (const b of blocks) b.update();
+      },
+      dispose() {
+        for (const b of blocks) b.dispose();
+        blocks = [];
+      },
+    };
+  }
+
+  // Portal(target: "#modal-root") { ... }: renders children into another DOM
+  // container (default: document.body) with full event delegation and cleanup.
+  function mountPortal(node, inst, localNames, locals, path) {
+    const c = claim('div');
+    const anchor = c.el;
+    if (c.claimed && anchor.classList.contains('f4-portal')) {
+      anchor.textContent = '';
+    }
+    anchor.className = 'f4-portal-anchor';
+    anchor.style.display = 'none';
+
+    const targetExpr = node.namedArgs.target !== undefined ? node.namedArgs.target : node.args[0];
+    const selector = targetExpr !== undefined
+      ? safeEval(compileExpr(targetExpr, inst.meta.varNames, localNames), inst.vars, locals, targetExpr)
+      : 'body';
+    const targetEl = (selector && selector !== 'body' ? doc.querySelector(String(selector)) : null) || doc.body || container;
+    const portalRoot = doc.createElement('div');
+    portalRoot.className = 'f4-portal-root';
+    portalRoot.dataset.portalTarget = String(selector || 'body');
+    targetEl.appendChild(portalRoot);
+
+    for (const type of EVENT_TYPES) portalRoot.addEventListener(type, dispatch);
+    for (const type of DRAG_TYPES) portalRoot.addEventListener(type, onDrag);
+
+    // Portals live outside `container`, so mount their children fresh (not claiming inside container).
+    const wasHydrating = hydrating;
+    hydrating = false;
+    const blocks = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/portal/${i}`));
+    for (const b of blocks) if (b.el.parentNode !== portalRoot) portalRoot.appendChild(b.el);
+    hydrating = wasHydrating;
+
+    return {
+      el: anchor,
+      update() {
+        for (const b of blocks) b.update();
+      },
+      dispose() {
+        for (const b of blocks) b.dispose();
+        for (const type of EVENT_TYPES) portalRoot.removeEventListener(type, dispatch);
+        for (const type of DRAG_TYPES) portalRoot.removeEventListener(type, onDrag);
+        portalRoot.remove();
+      },
+    };
+  }
+
+  // Catch { ... } Fallback { err => ... }: isolates runtime errors in its
+  // subtree and renders Fallback with `{ message, view }` without crashing siblings.
+  function mountCatch(node, inst, localNames, locals, path) {
+    const c = claim('div');
+    const el = c.el;
+    if (!c.claimed) {
+      el.className = 'f4-catch';
+      el.style.display = 'contents';
+    }
+    let failed = false;
+    let blocks = [];
+    let fallbackLocals = null;
+    const fbNames = node.fallbackBinding ? dedupe([...localNames, node.fallbackBinding]) : localNames;
+
+    function clearBlocks() {
+      for (const b of blocks) {
+        b.dispose();
+        b.el.remove();
+      }
+      blocks = [];
+    }
+
+    function showFallback(err) {
+      clearBlocks();
+      failed = true;
+      const errObj = { message: err?.message || String(err), view: inst.viewName };
+      callbacks.onError?.(errObj, err);
+      if (!node.elseChildren || !node.elseChildren.length) return;
+      fallbackLocals = Object.create(locals || null);
+      if (node.fallbackBinding) fallbackLocals[node.fallbackBinding] = errObj;
+      blocks = node.elseChildren.map((ch, i) => mountNode(ch, inst, fbNames, fallbackLocals, `${path}/fallback/${i}`));
+      for (const b of blocks) if (b.el.parentNode !== el) el.appendChild(b.el);
+    }
+
+    enterHydrate(el, c.claimed);
+    catchDepth++;
+    try {
+      blocks = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/try/${i}`));
+      for (const b of blocks) if (b.el.parentNode !== el) el.appendChild(b.el);
+    } catch (err) {
+      catchDepth--;
+      leaveHydrate();
+      showFallback(err);
+      return {
+        el,
+        update() {
+          for (const b of blocks) b.update();
+        },
+        dispose() {
+          for (const b of blocks) b.dispose();
+          blocks = [];
+        },
+      };
+    }
+    catchDepth--;
+    leaveHydrate();
+
+    return {
+      el,
+      update() {
+        if (failed) {
+          for (const b of blocks) b.update();
+          return;
+        }
+        catchDepth++;
+        try {
+          for (const b of blocks) b.update();
+        } catch (err) {
+          catchDepth--;
+          showFallback(err);
+          return;
+        }
+        catchDepth--;
+      },
+      dispose() {
+        for (const b of blocks) b.dispose();
+        blocks = [];
       },
     };
   }
@@ -1161,7 +1362,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       for (let i = 0; i < arms.length; i++) {
         const a = arms[i];
         const scope = { ...locals, __m: value };
-        if (a.arm.binding) scope[a.arm.binding] = value;
+        if (a.arm.binding) scope[a.arm.binding] = a.arm.bindingExpr === '__m.value' ? value?.value : value;
         if (safeEval(a.test, inst.vars, scope, a.arm.test)) {
           pick = i;
           break;
@@ -1169,7 +1370,9 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       }
       if (pick === current && blocks) {
         armLocals.__m = value;
-        if (arms[pick].arm.binding) armLocals[arms[pick].arm.binding] = value;
+        if (arms[pick].arm.binding) {
+          armLocals[arms[pick].arm.binding] = arms[pick].arm.bindingExpr === '__m.value' ? value?.value : value;
+        }
         for (const b of blocks) b.update();
         return;
       }
@@ -1185,7 +1388,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       const a = arms[pick];
       armLocals = Object.create(locals || null);
       armLocals.__m = value;
-      if (a.arm.binding) armLocals[a.arm.binding] = value;
+      if (a.arm.binding) armLocals[a.arm.binding] = a.arm.bindingExpr === '__m.value' ? value?.value : value;
       if (first) enterHydrate(el, c.claimed);
       blocks = a.arm.children.map((ch, i) => mountNode(ch, inst, a.names, armLocals, `${a.path}/${i}`));
       for (const b of blocks) if (b.el.parentNode !== el) el.appendChild(b.el);
@@ -1417,8 +1620,9 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   }
 
   function dispatch(e) {
+    const root = e.currentTarget || container;
     let t = e.target;
-    while (t && t !== container) {
+    while (t && t !== root) {
       const h = handlers.get(t);
       const fn = h && h[e.type];
       // Innermost handler wins: a button inside a clickable row must not
@@ -1429,8 +1633,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   }
 
   // ---- drag and drop (in-app payloads; other drags pass through) -------------
-  const closestIn = (map, node) => {
-    for (let t = node; t && t !== container; t = t.parentNode) if (map.has(t)) return t;
+  const closestIn = (map, node, root = container) => {
+    for (let t = node; t && t !== root; t = t.parentNode) if (map.has(t)) return t;
     return null;
   };
   function setDropOver(el) {
@@ -1449,9 +1653,10 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     handlers.get(el)?.dragend?.(payload);
   }
   function onDrag(e) {
+    const root = e.currentTarget || container;
     switch (e.type) {
       case 'dragstart': {
-        const src = closestIn(dragSources, e.target);
+        const src = closestIn(dragSources, e.target, root);
         if (!src) return;
         const { payload, text } = dragSources.get(src)();
         dragging = { payload, el: src };
@@ -1465,7 +1670,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       }
       case 'dragover': {
         if (!dragging) return;
-        const target = closestIn(dropTargets, e.target);
+        const target = closestIn(dropTargets, e.target, root);
         setDropOver(target);
         if (target) {
           e.preventDefault();
@@ -1478,7 +1683,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         return;
       case 'drop': {
         if (!dragging) return;
-        const target = closestIn(dropTargets, e.target);
+        const target = closestIn(dropTargets, e.target, root);
         if (!target) return;
         e.preventDefault();
         const payload = dragging.payload;
@@ -1569,11 +1774,13 @@ export function renderToString(ast, options = {}) {
   const externs = Object.assign(Object.create(null), { random_uuid, t, t_key, route, navigate: noop, replace: noop }, options.bindings || {});
   const externNames = Object.keys(externs).filter((n) => /^[A-Za-z_$][\w$]*$/.test(n));
   const serializedInstances = {};
+  let ssrCatchDepth = 0;
 
   const evalSafe = (expr, vn, vars, ln, locals) => {
     try {
       return compileExpr(expr, vn, ln)(vars, locals);
-    } catch {
+    } catch (err) {
+      if (ssrCatchDepth > 0) throw err;
       return undefined;
     }
   };
@@ -1598,7 +1805,7 @@ export function renderToString(ast, options = {}) {
     return parts.length ? parts.join(';') : null;
   }
 
-  function renderView(key, decl, props) {
+  function renderView(key, decl, props, slotCtx = null) {
     const propNames = decl.params.map((p) => p.name);
     const storeNames = decl.stores.map((s) => s.name);
     const derivedNames = (decl.derived || []).map((d) => d.name);
@@ -1618,12 +1825,19 @@ export function renderToString(ast, options = {}) {
     const cls = ['f4-view-host', `f4-view-${decl.name}`, decl.style?.cls].filter(Boolean).join(' ');
     const st = styleAttr(decl.style, varNames, vars, viewExterns, externs);
     const inner = firstState
-      ? firstState.render.map((n, i) => renderNode(n, key, varNames, vars, viewExterns, externs, String(i))).join('')
+      ? firstState.render.map((n, i) => renderNode(n, key, decl.name, varNames, vars, viewExterns, externs, String(i), slotCtx)).join('')
       : '';
     return `<div${attrsStr([['class', cls], ['data-view-name', decl.name], ['data-key', key], ['data-state-name', stateName], ['style', st]])}>${inner}</div>`;
   }
 
-  function renderNode(node, instKey, vn, vars, ln, locals, path) {
+  function ssrChildSlotName(ch, vn, vars, ln, locals) {
+    const expr = ch.namedArgs && ch.namedArgs.slot;
+    if (expr === undefined) return 'default';
+    const v = evalSafe(expr, vn, vars, ln, locals);
+    return v == null || v === '' ? 'default' : String(v);
+  }
+
+  function renderNode(node, instKey, viewName, vn, vars, ln, locals, path, slotCtx) {
     if (viewMap.has(node.tag)) {
       const childDecl = viewMap.get(node.tag);
       const props = {};
@@ -1632,14 +1846,57 @@ export function renderToString(ast, options = {}) {
         if (p) props[p.name] = evalSafe(expr, vn, vars, ln, locals);
       });
       for (const [name, expr] of Object.entries(node.namedArgs)) {
+        if (name === 'slot') continue;
         props[name] = evalSafe(expr, vn, vars, ln, locals);
       }
-      return renderView(`${instKey}/${path}`, childDecl, props);
+      const nextSlot = node.children && node.children.length
+        ? { nodes: node.children, instKey, viewName, vn, vars, ln, locals, path, slotCtx }
+        : null;
+      return renderView(`${instKey}/${path}`, childDecl, props, nextSlot);
+    }
+    if (node.tag === 'Slot') {
+      const nameExpr = node.namedArgs.name !== undefined ? node.namedArgs.name : node.args[0];
+      const wanted = nameExpr !== undefined ? String(evalSafe(nameExpr, vn, vars, ln, locals) ?? 'default') : 'default';
+      const projected = slotCtx
+        ? slotCtx.nodes.filter((ch) => ssrChildSlotName(ch, slotCtx.vn, slotCtx.vars, slotCtx.ln, slotCtx.locals) === wanted)
+        : [];
+      let inner = '';
+      if (projected.length > 0) {
+        inner = projected.map((c, i) => renderNode(c, slotCtx.instKey, slotCtx.viewName, slotCtx.vn, slotCtx.vars, slotCtx.ln, slotCtx.locals, `${slotCtx.path}/slot-${wanted}/${i}`, slotCtx.slotCtx)).join('');
+      } else if (node.children && node.children.length > 0) {
+        inner = node.children.map((c, i) => renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/fallback/${i}`, slotCtx)).join('');
+      }
+      return `<div class="f4-slot" style="display:contents">${inner}</div>`;
+    }
+    if (node.tag === 'Portal') {
+      const targetExpr = node.namedArgs.target !== undefined ? node.namedArgs.target : node.args[0];
+      const sel = targetExpr !== undefined ? String(evalSafe(targetExpr, vn, vars, ln, locals) ?? 'body') : 'body';
+      const inner = node.children.map((c, i) => renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/portal/${i}`, slotCtx)).join('');
+      return `<div class="f4-portal" data-portal-target="${escapeHtml(sel)}">${inner}</div>`;
+    }
+    if (node.tag === 'Catch') {
+      ssrCatchDepth++;
+      let inner = '';
+      try {
+        inner = node.children.map((c, i) => renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/try/${i}`, slotCtx)).join('');
+      } catch (err) {
+        ssrCatchDepth--;
+        const errObj = { message: err?.message || String(err), view: viewName };
+        if (node.elseChildren && node.elseChildren.length) {
+          const fbLn = node.fallbackBinding ? dedupe([...ln, node.fallbackBinding]) : ln;
+          const fbScope = Object.create(locals || null);
+          if (node.fallbackBinding) fbScope[node.fallbackBinding] = errObj;
+          inner = node.elseChildren.map((c, i) => renderNode(c, instKey, viewName, vn, vars, fbLn, fbScope, `${path}/fallback/${i}`, slotCtx)).join('');
+        }
+        return `<div class="f4-catch" style="display:contents">${inner}</div>`;
+      }
+      ssrCatchDepth--;
+      return `<div class="f4-catch" style="display:contents">${inner}</div>`;
     }
     if (node.tag === 'If') {
       const cond = node.args[0] !== undefined ? Boolean(evalSafe(node.args[0], vn, vars, ln, locals)) : false;
       const list = cond ? node.children : node.elseChildren || null;
-      const inner = list ? list.map((c, i) => renderNode(c, instKey, vn, vars, ln, locals, `${path}/${cond ? 'if' : 'else'}${i}`)).join('') : '';
+      const inner = list ? list.map((c, i) => renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/${cond ? 'if' : 'else'}${i}`, slotCtx)).join('') : '';
       return `<div class="f4-if" style="display:contents">${inner}</div>`;
     }
     if (node.tag === 'Match') {
@@ -1650,9 +1907,9 @@ export function renderToString(ast, options = {}) {
         const names = a.binding ? [...ln, '__m', a.binding] : [...ln, '__m'];
         const scope = Object.create(locals || null);
         scope.__m = value;
-        if (a.binding) scope[a.binding] = value;
+        if (a.binding) scope[a.binding] = a.bindingExpr === '__m.value' ? value?.value : value;
         if (evalSafe(a.test, vn, vars, names, scope)) {
-          inner = a.children.map((c, ci) => renderNode(c, instKey, vn, vars, names, scope, `${path}/arm${i}/${ci}`)).join('');
+          inner = a.children.map((c, ci) => renderNode(c, instKey, viewName, vn, vars, names, scope, `${path}/arm${i}/${ci}`, slotCtx)).join('');
           break;
         }
       }
@@ -1671,7 +1928,7 @@ export function renderToString(ast, options = {}) {
           const names = r.listBinding ? dedupe([...ln, r.listBinding]) : ln;
           const scope = Object.create(locals || null);
           if (r.listBinding) scope[r.listBinding] = m;
-          inner = r.children.map((c, ci) => renderNode(c, instKey, vn, vars, names, scope, `${path}/route${i}/${ci}`)).join('');
+          inner = r.children.map((c, ci) => renderNode(c, instKey, viewName, vn, vars, names, scope, `${path}/route${i}/${ci}`, slotCtx)).join('');
           break;
         }
       }
@@ -1698,7 +1955,7 @@ export function renderToString(ast, options = {}) {
         seen.add(k);
         const rl = Object.create(locals);
         if (binding) rl[binding] = item;
-        return node.children.map((c, ci) => renderNode(c, instKey, vn, vars, childLn, rl, `${path}/${k}/${ci}`)).join('');
+        return node.children.map((c, ci) => renderNode(c, instKey, viewName, vn, vars, childLn, rl, `${path}/${k}/${ci}`, slotCtx)).join('');
       }).join('');
       return `<div${attrsStr(attrs)}>${rowsHtml}</div>`;
     }
@@ -1736,7 +1993,7 @@ export function renderToString(ast, options = {}) {
         const href = hrefExpr !== undefined ? String(evalSafe(hrefExpr, vn, vars, ln, locals) ?? '/') : '/';
         const active = parseUrl(href).path === route.path;
         const inner = node.children.length > 0
-          ? node.children.map((c, i) => renderNode(c, instKey, vn, vars, ln, locals, `${path}/${i}`)).join('')
+          ? node.children.map((c, i) => renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/${i}`, slotCtx)).join('')
           : escapeHtml(node.args[1] !== undefined ? evalSafe(node.args[1], vn, vars, ln, locals) ?? '' : href);
         return `<a${commonAttrs('f4-link', [['href', href], ['aria-current', active ? 'page' : null]])}>${inner}</a>`;
       }
@@ -1775,7 +2032,7 @@ export function renderToString(ast, options = {}) {
       case 'Row':
       case 'Column': {
         const base = node.tag === 'Row' ? 'f4-row' : 'f4-column';
-        const inner = node.children.map((c, i) => renderNode(c, instKey, vn, vars, ln, locals, `${path}/${i}`)).join('');
+        const inner = node.children.map((c, i) => renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/${i}`, slotCtx)).join('');
         return `<div${commonAttrs(base)}>${inner}</div>`;
       }
       default:
@@ -1783,10 +2040,86 @@ export function renderToString(ast, options = {}) {
     }
   }
 
-  const html = renderView('root', rootViewDecl, {});
+  const html = renderView('root', rootViewDecl, {}, null);
   const css = `${BASE_CSS}\n${ast.css || ''}`;
   const state = { route: options.url || '/', instances: serializedInstances };
   const safeState = JSON.stringify(state).replace(/</g, '\\u003c');
   const head = `<style data-f4-ssr>${css}</style>\n<script id="__foar_state__" type="application/json">${safeState}</script>`;
   return { html, css, state, head };
+}
+
+/**
+ * Async SSR with route data loaders.
+ * Accepts `options.load(route)` and/or `options.loaders` (`{ "/orders/:id": async (params, route) => data }`).
+ * Loaded values are merged into `options.bindings` before rendering and included on `result.data`.
+ */
+export async function renderToStringAsync(ast, options = {}) {
+  const parsed = parseUrl(options.url || '/');
+  const routeInfo = { path: parsed.path, query: parsed.query, hash: parsed.hash, params: {} };
+  const extraBindings = {};
+  let loadedData = null;
+
+  if (options.loaders && typeof options.loaders === 'object') {
+    for (const [pattern, loader] of Object.entries(options.loaders)) {
+      if (typeof loader !== 'function') continue;
+      const params = matchRoute(pattern, routeInfo.path);
+      if (params) {
+        routeInfo.params = params;
+        loadedData = await loader(params, routeInfo);
+        break;
+      }
+    }
+  }
+  if (typeof options.load === 'function') {
+    const res = await options.load(routeInfo);
+    if (res !== undefined) {
+      loadedData = loadedData && typeof loadedData === 'object' && typeof res === 'object'
+        ? { ...loadedData, ...res }
+        : res;
+    }
+  }
+  if (loadedData !== null && loadedData !== undefined) {
+    extraBindings.loaderData = () => loadedData;
+    if (typeof loadedData === 'object' && !Array.isArray(loadedData)) {
+      if (loadedData.bindings && typeof loadedData.bindings === 'object') {
+        Object.assign(extraBindings, loadedData.bindings);
+      } else {
+        for (const [k, v] of Object.entries(loadedData)) {
+          extraBindings[k] = typeof v === 'function' ? v : () => v;
+        }
+      }
+    }
+  }
+  const merged = { ...options, bindings: { ...extraBindings, ...(options.bindings || {}) } };
+  const out = renderToString(ast, merged);
+  return { ...out, data: loadedData };
+}
+
+/**
+ * Streaming SSR returning a standard Web `ReadableStream` (Node, Deno, Bun, Edge).
+ * Flushes `<style data-f4-ssr>` (and optional `shellBefore`) immediately while
+ * awaiting async route loaders, then streams rendered HTML + state script + `shellAfter`.
+ */
+export function renderToStream(ast, options = {}) {
+  const encode = options.encoding === 'string' ? (s) => s : (() => {
+    const enc = new TextEncoder();
+    return (s) => enc.encode(s);
+  })();
+  const css = `${BASE_CSS}\n${ast.css || ''}`;
+  return new ReadableStream({
+    async start(controller) {
+      try {
+        if (options.shellBefore) controller.enqueue(encode(String(options.shellBefore)));
+        controller.enqueue(encode(`<style data-f4-ssr>${css}</style>\n`));
+        const { html, state } = await renderToStringAsync(ast, options);
+        const safeState = JSON.stringify(state).replace(/</g, '\\u003c');
+        controller.enqueue(encode(html));
+        controller.enqueue(encode(`\n<script id="__foar_state__" type="application/json">${safeState}</script>`));
+        if (options.shellAfter) controller.enqueue(encode(String(options.shellAfter)));
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
 }

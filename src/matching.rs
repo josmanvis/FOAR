@@ -1,27 +1,9 @@
-//! Enums and `match`.
+//! Enums (unit and tagged-union ADTs with payloads) and exhaustive `match`.
 //!
-//! ```foar
-//! enum Layout { List, Gallery = "grid" }
-//!
-//! effect Pick(n: i32) {
-//!     match layout {                       // statement: one arm runs, no fall-through
-//!         Layout.List => columns = 1,
-//!         Layout.Gallery => { columns = 3; transition Grid; }
-//!     }
-//!     label = match n {                    // expression: the arm's value
-//!         0 => "none",
-//!         1 | 2 => "a few",
-//!         3..=9 => "several",
-//!         n if n < 0 => "negative",
-//!         _ => "many",
-//!     };
-//! }
-//! ```
-//!
-//! Every match must be exhaustive — all variants of an enum, both `true` and
-//! `false`, or a catch-all (`_` or a binding) — and an arm that can never
-//! match is an error. Enum variants compile to their values (strings by
-//! default), so they serialize, compare with `==`, and pass to host code as is.
+//! Unit enums compile to plain strings/numbers (`Status.Paid` -> `"Paid"`).
+//! Tagged-union enums (any variant with a payload, e.g. `Ready(Vec<Item>)`)
+//! compile to `{ tag: "Ready", value: ... }` objects and destructure cleanly
+//! in `match` and render `Match(...)` with full exhaustiveness checking.
 use super::{err_at, PResult, Parser};
 use crate::ast::{EnumDecl, EnumVariant};
 use crate::lexer::{unescape, Kind, Token};
@@ -29,8 +11,20 @@ use crate::parser::CompileError;
 use crate::transpile::string_literal_to_js;
 use std::collections::{HashMap, HashSet};
 
-/// enum name -> [(variant, JS literal of its value)]
-pub(super) type Enums = HashMap<String, Vec<(String, String)>>;
+#[derive(Debug, Clone)]
+pub(super) struct VariantInfo {
+    pub name: String,
+    pub value_js: String,
+    pub payload: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct EnumInfo {
+    pub variants: Vec<VariantInfo>,
+    pub is_tagged: bool,
+}
+
+pub(super) type Enums = HashMap<String, EnumInfo>;
 
 fn tok_text<'a>(src: &'a str, t: &Token) -> &'a str {
     &src[t.start..t.end]
@@ -47,8 +41,8 @@ fn literal_js(src: &str, t: &Token, neg: bool) -> Option<String> {
     }
 }
 
-/// `enum Name { A, B = "b", C = 3 }` anywhere at the top level: collected
-/// before parsing so that every file (and code above the declaration) can use them.
+/// Pre-scans top-level `enum Name[<T>] { ... }` declarations so code anywhere
+/// in the program (including imported files) can use them.
 pub(super) fn prescan_enums(src: &str, toks: &[Token]) -> Enums {
     let mut out = Enums::new();
     let mut depth = 0i32;
@@ -60,26 +54,67 @@ pub(super) fn prescan_enums(src: &str, toks: &[Token]) -> Enums {
             depth += 1;
         } else if is(t, "}") {
             depth -= 1;
-        } else if depth == 0 && t.kind == Kind::Ident && tok_text(src, t) == "enum" && toks.get(i + 1).is_some_and(|n| n.kind == Kind::Ident) && toks.get(i + 2).is_some_and(|n| is(n, "{")) {
+        } else if depth == 0 && t.kind == Kind::Ident && tok_text(src, t) == "enum" && toks.get(i + 1).is_some_and(|n| n.kind == Kind::Ident) {
             let name = tok_text(src, &toks[i + 1]).to_string();
+            let mut k = i + 2;
+            // Skip optional generic params `<T, U>`
+            if toks.get(k).is_some_and(|n| is(n, "<")) {
+                let mut gd = 0;
+                while k < toks.len() {
+                    if is(&toks[k], "<") {
+                        gd += 1;
+                    } else if is(&toks[k], ">") {
+                        gd -= 1;
+                        if gd == 0 {
+                            k += 1;
+                            break;
+                        }
+                    }
+                    k += 1;
+                }
+            }
+            if !toks.get(k).is_some_and(|n| is(n, "{")) {
+                i += 1;
+                continue;
+            }
             let mut variants = Vec::new();
-            let mut j = i + 3;
+            let mut j = k + 1;
             while j < toks.len() && !is(&toks[j], "}") {
                 if toks[j].kind == Kind::Ident {
                     let v = tok_text(src, &toks[j]).to_string();
-                    let mut value = serde_json::to_string(&v).unwrap();
-                    if toks.get(j + 1).is_some_and(|n| is(n, "=")) {
+                    let mut value_js = serde_json::to_string(&v).unwrap();
+                    let mut payload = None;
+                    if toks.get(j + 1).is_some_and(|n| is(n, "(")) {
+                        let mut pd = 1;
+                        let mut p = j + 2;
+                        let mut pty = String::new();
+                        while p < toks.len() && pd > 0 {
+                            if is(&toks[p], "(") {
+                                pd += 1;
+                            } else if is(&toks[p], ")") {
+                                pd -= 1;
+                                if pd == 0 {
+                                    break;
+                                }
+                            }
+                            pty.push_str(tok_text(src, &toks[p]));
+                            p += 1;
+                        }
+                        payload = Some(pty.trim().to_string());
+                        j = p;
+                    } else if toks.get(j + 1).is_some_and(|n| is(n, "=")) {
                         let neg = toks.get(j + 2).is_some_and(|n| is(n, "-"));
                         if let Some(lit) = toks.get(j + if neg { 3 } else { 2 }).and_then(|n| literal_js(src, n, neg)) {
-                            value = lit;
+                            value_js = lit;
                         }
                         j += if neg { 3 } else { 2 };
                     }
-                    variants.push((v, value));
+                    variants.push(VariantInfo { name: v, value_js, payload });
                 }
                 j += 1;
             }
-            out.entry(name).or_insert(variants);
+            let is_tagged = variants.iter().any(|v| v.payload.is_some());
+            out.entry(name).or_insert(EnumInfo { variants, is_tagged });
             i = j;
             continue;
         }
@@ -92,11 +127,12 @@ pub(super) fn prescan_enums(src: &str, toks: &[Token]) -> Enums {
 enum Pat {
     Wild,
     Bind(String),
-    /// a literal (JS source) — `None` / `null` included
     Lit(String),
     Range(String, String, bool),
-    /// an enum variant: its value's JS literal
+    /// Unit enum variant: JS value literal (`"Paid"`)
     Variant(String),
+    /// Tagged-union variant: tag literal (`"Ready"`) + optional payload binding (`data`)
+    TaggedVariant(String, Option<String>),
 }
 
 struct ArmInfo {
@@ -124,6 +160,7 @@ impl<'s> Parser<'s> {
     pub(super) fn parse_enum(&mut self) -> PResult<EnumDecl> {
         self.expect("enum")?;
         let name = self.declare("Enum")?;
+        let type_params = self.parse_type_params()?;
         self.expect("{")?;
         let mut variants = Vec::new();
         let mut seen = HashSet::new();
@@ -137,12 +174,17 @@ impl<'s> Parser<'s> {
                 return Err(err_at(self.src, at, format!("{} already has a variant '{}'", name, v)));
             }
             let mut value = serde_json::to_string(&v).unwrap();
-            if self.eat("=") {
+            let mut payload_type = None;
+            if self.eat("(") {
+                let pt = self.parse_type()?;
+                self.expect(")")?;
+                payload_type = Some(pt);
+            } else if self.eat("=") {
                 let neg = self.eat("-");
                 let t = self.advance();
                 value = literal_js(self.src, &t, neg).ok_or_else(|| err_at(self.src, t.start, "An enum value is a string or a number: `Gallery = \"grid\"`".to_string()))?;
             }
-            variants.push(EnumVariant { name: v, value });
+            variants.push(EnumVariant { name: v, value, payload_type });
             if !self.eat(",") && !self.is("}") {
                 return self.err(format!("Expected ',' or '}}' in enum {}, got '{}'", name, self.describe()));
             }
@@ -151,18 +193,14 @@ impl<'s> Parser<'s> {
         if variants.is_empty() {
             return self.err(format!("Enum {} has no variants", name));
         }
-        Ok(EnumDecl { name, variants })
+        Ok(EnumDecl { name, type_params, variants })
     }
 
-    fn variant_js(&self, enum_name: &str, variant: &str) -> Option<String> {
-        self.enums.get(enum_name)?.iter().find(|(v, _)| v == variant).map(|(_, js)| js.clone())
+    fn variant_info(&self, enum_name: &str, variant: &str) -> Option<&VariantInfo> {
+        self.enums.get(enum_name)?.variants.iter().find(|v| v.name == variant)
     }
 
     // ---- token -> JS with enums and match lowered ----------------------------------
-    /// Tokens -> JS text (before the Rust-idiom pass): strings become JS
-    /// literals, `Enum.Variant` its value, `match` an if-chain. `stmts`:
-    /// the tokens are statements (an effect body), so a `match` at the start
-    /// of a statement is a statement.
     pub(super) fn raw_join(&self, toks: &[Token], stmts: bool) -> String {
         let mut out = String::new();
         let mut i = 0;
@@ -188,18 +226,34 @@ impl<'s> Parser<'s> {
             }
             if t.kind == Kind::Ident && self.enums.contains_key(self.text(t)) && toks.get(i + 1).is_some_and(|n| self.tis(n, ".")) && toks.get(i + 2).is_some_and(|n| n.kind == Kind::Ident) {
                 let (e, v) = (self.text(t), self.text(&toks[i + 2]));
-                match self.variant_js(e, v) {
-                    Some(js) => out.push_str(&js),
+                let info = &self.enums[e];
+                match self.variant_info(e, v) {
+                    Some(vi) if info.is_tagged => {
+                        if vi.payload.is_some() {
+                            if toks.get(i + 3).is_some_and(|n| self.tis(n, "(")) {
+                                let close = self.close_of(toks, i + 3);
+                                let payload_js = self.raw_join(&toks[i + 4..close.min(toks.len())], false);
+                                out.push_str(&format!("({{ tag: {}, value: ({}) }})", vi.value_js, payload_js));
+                                i = (close + 1).min(toks.len());
+                                continue;
+                            } else {
+                                self.defer(err_at(self.src, toks[i + 2].start, format!("{}.{} requires a payload value: `{}.{}(value)`", e, v, e, v)));
+                                out.push_str("undefined");
+                            }
+                        } else {
+                            out.push_str(&format!("({{ tag: {} }})", vi.value_js));
+                        }
+                    }
+                    Some(vi) => out.push_str(&vi.value_js),
                     None => {
-                        self.defer(err_at(self.src, toks[i + 2].start, format!("{} has no variant '{}'. Variants: {}", e, v, self.enums[e].iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", "))));
+                        self.defer(err_at(self.src, toks[i + 2].start, format!("{} has no variant '{}'. Variants: {}", e, v, info.variants.iter().map(|x| x.name.as_str()).collect::<Vec<_>>().join(", "))));
                         out.push_str("undefined");
                     }
                 }
                 i += 3;
                 continue;
             }
-            // Option values: `Some(x)` is just x, `None` is null (`if let Some(x) = …` is
-            // rewritten later, so keep `Some` there)
+            // Option values: `Some(x)` -> `(x)`, `None` -> `null`
             if t.kind == Kind::Ident && !(i > 0 && self.tis(&toks[i - 1], ".")) {
                 let w = self.text(t);
                 if w == "None" {
@@ -227,7 +281,6 @@ impl<'s> Parser<'s> {
         out.trim().to_string()
     }
 
-    /// index of the token closing the bracket opened at `open` (or toks.len())
     fn close_of(&self, toks: &[Token], open: usize) -> usize {
         let mut depth = 0;
         for (k, t) in toks.iter().enumerate().skip(open) {
@@ -243,7 +296,6 @@ impl<'s> Parser<'s> {
         toks.len()
     }
 
-    /// `match <value> { arms }` starting at toks[i]: (JS, index after it)
     fn lower_match(&self, toks: &[Token], i: usize, stmt: bool) -> PResult<(String, usize)> {
         let kw = &toks[i];
         let mut j = i + 1;
@@ -275,8 +327,7 @@ impl<'s> Parser<'s> {
         let scrut_js = self.raw_join(scrut, false);
         let scrut_enum = self.enum_of_value(scrut);
 
-        // arms
-        let mut arms: Vec<(ArmInfo, Option<String>, Vec<Token>, bool)> = Vec::new(); // info, guard js, body toks, is block
+        let mut arms: Vec<(ArmInfo, Option<String>, Vec<Token>, bool)> = Vec::new();
         let mut p = 0;
         let mut enum_name = scrut_enum.clone();
         while p < body.len() {
@@ -350,7 +401,6 @@ impl<'s> Parser<'s> {
         let infos: Vec<&ArmInfo> = arms.iter().map(|a| &a.0).collect();
         self.check_exhaustive(&infos, enum_name.as_deref(), kw.start, &scrut_js)?;
 
-        // JS
         let mut js = String::new();
         if stmt {
             js.push_str(&format!("__match{}: {{ const {} = ({}); ", id, v, scrut_js));
@@ -368,6 +418,10 @@ impl<'s> Parser<'s> {
                 Some(Pat::Bind(b)) => {
                     js.push_str(&format!("{{ const {} = {}; if ({}) {{ {} }} }} ", b, v, guard.as_deref().unwrap_or("true"), run));
                 }
+                Some(Pat::TaggedVariant(tag, Some(b))) if info.alts.len() == 1 => {
+                    let g = guard.as_deref().unwrap_or("true");
+                    js.push_str(&format!("if ({v} && {v}.tag === {tag}) {{ const {b} = {v}.value; if ({g}) {{ {run} }} }} "));
+                }
                 _ => {
                     let mut test = alts_test(&info.alts, &v);
                     if let Some(g) = guard {
@@ -381,27 +435,69 @@ impl<'s> Parser<'s> {
         Ok((js, end + 1))
     }
 
-    /// The enum a matched value has, when the code says so: a store,
-    /// parameter, derived value or effect parameter declared with an enum type.
+    fn base_enum_name<'a>(&self, ty: &'a str) -> Option<String> {
+        let base = ty.split('<').next().unwrap_or(ty).trim();
+        self.enums.contains_key(base).then(|| base.to_string())
+    }
+
     fn enum_of_value(&self, scrut: &[Token]) -> Option<String> {
         if scrut.len() != 1 || scrut[0].kind != Kind::Ident {
             return None;
         }
         let ty = self.var_types.get(self.text(&scrut[0]))?;
-        self.enums.contains_key(ty).then(|| ty.clone())
-    }
-    pub(super) fn enum_of_expr(&self, expr: &str) -> Option<String> {
-        let ty = self.var_types.get(expr.trim())?;
-        self.enums.contains_key(ty).then(|| ty.clone())
+        self.base_enum_name(ty)
     }
 
-    /// `A | B | 1..=3` -> alternatives (and the enum they name, if any)
+    pub(super) fn enum_of_expr(&self, expr: &str) -> Option<String> {
+        let ty = self.var_types.get(expr.trim())?;
+        self.base_enum_name(ty)
+    }
+
+    fn resolve_enum_variant_pat(
+        &self,
+        owner: &str,
+        variant: &str,
+        bind: Option<String>,
+        at: usize,
+    ) -> PResult<Pat> {
+        let info = &self.enums[owner];
+        let Some(vi) = self.variant_info(owner, variant) else {
+            return Err(err_at(
+                self.src,
+                at,
+                format!(
+                    "{} has no variant '{}'. Variants: {}",
+                    owner,
+                    variant,
+                    info.variants.iter().map(|x| x.name.as_str()).collect::<Vec<_>>().join(", ")
+                ),
+            ));
+        };
+        if info.is_tagged {
+            if bind.is_some() && vi.payload.is_none() {
+                return Err(err_at(self.src, at, format!("{}.{} has no payload to destructure", owner, variant)));
+            }
+            Ok(Pat::TaggedVariant(vi.value_js.clone(), bind))
+        } else {
+            if bind.is_some() {
+                return Err(err_at(self.src, at, format!("{}.{} has no payload to destructure", owner, variant)));
+            }
+            Ok(Pat::Variant(vi.value_js.clone()))
+        }
+    }
+
     fn parse_alts(&self, toks: &[Token], scrut_enum: Option<&str>) -> PResult<(Vec<Pat>, Option<String>)> {
         let mut alts = Vec::new();
         let mut cur: Vec<&Token> = Vec::new();
         let mut groups = Vec::new();
+        let mut depth = 0i32;
         for t in toks {
-            if t.kind == Kind::Punct && self.text(t) == "|" {
+            if OPEN.iter().any(|s| self.tis(t, s)) {
+                depth += 1;
+            } else if CLOSE.iter().any(|s| self.tis(t, s)) {
+                depth -= 1;
+            }
+            if depth == 0 && t.kind == Kind::Punct && self.text(t) == "|" {
                 groups.push(std::mem::take(&mut cur));
             } else {
                 cur.push(t);
@@ -423,6 +519,27 @@ impl<'s> Parser<'s> {
                     return Err(err_at(self.src, first.start, format!("'{}' is not a number", text)));
                 }
                 Pat::Lit(text.clone())
+            } else if g.len() == 6 && g[0].kind == Kind::Ident && self.tis(g[1], ".") && g[2].kind == Kind::Ident && self.tis(g[3], "(") && g[4].kind == Kind::Ident && self.tis(g[5], ")") {
+                // Qualified payload destructure: `Enum.Variant(binding)` or `Enum.Variant(_)`
+                let (e, v, b) = (self.text(g[0]), self.text(g[2]), self.text(g[4]));
+                if !self.enums.contains_key(e) {
+                    return Err(err_at(self.src, g[0].start, format!("Unknown enum '{}'", e)));
+                }
+                if let Some(fe) = &found_enum {
+                    if fe != e {
+                        return Err(err_at(self.src, g[0].start, format!("This match is on {}, not {}", fe, e)));
+                    }
+                }
+                found_enum.get_or_insert(e.to_string());
+                let bind = (b != "_").then(|| b.to_string());
+                self.resolve_enum_variant_pat(e, v, bind, g[2].start)?
+            } else if g.len() == 4 && g[0].kind == Kind::Ident && self.tis(g[1], "(") && g[2].kind == Kind::Ident && self.tis(g[3], ")") && self.text(g[0]).starts_with(|c: char| c.is_ascii_uppercase()) {
+                // Bare payload destructure: `Ready(data)`
+                let (v, b) = (self.text(g[0]), self.text(g[2]));
+                let owner = self.resolve_bare_variant_owner(v, found_enum.as_deref(), first.start)?;
+                found_enum.get_or_insert(owner.clone());
+                let bind = (b != "_").then(|| b.to_string());
+                self.resolve_enum_variant_pat(&owner, v, bind, first.start)?
             } else if g.len() == 1 && first.kind == Kind::Ident {
                 let w = self.text(first);
                 match w {
@@ -430,49 +547,66 @@ impl<'s> Parser<'s> {
                     "true" | "false" | "null" => Pat::Lit(w.to_string()),
                     "None" => Pat::Lit("null".to_string()),
                     _ if w.starts_with(|c: char| c.is_ascii_uppercase()) => {
-                        // a bare variant: of the matched enum, or of the only enum that has it
-                        let owner = match found_enum.as_deref() {
-                            Some(e) => {
-                                if self.variant_js(e, w).is_none() {
-                                    return Err(err_at(self.src, first.start, format!("{} has no variant '{}'. Variants: {}", e, w, self.enums[e].iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", "))));
-                                }
-                                e.to_string()
-                            }
-                            None => {
-                                let owners: Vec<&String> = self.enums.iter().filter(|(_, vs)| vs.iter().any(|(n, _)| n == w)).map(|(k, _)| k).collect();
-                                match owners.len() {
-                                    1 => owners[0].clone(),
-                                    0 => return Err(err_at(self.src, first.start, format!("Unknown pattern '{}': not a variant of any enum", w))),
-                                    _ => return Err(err_at(self.src, first.start, format!("'{}' is a variant of several enums: write {}.{}", w, owners[0], w))),
-                                }
-                            }
-                        };
+                        let owner = self.resolve_bare_variant_owner(w, found_enum.as_deref(), first.start)?;
                         found_enum.get_or_insert(owner.clone());
-                        Pat::Variant(self.variant_js(&owner, w).unwrap())
+                        self.resolve_enum_variant_pat(&owner, w, None, first.start)?
                     }
                     _ => Pat::Bind(w.to_string()),
                 }
             } else if g.len() == 3 && g[0].kind == Kind::Ident && self.tis(g[1], ".") && g[2].kind == Kind::Ident {
                 let (e, v) = (self.text(g[0]), self.text(g[2]));
-                let Some(js) = self.variant_js(e, v) else {
-                    return Err(err_at(self.src, g[0].start, if self.enums.contains_key(e) { format!("{} has no variant '{}'", e, v) } else { format!("Unknown enum '{}'", e) }));
-                };
+                if !self.enums.contains_key(e) {
+                    return Err(err_at(self.src, g[0].start, format!("Unknown enum '{}'", e)));
+                }
                 if let Some(fe) = &found_enum {
                     if fe != e {
                         return Err(err_at(self.src, g[0].start, format!("This match is on {}, not {}", fe, e)));
                     }
                 }
                 found_enum.get_or_insert(e.to_string());
-                Pat::Variant(js)
+                self.resolve_enum_variant_pat(e, v, None, g[2].start)?
             } else {
-                return Err(err_at(self.src, first.start, format!("Unsupported pattern '{}'. Patterns: literals, `a | b`, ranges `1..=5`, enum variants, `_`, or a name (with an optional `if` guard)", text)));
+                return Err(err_at(self.src, first.start, format!("Unsupported pattern '{}'. Patterns: literals, `a | b`, ranges `1..=5`, enum variants (with optional payload `(x)`), `_`, or a name (with an optional `if` guard)", text)));
             };
             alts.push(pat);
         }
-        if alts.len() > 1 && alts.iter().any(|a| matches!(a, Pat::Bind(_))) {
+        if alts.len() > 1 && alts.iter().any(|a| matches!(a, Pat::Bind(_) | Pat::TaggedVariant(_, Some(_)))) {
             return Err(err_at(self.src, toks[0].start, "A binding pattern can't be combined with `|`".to_string()));
         }
         Ok((alts, found_enum))
+    }
+
+    fn resolve_bare_variant_owner(&self, w: &str, found_enum: Option<&str>, at: usize) -> PResult<String> {
+        match found_enum {
+            Some(e) => {
+                if self.variant_info(e, w).is_none() {
+                    return Err(err_at(
+                        self.src,
+                        at,
+                        format!(
+                            "{} has no variant '{}'. Variants: {}",
+                            e,
+                            w,
+                            self.enums[e].variants.iter().map(|x| x.name.as_str()).collect::<Vec<_>>().join(", ")
+                        ),
+                    ));
+                }
+                Ok(e.to_string())
+            }
+            None => {
+                let owners: Vec<&String> = self
+                    .enums
+                    .iter()
+                    .filter(|(_, info)| info.variants.iter().any(|x| x.name == w))
+                    .map(|(k, _)| k)
+                    .collect();
+                match owners.len() {
+                    1 => Ok(owners[0].clone()),
+                    0 => Err(err_at(self.src, at, format!("Unknown pattern '{}': not a variant of any enum", w))),
+                    _ => Err(err_at(self.src, at, format!("'{}' is a variant of several enums: write {}.{}", w, owners[0], w))),
+                }
+            }
+        }
     }
 
     /// Exhaustive (every case handled) and no dead arms.
@@ -494,8 +628,7 @@ impl<'s> Parser<'s> {
                         new_case = true;
                         continue;
                     }
-                    Pat::Lit(js) => js.clone(),
-                    Pat::Variant(js) => js.clone(),
+                    Pat::Lit(js) | Pat::Variant(js) | Pat::TaggedVariant(js, _) => js.clone(),
                     Pat::Range(a, b, inc) => format!("{}..{}{}", a, if *inc { "=" } else { "" }, b),
                 };
                 if covered.insert(key) {
@@ -510,7 +643,12 @@ impl<'s> Parser<'s> {
             return Ok(());
         }
         if let Some(e) = enum_name {
-            let missing: Vec<String> = self.enums[e].iter().filter(|(_, js)| !covered.contains(js)).map(|(n, _)| format!("{}.{}", e, n)).collect();
+            let missing: Vec<String> = self.enums[e]
+                .variants
+                .iter()
+                .filter(|v| !covered.contains(&v.value_js))
+                .map(|v| format!("{}.{}", e, v.name))
+                .collect();
             if missing.is_empty() {
                 return Ok(());
             }
@@ -523,8 +661,6 @@ impl<'s> Parser<'s> {
     }
 
     // ---- render Match --------------------------------------------------------------
-    /// The arms of `Match(value) { pattern => element, pattern => { elements } }`
-    /// (the parser is after the `{`). Returns (tests over `__m`, binding, children).
     pub(super) fn parse_render_arms(&mut self, scrut_js: &str, at: usize) -> PResult<Vec<crate::ast::MatchArm>> {
         let scrut_enum = self.enum_of_expr(scrut_js);
         let mut enum_name = scrut_enum.clone();
@@ -564,6 +700,18 @@ impl<'s> Parser<'s> {
             if enum_name.is_none() {
                 enum_name = e;
             }
+            let arm_bind = match alts.first() {
+                Some(Pat::Bind(b)) => Some((b.clone(), None)),
+                Some(Pat::TaggedVariant(tag_js, Some(b))) => {
+                    let vname = tag_js.trim_matches('"');
+                    let hint = enum_name.as_ref().map(|e| format!("EnumPayload:{}:{}:{}", scrut_js.trim(), e, vname));
+                    Some((b.clone(), hint))
+                }
+                _ => None,
+            };
+            if let Some((bname, hint)) = &arm_bind {
+                self.render_locals.push((bname.clone(), hint.clone()));
+            }
             let children = if self.is("{") {
                 self.advance();
                 let c = self.parse_render_block()?;
@@ -572,17 +720,28 @@ impl<'s> Parser<'s> {
             } else {
                 vec![self.parse_element()?]
             };
+            if arm_bind.is_some() {
+                self.render_locals.pop();
+            }
             self.eat(",");
             let guard_js = (!guard.is_empty()).then(|| self.join_js(&guard));
-            let (test, binding) = match alts.first() {
-                Some(Pat::Bind(b)) => (guard_js.clone().unwrap_or_else(|| "true".to_string()), Some(b.clone())),
+            let (test, binding, binding_expr) = match alts.first() {
+                Some(Pat::Bind(b)) => (guard_js.clone().unwrap_or_else(|| "true".to_string()), Some(b.clone()), None),
+                Some(Pat::TaggedVariant(tag, Some(b))) if alts.len() == 1 => {
+                    let base = format!("(__m && __m.tag === {})", tag);
+                    let t = match &guard_js {
+                        Some(g) => format!("({}) && ({})", base, g),
+                        None => base,
+                    };
+                    (t, Some(b.clone()), Some("__m.value".to_string()))
+                }
                 _ => {
                     let t = alts_test(&alts, "__m");
-                    (match &guard_js { Some(g) => format!("({}) && ({})", t, g), None => t }, None)
+                    (match &guard_js { Some(g) => format!("({}) && ({})", t, g), None => t }, None, None)
                 }
             };
             infos.push(ArmInfo { alts, guarded: guard_js.is_some(), at: start });
-            out.push(crate::ast::MatchArm { test, binding, children });
+            out.push(crate::ast::MatchArm { test, binding, binding_expr, children });
         }
         if out.is_empty() {
             return Err(err_at(self.src, at, "Match needs at least one arm".to_string()));
@@ -611,6 +770,7 @@ fn alts_test(alts: &[Pat], v: &str) -> String {
         .map(|p| match p {
             Pat::Wild | Pat::Bind(_) => "true".to_string(),
             Pat::Lit(js) | Pat::Variant(js) => format!("{} === {}", v, js),
+            Pat::TaggedVariant(tag, _) => format!("({v} && {v}.tag === {tag})"),
             Pat::Range(a, b, inc) => format!("({v} >= {a} && {v} {} {b})", if *inc { "<=" } else { "<" }),
         })
         .collect();
@@ -642,6 +802,45 @@ mod tests {
     }
 
     #[test]
+    fn tagged_union_enums_with_payloads() {
+        let src = r#"
+enum Load { Idle, Loading, Ready(String), Failed(String) }
+view App {
+    store load: Load = Load.Ready("hello");
+    state Main {
+        render {
+            Match(load) {
+                Load.Idle => Text("idle"),
+                Load.Loading => Spinner("..."),
+                Load.Ready(msg) => Text("ok: {msg}"),
+                Load.Failed(e) => Text("err: {e}"),
+            }
+        }
+        effect Fail() {
+            let label = match load {
+                Load.Idle => "idle",
+                Load.Loading => "busy",
+                Load.Ready(v) => v,
+                Load.Failed(e) => e,
+            };
+            load = Load.Failed(label);
+        }
+    }
+}
+"#;
+        let p = compile(src).unwrap();
+        assert_eq!(p.views[0].stores[0].init_expr, "({ tag: \"Ready\", value: (\"hello\") })");
+        let arms = p.views[0].states[0].render[0].arms.as_ref().unwrap();
+        assert_eq!(arms[2].test, "(__m && __m.tag === \"Ready\")");
+        assert_eq!(arms[2].binding.as_deref(), Some("msg"));
+        assert_eq!(arms[2].binding_expr.as_deref(), Some("__m.value"));
+
+        // Missing arm is still a compile error!
+        let missing = src.replace("                Load.Failed(e) => Text(\"err: {e}\"),\n", "");
+        assert!(err(&missing).contains("doesn't handle Load.Failed"));
+    }
+
+    #[test]
     fn match_statement_and_expression() {
         let p = compile(&effect("match layout {\n Layout.List => n = 1,\n Gallery | Board => { n = 2; transition S; }\n}\nlet s = match n { 0 => \"none\", 1 | 2 => \"few\", 3..=9 => \"some\", k if k < 0 => \"neg\", _ => \"many\" };")).unwrap();
         let js = &p.views[0].states[0].effects[0].js_body;
@@ -659,10 +858,8 @@ mod tests {
         assert!(err(&effect("match n { _ => n = 2, 1 => n = 3 }")).contains("can never match: an earlier arm matches everything"));
         assert!(err(&effect("match n { 1 => n = 2, 1 => n = 3, _ => n = 4 }")).contains("can never match: earlier arms already handle"));
         assert!(err(&effect("let x = match n { 1 => { n = 2; }, _ => 0 };")).contains("In a match expression each arm is a value"));
-        // guards don't count towards exhaustiveness; bools do
         assert!(err(&effect("match n { k if k > 1 => n = 0 }")).contains("doesn't handle every value"));
         assert!(compile(&effect("let ok = true; match ok { true => n = 1, false => n = 0 }")).is_ok());
-        // the enum can come from the patterns, too
         assert!(err(&effect("let l = layout; match l { Layout.List => n = 1, Gallery => n = 2 }")).contains("doesn't handle Layout.Board"));
     }
 

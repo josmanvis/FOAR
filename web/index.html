@@ -59,12 +59,12 @@
           </div>
           <dl class="hero-specs">
             <div class="hero-spec">
-              <dt>18 KB</dt>
-              <dd>Gzipped runtime with router, SSR, hydration, and i18n</dd>
+              <dt>21 KB</dt>
+              <dd>Gzipped runtime with router, streaming SSR, hydration, Slots, Portals, Catch, and i18n</dd>
             </div>
             <div class="hero-spec">
               <dt>Rust + WASM</dt>
-              <dd>Typed compiler, native CLI, and 237 KB browser WASM</dd>
+              <dd>Typed compiler, native LSP, CLI, and 246 KB browser WASM</dd>
             </div>
             <div class="hero-spec">
               <dt>0 nodes</dt>
@@ -289,8 +289,8 @@ Match(cart.len()) {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
           </div>
           <div>
-            <h3>Retained DOM, SSR, and zero-recreation hydration</h3>
-            <p>Zero-DOM <code>renderToString</code> runs on Node or Edge workers; <code>hydrate</code> adopts existing server nodes in place without creating a single element, and keyed lists reuse rows.</p>
+            <h3>Retained DOM, streaming SSR, and zero-recreation hydration</h3>
+            <p>Zero-DOM <code>renderToString</code>, async loaders, and Web <code>ReadableStream</code> streaming SSR run on Node or Edge workers; <code>hydrate</code> adopts server nodes in place without creating a single element.</p>
           </div>
         </div>
 
@@ -299,8 +299,8 @@ Match(cart.len()) {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M14 3h7v7"/><path d="m21 3-9 9"/></svg>
           </div>
           <div>
-            <h3>Built-in router and state-aware styling</h3>
-            <p>Declarative <code>Router</code>, <code>Route("/orders/:id")</code>, <code>Link</code>, and <code>navigate()</code> alongside scoped CSS with dark mode and <code>@state Editing { … }</code>.</p>
+            <h3>Router, Slots, Portals, and Error Boundaries</h3>
+            <p>Declarative <code>Router</code> / <code>Route</code> / <code>Link</code>, default &amp; named <code>Slot()</code>, <code>Portal</code>, <code>on_enter</code> / <code>on_unmount</code>, and <code>Catch</code> / <code>Fallback</code> boundaries with state-aware CSS.</p>
           </div>
         </div>
 
@@ -309,8 +309,8 @@ Match(cart.len()) {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
           </div>
           <div>
-            <h3>i18n, accessibility, and <code>foar.toml</code> packages</h3>
-            <p><code>t(key, params)</code> with plurals and RTL, first-class <code>label:</code>/<code>role:</code>/<code>aria:</code> props, and <code>import "@pkg/Module"</code> resolved through <code>foar.toml</code>.</p>
+            <h3>Tagged-union ADTs, generics, and verified packages</h3>
+            <p><code>enum LoadState&lt;T&gt;</code> with payload destructuring, generic <code>data&lt;T&gt;</code>, typed <code>extern fn</code>, i18n with plurals, and <code>foar.toml</code> + SHA-256 <code>foar.lock</code> packages.</p>
           </div>
         </div>
 
@@ -319,8 +319,8 @@ Match(cart.len()) {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
           </div>
           <div>
-            <h3>Rust compiler and browser IDE</h3>
-            <p>One Rust codebase builds both the native CLI and WebAssembly. The browser playground includes completions, hover docs, rename, diagnostics, and formatting.</p>
+            <h3>Rust compiler, native LSP, Vite HMR, and browser IDE</h3>
+            <p>One Rust codebase builds the native CLI, <code>foar lsp</code> (with VS Code extension), and WebAssembly, paired with a Vite HMR plugin and full browser playground.</p>
           </div>
         </div>
       </div>
@@ -337,8 +337,8 @@ Match(cart.len()) {
 
       <div class="metrics-bar">
         <div class="metric">
-          <span class="metric-value">18 KB</span>
-          <span class="metric-desc">Gzipped runtime as one zero-dependency ES module, including router, SSR, hydration, and i18n.</span>
+          <span class="metric-value">21 KB</span>
+          <span class="metric-desc">Gzipped runtime as one zero-dependency ES module, including router, Slots, Portals, Catch, streaming SSR, hydration, and i18n.</span>
         </div>
         <div class="metric">
           <span class="metric-value">32 ms</span>
@@ -528,15 +528,15 @@ Match(cart.len()) {
         <a class="example-tile" href="playground/?example=router">
           <div>
             <div class="example-head">
-              <h3>Router &amp; Packages</h3>
+              <h3>Fleet Console (Router + ADTs)</h3>
               <svg class="example-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
             </div>
-            <p>Declarative routes with <code>:id</code> parameters, <code>Link</code>, <code>navigate()</code>, and a local <code>@ui/Badge</code> package via <code>foar.toml</code>.</p>
+            <p>Declarative routes, named <code>Slot()</code> panels, <code>Portal</code> modal, generic tagged-union <code>ProbeState&lt;i32&gt;</code>, <code>Catch</code>/<code>Fallback</code>, and a verified <code>foar.lock</code> package.</p>
           </div>
           <div class="example-meta">
-            <span class="example-pill">Router / Route</span>
-            <span class="example-pill">@ui package</span>
-            <span class="example-pill">SSR-ready</span>
+            <span class="example-pill">Router · Slots · Portal</span>
+            <span class="example-pill">ADTs · Catch</span>
+            <span class="example-pill">@ui + foar.lock</span>
           </div>
         </a>
 

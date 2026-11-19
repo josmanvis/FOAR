@@ -18,13 +18,15 @@ pub enum Ty {
     Bool,
     Number,
     String,
-    Enum(String),
-    Data(String),
+    Enum(String, Vec<Ty>),
+    Data(String, Vec<Ty>),
+    TypeParam(String),
     Vec(Box<Ty>),
     Option(Box<Ty>),
     Promise(Box<Ty>),
     Record(Box<Ty>),
     RouteInfo,
+    CatchError,
 }
 
 impl std::fmt::Display for Ty {
@@ -36,12 +38,21 @@ impl std::fmt::Display for Ty {
             Ty::Bool => write!(f, "bool"),
             Ty::Number => write!(f, "number"),
             Ty::String => write!(f, "String"),
-            Ty::Enum(n) | Ty::Data(n) => write!(f, "{}", n),
+            Ty::TypeParam(n) => write!(f, "{}", n),
+            Ty::Enum(n, args) | Ty::Data(n, args) => {
+                if args.is_empty() {
+                    write!(f, "{}", n)
+                } else {
+                    let s: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+                    write!(f, "{}<{}>", n, s.join(", "))
+                }
+            }
             Ty::Vec(t) => write!(f, "Vec<{}>", t),
             Ty::Option(t) => write!(f, "Option<{}>", t),
             Ty::Promise(t) => write!(f, "Promise<{}>", t),
             Ty::Record(t) => write!(f, "Record<{}>", t),
             Ty::RouteInfo => write!(f, "Route"),
+            Ty::CatchError => write!(f, "CatchError"),
         }
     }
 }
@@ -85,8 +96,10 @@ pub enum CheckItem {
 
 struct Env<'a> {
     src: &'a str,
-    data: HashMap<String, Vec<(String, Ty)>>,
-    enums: HashSet<String>,
+    /// data name -> (type_params, fields)
+    data: HashMap<String, (Vec<String>, Vec<(String, Ty)>)>,
+    /// enum name -> (type_params, variants: (variant_name, optional payload ty))
+    enums: HashMap<String, (Vec<String>, Vec<(String, Option<Ty>)>)>,
     externs: HashMap<String, (Vec<(String, Ty)>, Ty)>,
     views: HashMap<String, Vec<(String, Ty)>>,
     view_states: HashMap<String, HashSet<String>>,
@@ -94,7 +107,7 @@ struct Env<'a> {
     view_vars: HashMap<String, HashMap<String, Ty>>,
 }
 
-const BUILTIN_ATTR_PROPS: &[&str] = &["key", "label", "role", "aria", "title", "tab_index", "drag", "drag_text", "class", "id"];
+const BUILTIN_ATTR_PROPS: &[&str] = &["key", "label", "role", "aria", "title", "tab_index", "drag", "drag_text", "class", "id", "slot"];
 
 fn err_at(src: &str, at: usize, message: String) -> CompileError {
     let at = at.min(src.len());
@@ -103,24 +116,54 @@ fn err_at(src: &str, at: usize, message: String) -> CompileError {
     CompileError { message, line, col, file: None, offset: at }
 }
 
+fn split_type_args(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let tail = s[start..].trim();
+    if !tail.is_empty() {
+        out.push(tail);
+    }
+    out
+}
+
 pub fn parse_ty(s: &str, data: &HashSet<String>, enums: &HashSet<String>) -> Ty {
+    parse_ty_with_params(s, data, enums, &[])
+}
+
+fn parse_ty_with_params(s: &str, data: &HashSet<String>, enums: &HashSet<String>, type_params: &[String]) -> Ty {
     let s = s.trim();
-    if let Some(inner) = s.strip_prefix("Vec<").and_then(|x| x.strip_suffix('>')) {
-        return Ty::Vec(Box::new(parse_ty(inner, data, enums)));
+    if let Some(lt) = s.find('<') {
+        if let Some(inner) = s[lt + 1..].strip_suffix('>') {
+            let base = s[..lt].trim();
+            let args: Vec<Ty> = split_type_args(inner)
+                .into_iter()
+                .map(|a| parse_ty_with_params(a, data, enums, type_params))
+                .collect();
+            match base {
+                "Vec" => return Ty::Vec(Box::new(args.into_iter().next().unwrap_or(Ty::Any))),
+                "Option" => return Ty::Option(Box::new(args.into_iter().next().unwrap_or(Ty::Any))),
+                "Promise" => return Ty::Promise(Box::new(args.into_iter().next().unwrap_or(Ty::Any))),
+                "Record" | "Map" => return Ty::Record(Box::new(args.into_iter().last().unwrap_or(Ty::Any))),
+                name if enums.contains(name) => return Ty::Enum(name.to_string(), args),
+                name if data.contains(name) => return Ty::Data(name.to_string(), args),
+                _ => return Ty::Any,
+            }
+        }
     }
-    if let Some(inner) = s.strip_prefix("Option<").and_then(|x| x.strip_suffix('>')) {
-        return Ty::Option(Box::new(parse_ty(inner, data, enums)));
-    }
-    if let Some(inner) = s.strip_prefix("Promise<").and_then(|x| x.strip_suffix('>')) {
-        return Ty::Promise(Box::new(parse_ty(inner, data, enums)));
-    }
-    if let Some(inner) = s.strip_prefix("Record<").and_then(|x| x.strip_suffix('>')) {
-        let val = inner.split(',').last().unwrap_or("any");
-        return Ty::Record(Box::new(parse_ty(val, data, enums)));
-    }
-    if let Some(inner) = s.strip_prefix("Map<").and_then(|x| x.strip_suffix('>')) {
-        let val = inner.split(',').last().unwrap_or("any");
-        return Ty::Record(Box::new(parse_ty(val, data, enums)));
+    if type_params.iter().any(|p| p == s) {
+        return Ty::TypeParam(s.to_string());
     }
     match s {
         "" | "any" | "Any" | "Object" | "object" => Ty::Any,
@@ -130,14 +173,37 @@ pub fn parse_ty(s: &str, data: &HashSet<String>, enums: &HashSet<String>) -> Ty 
         "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize" | "f32" | "f64" | "number" | "Number" => Ty::Number,
         "String" | "string" | "str" => Ty::String,
         "Route" | "RouteInfo" => Ty::RouteInfo,
-        name if enums.contains(name) => Ty::Enum(name.to_string()),
-        name if data.contains(name) => Ty::Data(name.to_string()),
+        "CatchError" => Ty::CatchError,
+        name if enums.contains(name) => Ty::Enum(name.to_string(), Vec::new()),
+        name if data.contains(name) => Ty::Data(name.to_string(), Vec::new()),
         _ => Ty::Any,
     }
 }
 
+fn substitute_ty(ty: &Ty, params: &[String], args: &[Ty]) -> Ty {
+    if params.is_empty() {
+        return ty.clone();
+    }
+    match ty {
+        Ty::TypeParam(name) => {
+            if let Some(pos) = params.iter().position(|p| p == name) {
+                args.get(pos).cloned().unwrap_or(Ty::Any)
+            } else {
+                Ty::Any
+            }
+        }
+        Ty::Vec(t) => Ty::Vec(Box::new(substitute_ty(t, params, args))),
+        Ty::Option(t) => Ty::Option(Box::new(substitute_ty(t, params, args))),
+        Ty::Promise(t) => Ty::Promise(Box::new(substitute_ty(t, params, args))),
+        Ty::Record(t) => Ty::Record(Box::new(substitute_ty(t, params, args))),
+        Ty::Data(n, a) => Ty::Data(n.clone(), a.iter().map(|x| substitute_ty(x, params, args)).collect()),
+        Ty::Enum(n, a) => Ty::Enum(n.clone(), a.iter().map(|x| substitute_ty(x, params, args)).collect()),
+        other => other.clone(),
+    }
+}
+
 fn is_assignable(expected: &Ty, actual: &Ty) -> bool {
-    if matches!(expected, Ty::Any) || matches!(actual, Ty::Any) {
+    if matches!(expected, Ty::Any | Ty::TypeParam(_)) || matches!(actual, Ty::Any | Ty::TypeParam(_)) {
         return true;
     }
     if expected == actual {
@@ -150,7 +216,12 @@ fn is_assignable(expected: &Ty, actual: &Ty) -> bool {
         (Ty::Vec(e), Ty::Vec(a)) => is_assignable(e, a),
         (Ty::Promise(e), Ty::Promise(a)) => is_assignable(e, a),
         (Ty::Record(e), Ty::Record(a)) => is_assignable(e, a),
-        // Allow Option<T> to unwrap when compared/passed loosely only if explicitly unwrapped; otherwise incompatible
+        (Ty::Data(en, ea), Ty::Data(an, aa)) if en == an => {
+            ea.is_empty() || aa.is_empty() || (ea.len() == aa.len() && ea.iter().zip(aa).all(|(x, y)| is_assignable(x, y)))
+        }
+        (Ty::Enum(en, ea), Ty::Enum(an, aa)) if en == an => {
+            ea.is_empty() || aa.is_empty() || (ea.len() == aa.len() && ea.iter().zip(aa).all(|(x, y)| is_assignable(x, y)))
+        }
         _ => false,
     }
 }
@@ -210,7 +281,7 @@ pub fn check_program(
     let mut env = Env {
         src,
         data: HashMap::new(),
-        enums: enum_names.clone(),
+        enums: HashMap::new(),
         externs: HashMap::new(),
         views: HashMap::new(),
         view_states: HashMap::new(),
@@ -218,8 +289,27 @@ pub fn check_program(
     };
 
     for d in data_decls {
-        let fields = d.fields.iter().map(|f| (f.name.clone(), parse_ty(&f.field_type, &data_names, &enum_names))).collect();
-        env.data.insert(d.name.clone(), fields);
+        let fields = d
+            .fields
+            .iter()
+            .map(|f| (f.name.clone(), parse_ty_with_params(&f.field_type, &data_names, &enum_names, &d.type_params)))
+            .collect();
+        env.data.insert(d.name.clone(), (d.type_params.clone(), fields));
+    }
+
+    for e in enums {
+        let variants = e
+            .variants
+            .iter()
+            .map(|v| {
+                let payload = v
+                    .payload_type
+                    .as_ref()
+                    .map(|pt| parse_ty_with_params(pt, &data_names, &enum_names, &e.type_params));
+                (v.name.clone(), payload)
+            })
+            .collect();
+        env.enums.insert(e.name.clone(), (e.type_params.clone(), variants));
     }
 
     for ex in externs {
@@ -229,7 +319,11 @@ pub fn check_program(
     }
 
     for v in views {
-        let params: Vec<(String, Ty)> = v.params.iter().map(|p| (p.name.clone(), parse_ty(&p.param_type, &data_names, &enum_names))).collect();
+        let params: Vec<(String, Ty)> = v
+            .params
+            .iter()
+            .map(|p| (p.name.clone(), parse_ty_with_params(&p.param_type, &data_names, &enum_names, &v.type_params)))
+            .collect();
         env.views.insert(v.name.clone(), params.clone());
         env.view_states.insert(v.name.clone(), v.states.iter().map(|s| s.name.clone()).collect());
 
@@ -239,10 +333,10 @@ pub fn check_program(
             scope.insert(n, ty);
         }
         for s in &v.stores {
-            scope.insert(s.name.clone(), parse_ty(&s.store_type, &data_names, &enum_names));
+            scope.insert(s.name.clone(), parse_ty_with_params(&s.store_type, &data_names, &enum_names, &v.type_params));
         }
         for d in &v.derived {
-            scope.insert(d.name.clone(), parse_ty(&d.derived_type, &data_names, &enum_names));
+            scope.insert(d.name.clone(), parse_ty_with_params(&d.derived_type, &data_names, &enum_names, &v.type_params));
         }
         env.view_vars.insert(v.name.clone(), scope);
     }
@@ -363,6 +457,28 @@ fn scope_with_locals(env: &Env<'_>, view: &str, locals: &[(String, Option<String
     for (name, hint) in locals {
         let ty = match hint.as_deref() {
             Some("RouteParams") => Ty::Record(Box::new(Ty::String)),
+            Some("CatchError") => Ty::CatchError,
+            Some(s) if s.starts_with("EnumPayload:") => {
+                let parts: Vec<&str> = s.splitn(4, ':').collect();
+                if parts.len() == 4 {
+                    let (scrut, ename, vname) = (parts[1], parts[2], parts[3]);
+                    let scrut_args: Vec<Ty> = match scope.get(scrut) {
+                        Some(Ty::Enum(en, args)) if en == ename => args.clone(),
+                        _ => Vec::new(),
+                    };
+                    if let Some((tparams, variants)) = env.enums.get(ename) {
+                        if let Some((_, Some(pty))) = variants.iter().find(|(vn, _)| vn == vname) {
+                            substitute_ty(pty, tparams, &scrut_args)
+                        } else {
+                            Ty::Any
+                        }
+                    } else {
+                        Ty::Any
+                    }
+                } else {
+                    Ty::Any
+                }
+            }
             Some(list_src) => {
                 // If local is a List binding over a variable/member we know is Vec<T>, infer T!
                 let trimmed = list_src.trim();
@@ -467,7 +583,8 @@ impl<'a> Checker<'a> {
                         }
                         let ty_str: String = toks[ty_start..j].iter().map(|t| self.text(t)).collect();
                         let data_names: HashSet<String> = self.env.data.keys().cloned().collect();
-                        explicit_ty = Some(parse_ty(&ty_str, &data_names, &self.env.enums));
+                        let enum_names: HashSet<String> = self.env.enums.keys().cloned().collect();
+                        explicit_ty = Some(parse_ty(&ty_str, &data_names, &enum_names));
                     }
                     if j < toks.len() && self.is(&toks[j], "=") {
                         let end = self.find_stmt_end(toks, j + 1);
@@ -589,9 +706,9 @@ impl<'a> Checker<'a> {
             }
             if self.is(&toks[i], "match") {
                 if let Some(brace) = self.find_top_level(toks, i + 1, "{") {
-                    self.check_expr(&toks[i + 1..brace], None)?;
+                    let scrut_ty = self.check_expr(&toks[i + 1..brace], None)?;
                     if let Some(close) = self.find_matching(toks, brace, "{", "}") {
-                        self.check_match_arms(&toks[brace + 1..close], None, true)?;
+                        self.check_match_arms(&toks[brace + 1..close], Some(&scrut_ty), None, true)?;
                         i = close + 1;
                         if i < toks.len() && self.is(&toks[i], ";") {
                             i += 1;
@@ -679,9 +796,9 @@ impl<'a> Checker<'a> {
         // `match scrut { arms }`
         if self.is(&toks[0], "match") {
             if let Some(brace) = self.find_top_level(toks, 1, "{") {
-                self.check_expr(&toks[1..brace], None)?;
+                let scrut_ty = self.check_expr(&toks[1..brace], None)?;
                 if let Some(close) = self.find_matching(toks, brace, "{", "}") {
-                    return self.check_match_arms(&toks[brace + 1..close], expected, false);
+                    return self.check_match_arms(&toks[brace + 1..close], Some(&scrut_ty), expected, false);
                 }
             }
             return Ok(Ty::Any);
@@ -718,7 +835,7 @@ impl<'a> Checker<'a> {
         if let Some(p) = self.find_last_top_level(toks, &["==", "!=", "===", "!=="]) {
             let a = self.check_expr(&toks[..p], None)?;
             let b = self.check_expr(&toks[p + 1..], None)?;
-            if let (Ty::Enum(ea), Ty::Enum(eb)) = (&a, &b) {
+            if let (Ty::Enum(ea, _), Ty::Enum(eb, _)) = (&a, &b) {
                 if ea != eb {
                     return self.err(toks[p].start, format!("Cannot compare enum '{}' with enum '{}'", ea, eb));
                 }
@@ -895,16 +1012,54 @@ impl<'a> Checker<'a> {
                 return Ok((t, close + 1));
             }
         }
-        // Enum variant `EnumName.Variant`
-        if self.env.enums.contains(text) && toks.len() > 2 && self.is(&toks[1], ".") {
-            return Ok((Ty::Enum(text.to_string()), 3));
+        // Enum variant `EnumName.Variant` or tagged-union constructor `EnumName.Variant(payload)`
+        if let Some((tparams, variants)) = self.env.enums.get(text).cloned() {
+            if toks.len() > 2 && self.is(&toks[1], ".") {
+                let vname = self.text(&toks[2]).to_string();
+                let exp_args: Vec<Ty> = match expected {
+                    Some(Ty::Enum(en, args)) if en == text => args.clone(),
+                    _ => Vec::new(),
+                };
+                if let Some((_, Some(payload_ty))) = variants.iter().find(|(vn, _)| vn == &vname) {
+                    if toks.len() > 3 && self.is(&toks[3], "(") {
+                        if let Some(close) = self.find_matching(toks, 3, "(", ")") {
+                            let expected_payload = substitute_ty(payload_ty, &tparams, &exp_args);
+                            let actual_payload = self.check_expr(&toks[4..close], Some(&expected_payload))?;
+                            if !is_assignable(&expected_payload, &actual_payload) {
+                                let arg_at = toks.get(4).map(|t| t.start).unwrap_or(first.start);
+                                return self.err(
+                                    arg_at,
+                                    format!("Payload for {}.{} expects {}, got {}", text, vname, expected_payload, actual_payload),
+                                );
+                            }
+                            let inferred_args = if !exp_args.is_empty() {
+                                exp_args
+                            } else if let Ty::TypeParam(tp) = payload_ty {
+                                tparams.iter().map(|p| if p == tp { actual_payload.clone() } else { Ty::Any }).collect()
+                            } else {
+                                Vec::new()
+                            };
+                            return Ok((Ty::Enum(text.to_string(), inferred_args), close + 1));
+                        }
+                    }
+                }
+                return Ok((Ty::Enum(text.to_string(), exp_args), 3));
+            }
         }
         // Data struct literal `DataName { field: expr, ... }`
-        if let Some(fields) = self.env.data.get(text).cloned() {
+        if let Some((tparams, raw_fields)) = self.env.data.get(text).cloned() {
             if toks.len() > 1 && self.is(&toks[1], "{") {
                 if let Some(close) = self.find_matching(toks, 1, "{", "}") {
+                    let exp_args: Vec<Ty> = match expected {
+                        Some(Ty::Data(dn, args)) if dn == text => args.clone(),
+                        _ => Vec::new(),
+                    };
+                    let fields: Vec<(String, Ty)> = raw_fields
+                        .iter()
+                        .map(|(n, ty)| (n.clone(), substitute_ty(ty, &tparams, &exp_args)))
+                        .collect();
                     self.check_object_fields(&toks[2..close], Some((text, &fields)), first.start)?;
-                    return Ok((Ty::Data(text.to_string()), close + 1));
+                    return Ok((Ty::Data(text.to_string(), exp_args), close + 1));
                 }
             }
         }
@@ -1007,10 +1162,10 @@ impl<'a> Checker<'a> {
 
     fn check_field_access(&self, base: &Ty, field: &str, at: usize) -> Result<Ty, CompileError> {
         match base {
-            Ty::Data(dname) => {
-                if let Some(fields) = self.env.data.get(dname) {
+            Ty::Data(dname, targs) => {
+                if let Some((tparams, fields)) = self.env.data.get(dname) {
                     if let Some((_, fty)) = fields.iter().find(|(n, _)| n == field) {
-                        return Ok(fty.clone());
+                        return Ok(substitute_ty(fty, tparams, targs));
                     }
                     let hint = closest(field, fields.iter().map(|(n, _)| n.as_str()))
                         .map(|s| format!(" (did you mean '{}'?)", s))
@@ -1024,6 +1179,10 @@ impl<'a> Checker<'a> {
                 "path" | "hash" => Ok(Ty::String),
                 "params" | "query" => Ok(Ty::Record(Box::new(Ty::String))),
                 _ => self.err(at, format!("Unknown field '{}' on route (available: path, params, query, hash)", field)),
+            },
+            Ty::CatchError => match field {
+                "message" | "view" => Ok(Ty::String),
+                _ => self.err(at, format!("Unknown field '{}' on CatchError (available: message, view)", field)),
             },
             Ty::Record(v) => Ok((**v).clone()),
             _ => Ok(Ty::Any),
@@ -1241,11 +1400,75 @@ impl<'a> Checker<'a> {
         Ok(Ty::Any)
     }
 
-    fn check_match_arms(&mut self, toks: &[Token], expected: Option<&Ty>, is_stmt: bool) -> Result<Ty, CompileError> {
+    fn extract_pat_binding(&self, pat: &[Token], scrut_ty: Option<&Ty>) -> Option<(String, Ty)> {
+        // Qualified payload pattern: `Enum.Variant(x)`
+        if pat.len() == 6
+            && pat[0].kind == Kind::Ident
+            && self.is(&pat[1], ".")
+            && pat[2].kind == Kind::Ident
+            && self.is(&pat[3], "(")
+            && pat[4].kind == Kind::Ident
+            && self.is(&pat[5], ")")
+        {
+            let ename = self.text(&pat[0]);
+            let vname = self.text(&pat[2]);
+            let bname = self.text(&pat[4]).to_string();
+            let args: &[Ty] = match scrut_ty {
+                Some(Ty::Enum(en, a)) if en == ename => a.as_slice(),
+                _ => &[],
+            };
+            if let Some((tparams, variants)) = self.env.enums.get(ename) {
+                if let Some((_, Some(pty))) = variants.iter().find(|(vn, _)| vn == vname) {
+                    return Some((bname, substitute_ty(pty, tparams, args)));
+                }
+            }
+            return Some((bname, Ty::Any));
+        }
+        // Bare payload pattern: `Variant(x)`
+        if pat.len() == 4
+            && pat[0].kind == Kind::Ident
+            && self.is(&pat[1], "(")
+            && pat[2].kind == Kind::Ident
+            && self.is(&pat[3], ")")
+        {
+            let vname = self.text(&pat[0]);
+            let bname = self.text(&pat[2]).to_string();
+            if let Some(Ty::Enum(ename, args)) = scrut_ty {
+                if let Some((tparams, variants)) = self.env.enums.get(ename) {
+                    if let Some((_, Some(pty))) = variants.iter().find(|(vn, _)| vn == vname) {
+                        return Some((bname, substitute_ty(pty, tparams, args)));
+                    }
+                }
+            } else {
+                for (tparams, variants) in self.env.enums.values() {
+                    if let Some((_, Some(pty))) = variants.iter().find(|(vn, _)| vn == vname) {
+                        return Some((bname, substitute_ty(pty, tparams, &[])));
+                    }
+                }
+            }
+            return Some((bname, Ty::Any));
+        }
+        // Simple catch-all identifier binding: `x` (lowercase)
+        if pat.len() == 1 && pat[0].kind == Kind::Ident {
+            let w = self.text(&pat[0]);
+            if w != "_" && w != "true" && w != "false" && w != "null" && w.starts_with(|c: char| c.is_ascii_lowercase() || c == '_') {
+                return Some((w.to_string(), scrut_ty.cloned().unwrap_or(Ty::Any)));
+            }
+        }
+        None
+    }
+
+    fn check_match_arms(&mut self, toks: &[Token], scrut_ty: Option<&Ty>, expected: Option<&Ty>, is_stmt: bool) -> Result<Ty, CompileError> {
         let mut i = 0;
         let mut result_ty = Ty::Any;
         while i < toks.len() {
             let Some(arrow) = self.find_top_level(toks, i, "=>") else { break };
+            let pat_toks = &toks[i..arrow];
+            let pat_only = match self.find_top_level(pat_toks, 0, "if") {
+                Some(g) => &pat_toks[..g],
+                None => pat_toks,
+            };
+            let arm_bind = self.extract_pat_binding(pat_only, scrut_ty);
             let mut j = arrow + 1;
             if j >= toks.len() {
                 break;
@@ -1254,6 +1477,9 @@ impl<'a> Checker<'a> {
             if self.is(&toks[j], "{") {
                 if let Some(close) = self.find_matching(toks, j, "{", "}") {
                     let saved = self.scope.clone();
+                    if let Some((bname, bty)) = arm_bind {
+                        self.scope.insert(bname, bty);
+                    }
                     self.check_statements(&toks[j + 1..close])?;
                     self.scope = saved;
                     j = close + 1;
@@ -1265,17 +1491,23 @@ impl<'a> Checker<'a> {
                 }
             } else {
                 let end = self.find_top_level(toks, j, ",").unwrap_or(toks.len());
+                let saved = self.scope.clone();
+                if let Some((bname, bty)) = arm_bind {
+                    self.scope.insert(bname, bty);
+                }
                 if is_stmt {
                     self.check_statements(&toks[j..end])?;
                 } else {
                     let t = self.check_expr(&toks[j..end], expected)?;
                     if let Some(exp) = expected {
                         if !is_assignable(exp, &t) {
+                            self.scope = saved;
                             return self.err(arm_at, format!("Match arm produces {}, expected {}", t, exp));
                         }
                     }
                     result_ty = if result_ty == Ty::Any { t } else { unify(result_ty, t) };
                 }
+                self.scope = saved;
                 j = (end + 1).min(toks.len());
             }
             i = j;
@@ -1540,5 +1772,85 @@ mod tests {
 
         let bad_nav = compile("view App { state S { render { Button(\"x\") -> on_click(Go) } effect Go() { navigate(123); } } }").unwrap_err();
         assert!(bad_nav.message.contains("'navigate' expects String, got number"), "{}", bad_nav);
+    }
+
+    #[test]
+    fn checks_generics_tagged_unions_slots_portals_lifecycle_and_catch() {
+        let ok = compile(
+            "data User { id: i32, name: String }\n\
+             data Page<T> { items: Vec<T>, total: i32 }\n\
+             enum Async<T> { Idle, Loading, Ready(T), Failed(String) }\n\
+             view Card(title: String) {\n\
+                 state Open {\n\
+                     render {\n\
+                         Column {\n\
+                             Text(title)\n\
+                             Slot(name: \"header\")\n\
+                             Slot()\n\
+                         }\n\
+                     }\n\
+                 }\n\
+             }\n\
+             view App {\n\
+                 store page: Page<User> = Page { items: [User { id: 1, name: \"Ada\" }], total: 1 };\n\
+                 store req: Async<User> = Async.Ready(User { id: 2, name: \"Grace\" });\n\
+                 let first_name: String = match req {\n\
+                     Async.Ready(u) => u.name,\n\
+                     Async.Failed(msg) => msg,\n\
+                     Async.Idle | Async.Loading => \"none\",\n\
+                 };\n\
+                 on_unmount { console.log(\"app bye\"); }\n\
+                 state Ready {\n\
+                     on_enter { console.log(\"entered\"); }\n\
+                     on_unmount { console.log(\"state bye\"); }\n\
+                     render {\n\
+                         Column {\n\
+                             Card(title: first_name) {\n\
+                                 Text(\"Header\", slot: \"header\")\n\
+                                 Text(\"Body {page.total}\")\n\
+                             }\n\
+                             Portal(target: \"#modal-root\") {\n\
+                                 Text(\"Modal\")\n\
+                             }\n\
+                             Catch {\n\
+                                 Match(req) {\n\
+                                     Ready(u) => Text(u.name)\n\
+                                     Failed(msg) => Text(msg)\n\
+                                     Idle | Loading => Spinner(\"...\")\n\
+                                 }\n\
+                             } Fallback { err =>\n\
+                                 Text(\"Recovered: {err.message} in {err.view}\")\n\
+                             }\n\
+                         }\n\
+                     }\n\
+                 }\n\
+             }",
+        );
+        assert!(ok.is_ok(), "{:?}", ok);
+
+        // Wrong payload type for tagged union
+        let bad_payload = compile(
+            "enum Load { Idle, Ready(String) }\n\
+             view App { store s: Load = Load.Ready(42); state S { render { Text(\"x\") } } }",
+        ).unwrap_err();
+        assert!(bad_payload.message.contains("Payload for Load.Ready expects String, got number"), "{}", bad_payload);
+
+        // Bad field access on destructured generic payload
+        let bad_field = compile(
+            "data User { name: String }\n\
+             enum Async<T> { Idle, Ready(T) }\n\
+             view App {\n\
+                 store req: Async<User> = Async.Idle;\n\
+                 let n = match req { Async.Ready(u) => u.nam, Async.Idle => \"\" };\n\
+                 state S { render { Text(n) } }\n\
+             }",
+        ).unwrap_err();
+        assert!(bad_field.message.contains("Unknown field 'nam' on User"), "{}", bad_field);
+
+        // Bad field on CatchError
+        let bad_err = compile(
+            "view App { state S { render { Catch { Text(\"ok\") } Fallback { err => Text(err.nope) } } } }",
+        ).unwrap_err();
+        assert!(bad_err.message.contains("Unknown field 'nope' on CatchError"), "{}", bad_err);
     }
 }

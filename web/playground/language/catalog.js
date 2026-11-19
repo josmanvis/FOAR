@@ -10,8 +10,10 @@ export const KEYWORDS = {
   render: 'The elements shown while the view is in this state.',
   transition: 'Moves the view to another state: `transition Editing;`',
   emit: 'Sends an event to the parent: `emit pick(id);` → the parent handles `-> on_pick(Effect)`.',
+  on_enter: 'Runs when the view enters this state (on mount and state transitions).',
   on_exit: 'Runs when an async transition resolves (`api(...) -> transition(State)`), then usually transitions.',
-  data: 'Declares a data type: `data Note { id: String, title: String }`.',
+  on_unmount: 'Runs when leaving a state or when the view instance is disposed.',
+  data: 'Declares a typed (optionally generic) data record: `data Page<T> { items: Vec<T>, total: i32 }`.',
   theme: 'Design tokens: CSS custom properties on :root, with `@dark { … }` / `@light { … }` variants.',
   style: '`style Name { … }` declares a named style (apply with `.style(Name)` or `@use Name`); `style { … }` inside a view styles its host element.',
   css: 'A raw CSS block, copied into the stylesheet as is.',
@@ -19,8 +21,9 @@ export const KEYWORDS = {
   extern: 'Declares a typed JavaScript host binding checked by the compiler: `extern fn save_note(text: String) -> Promise<bool>;`',
   fn: 'Used with `extern fn` to declare typed host functions.',
   let: 'In a view: a derived value, recomputed on every update (`let open = items.filter(|t| !t.done).len();`). In an effect: a local variable.',
-  enum: 'A closed set of named values: `enum Layout { List, Gallery = "grid" }`. Use `Layout.List`; values compile to their strings/numbers, so they serialize and compare with `==`.',
-  match: 'Picks one arm by pattern — no fall-through, and the compiler checks every case is handled (all enum variants, true/false, or a `_` arm). Patterns: literals, `a | b`, ranges `1..=5`, enum variants, `name if guard`, `_`. Works as a statement or as a value.',
+  enum: 'A closed sum type / tagged union: `enum LoadState<T> { Idle, Loading, Ready(T), Failed(String) }`.',
+  match: 'Picks one arm by pattern — no fall-through, and the compiler checks every case is handled (all enum variants, true/false, or a `_` arm). Supports payload destructuring `Ready(x) => …`, literals, `a | b`, ranges `1..=5`, `name if guard`, `_`.',
+  Fallback: 'Follows `Catch { … } Fallback { err => … }` to render recovery UI when a subtree throws.',
   for: '`for item in items { … }` or `for i in 0..n { … }` (`..=` includes the end).',
   in: 'In a `for` loop.',
   while: '`while condition { … }`',
@@ -47,10 +50,12 @@ export const TYPES = {
   Promise: 'An asynchronous host result: `Promise<bool>`.',
   Void: 'No return value.',
   Record: 'Key-value map: `Record<String, String>`.',
+  CatchError: 'Error info `{ message, view }` passed to `Catch { … } Fallback { err => … }`.',
 };
 
-const COMMON = ['label', 'title', 'role', 'aria', 'tab_index', 'drag', 'drag_text', 'autofocus'];
+const COMMON = ['label', 'title', 'role', 'aria', 'tab_index', 'drag', 'drag_text', 'autofocus', 'slot'];
 const ARG_DOCS = {
+  slot: 'Assigns this child to a named `Slot(name: "...")` outlet in a parent view.',
   label: 'Accessible name (`aria-label`).',
   title: 'Tooltip; for an icon Button without `label`, also its accessible name.',
   role: 'ARIA role.',
@@ -88,6 +93,9 @@ export const ELEMENTS = {
   Router: { sig: 'Router { Route("/path") { … } }', doc: 'Declarative URL router. Mounts the first matching `Route` child and updates params in place without remounting.', named: [], events: [], snippet: 'Router {\n    Route("/") { $0 }\n    Route("*") { Text("Not found") }\n}' },
   Route: { sig: 'Route("/orders/:id") { params => … }', doc: 'One route inside a `Router`. Supports `:param`, `*catchall`, and `*` wildcard; optional `params =>` binding receives matched parameters.', named: ['path'], events: [], snippet: 'Route("${1:/path}") {\n    $0\n}' },
   Link: { sig: 'Link("/path", "Label")', doc: 'Client-routed `<a href>` with automatic `aria-current="page"`. Calls `navigate()` on unmodified left-clicks.', named: ['to', 'href', 'replace', ...COMMON], events: ['on_click'], snippet: 'Link("${1:/path}", "${2:Label}")' },
+  Slot: { sig: 'Slot() / Slot(name: "header") { fallback }', doc: 'Renders caller children projected into this view (default or named slot) while keeping caller scope & events.', named: ['name'], events: [], snippet: 'Slot(name: "${1:header}")' },
+  Portal: { sig: 'Portal(target: "#modal-root") { … }', doc: 'Renders children into another DOM container (default `body`) with delegated events and automatic cleanup on unmount.', named: ['target'], events: [], snippet: 'Portal(target: "${1:#modal-root}") {\n    $0\n}' },
+  Catch: { sig: 'Catch { … } Fallback { err => … }', doc: 'Error boundary that isolates runtime and SSR errors in its subtree without crashing sibling views.', named: [], events: [], snippet: 'Catch {\n    $0\n} Fallback { err =>\n    Text("Error: {err.message}")\n}' },
 };
 
 export const EVENTS = {

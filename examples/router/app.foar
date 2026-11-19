@@ -1,5 +1,7 @@
-// Router — declarative routes, typed params, Link, navigate(), and @ui package imports.
+// Fleet Console — showcases Router, Slots (@ui/Panel), Portals, Tagged-Union ADTs,
+// generic enums, on_enter lifecycle hooks, Catch/Fallback error boundaries, and foar.toml packages.
 import "@ui/Badge"
+import "@ui/Panel"
 
 data Service {
     id: String,
@@ -7,6 +9,12 @@ data Service {
     region: String,
     healthy: bool,
     latency_ms: i32,
+}
+
+enum ProbeState<T> {
+    Idle,
+    Online(T),
+    Down(String),
 }
 
 style NavLink {
@@ -25,6 +33,10 @@ view App {
         Service { id: "edge-eu", name: "Edge API (EU-West)", region: "fra", healthy: true, latency_ms: 21 },
         Service { id: "worker-db", name: "Replica Writer", region: "sjc", healthy: false, latency_ms: 148 },
     ];
+    store probe: ProbeState<i32> = ProbeState.Online(14);
+    store modal_open: bool = false;
+    store fault_test: bool = false;
+    store visits: i32 = 0;
 
     style {
         layout: vertical;
@@ -34,6 +46,8 @@ view App {
     }
 
     state Ready {
+        on_enter { visits += 1; }
+
         render {
             Column {
                 Row {
@@ -54,13 +68,33 @@ view App {
 
                 Router {
                     Route("/") {
-                        Column {
-                            Text("All routes share one state-machine runtime and render cleanly on server (SSR) or client.").style({ color: #475569; font-size: 14px; })
-                            Row {
-                                Button("Open Services") -> on_click(GoServices)
-                                Button("Inspect Replica Writer") -> on_click(GoDegraded)
+                        Panel(subtitle: "Cluster Overview") {
+                            Row(slot: "header") {
+                                Text("Cluster Overview").style({ font-size: 16px; font-weight: 700; })
+                                Badge(text: "Session #{visits}", tone: "ok")
                             }
-                        }.style({ gap: 12px; })
+
+                            Text("Router, Slots, Portals, Tagged-Union ADTs, and Catch boundaries share one compiled runtime.").style({ color: #475569; font-size: 14px; })
+
+                            Match(probe) {
+                                Online(ms) => Badge(text: "Probe OK — {ms} ms", tone: "ok")
+                                Down(reason) => Badge(text: "Probe Down — {reason}", tone: "warn")
+                                Idle => Text("Probe idle")
+                            }
+
+                            Catch {
+                                Text(fault_test ? null.explode : "Error boundary healthy — sibling views isolated.").style({ font-size: 13px; color: #334155; })
+                            } Fallback { err =>
+                                Text("Recovered in {err.view}: {err.message}").style({ font-size: 13px; color: #b91c1c; font-weight: 600; })
+                            }
+
+                            Row(slot: "footer") {
+                                Button("Open Services") -> on_click(GoServices)
+                                Button("Simulate Outage") -> on_click(SimulateOutage)
+                                Button("Test Error Boundary") -> on_click(TriggerFault)
+                                Button("Restart Modal (Portal)") -> on_click(OpenModal)
+                            }
+                        }
                     }
                     Route("/services") {
                         List(services) { svc =>
@@ -81,10 +115,40 @@ view App {
                         }
                     }
                 }
+
+                If(modal_open) {
+                    Portal {
+                        Column {
+                            Panel(subtitle: "Confirm Rolling Restart") {
+                                Text("This dialog is rendered via Portal into document.body with delegated FOAR events.").style({ color: #475569; font-size: 14px; })
+                                Row(slot: "footer") {
+                                    Button("Cancel") -> on_click(CloseModal)
+                                    Button("Confirm Restart") -> on_click(ConfirmRestart)
+                                }
+                            }
+                        }.style({
+                            position: fixed;
+                            inset: 0;
+                            background: rgba(15, 23, 42, 0.45);
+                            align-items: center;
+                            justify-content: center;
+                            z-index: 9999;
+                            padding: 24px;
+                        })
+                    }
+                }
             }.style({ gap: 16px; })
         }
+
         effect GoServices() { navigate("/services"); }
-        effect GoDegraded() { navigate("/services/worker-db"); }
+        effect SimulateOutage() { probe = ProbeState.Down("upstream timeout"); }
+        effect TriggerFault() { fault_test = true; }
+        effect OpenModal() { modal_open = true; }
+        effect CloseModal() { modal_open = false; }
+        effect ConfirmRestart() {
+            probe = ProbeState.Online(11);
+            modal_open = false;
+        }
     }
 }
 
@@ -94,17 +158,17 @@ view ServiceDetail(id: String, services: Vec<Service>) {
     state Ready {
         render {
             If(found) {
-                Column {
-                    Row {
+                Panel(subtitle: found.name) {
+                    Row(slot: "header") {
                         Text(found.name).style({ font-size: 18px; font-weight: 700; })
                         Badge(text: found.healthy ? "Healthy" : "Degraded", tone: found.healthy ? "ok" : "warn")
                     }
                     Text("Region: {found.region} — p95 latency: {found.latency_ms} ms").style({ color: #475569; font-size: 14px; })
-                    Row {
+                    Row(slot: "footer") {
                         Link("/services", "All services").style(NavLink)
                         Link("/services/edge-eu", "Switch to EU-West").style(NavLink)
                     }
-                }.style({ gap: 10px; padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; })
+                }
             } Else {
                 Column {
                     Text("Unknown service: {id}").style({ font-weight: 600; color: #b91c1c; })

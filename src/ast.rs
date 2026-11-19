@@ -9,7 +9,7 @@ pub struct Program {
     pub kind: &'static str,
     #[serde(rename = "dataDecls")]
     pub data_decls: Vec<DataDecl>,
-    /// `enum Name { A, B = "b" }`: variants compile to their values (strings or numbers).
+    /// `enum Name { A, B = "b" }` or tagged union `enum Load<T> { Idle, Ready(T) }`.
     pub enums: Vec<EnumDecl>,
     /// `extern fn name(a: Type) -> RetType;`: typed host JS bindings checked by the compiler.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -33,12 +33,16 @@ pub struct DataDecl {
     #[serde(rename = "type")]
     pub kind: &'static str,
     pub name: String,
+    #[serde(rename = "typeParams", default, skip_serializing_if = "Vec::is_empty")]
+    pub type_params: Vec<String>,
     pub fields: Vec<Field>,
 }
 
 #[derive(Serialize, Debug, Clone)]
 pub struct EnumDecl {
     pub name: String,
+    #[serde(rename = "typeParams", default, skip_serializing_if = "Vec::is_empty")]
+    pub type_params: Vec<String>,
     pub variants: Vec<EnumVariant>,
 }
 
@@ -47,6 +51,9 @@ pub struct EnumVariant {
     pub name: String,
     /// JS literal of the variant's value (`"List"`, `"grid"`, `2`)
     pub value: String,
+    /// Optional payload type for tagged-union variants: `Ready(Vec<Item>)`
+    #[serde(rename = "payloadType", skip_serializing_if = "Option::is_none")]
+    pub payload_type: Option<String>,
 }
 
 /// `let name = expr;` in a view: a derived value, recomputed on every update.
@@ -59,12 +66,14 @@ pub struct Derived {
 }
 
 /// One arm of a render `Match`: `test` is a JS expression over `__m` (the
-/// matched value) and the arm's `binding` (bound to `__m`) if it has one.
+/// matched value) and the arm's `binding` (bound to `bindingExpr` or `__m`).
 #[derive(Serialize, Debug, Clone)]
 pub struct MatchArm {
     pub test: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binding: Option<String>,
+    #[serde(rename = "bindingExpr", skip_serializing_if = "Option::is_none")]
+    pub binding_expr: Option<String>,
     pub children: Vec<UiElement>,
 }
 
@@ -111,10 +120,14 @@ pub struct ViewDecl {
     #[serde(rename = "type")]
     pub kind: &'static str,
     pub name: String,
+    #[serde(rename = "typeParams", default, skip_serializing_if = "Vec::is_empty")]
+    pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub stores: Vec<Store>,
     pub derived: Vec<Derived>,
     pub style: Option<Style>,
+    #[serde(rename = "onUnmount", skip_serializing_if = "Option::is_none")]
+    pub on_unmount: Option<EffectBody>,
     pub states: Vec<StateDecl>,
 }
 
@@ -125,8 +138,12 @@ pub struct StateDecl {
     pub name: String,
     pub render: Vec<UiElement>,
     pub effects: Vec<EffectDecl>,
+    #[serde(rename = "onEnter", skip_serializing_if = "Option::is_none")]
+    pub on_enter: Option<EffectBody>,
     #[serde(rename = "onExit")]
     pub on_exit: Option<EffectBody>,
+    #[serde(rename = "onUnmount", skip_serializing_if = "Option::is_none")]
+    pub on_unmount: Option<EffectBody>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -174,7 +191,9 @@ pub struct UiElement {
     /// `Match(x) { pattern => … }`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arms: Option<Vec<MatchArm>>,
-    /// `If(c) { … } Else { … }` (an `Else If` is an `If` in here)
+    /// `If(c) { … } Else { … }` or `Catch { … } Fallback { err => … }`
     #[serde(rename = "elseChildren", skip_serializing_if = "Option::is_none")]
     pub else_children: Option<Vec<UiElement>>,
+    #[serde(rename = "fallbackBinding", skip_serializing_if = "Option::is_none")]
+    pub fallback_binding: Option<String>,
 }

@@ -211,21 +211,22 @@ state Saving {
 The view is in `Saving` for exactly as long as `save_note` runs. If it leaves
 `Saving` some other way first, `on_exit` doesn't run.
 
-## Enums
+## Enums, tagged unions & generics
 
 ```foar
 enum Layout { List, Gallery }
 enum Sort { Edited = "updated", Created = "created", Title = "title" }
+
+// Tagged-union enum with payloads and generic type parameter
+enum LoadState<T> { Idle, Loading, Ready(T), Failed(String) }
+
+data Page<T> { items: Vec<T>, total: i32 }
 ```
 
-- Refer to a variant as `Layout.Gallery`. A misspelled variant is a compile
-  error that lists the real ones.
-- A variant's value is its name (`"List"`), or the string or number you give
-  it. Values are plain JavaScript values, so they compare with `==`, serialize
-  to JSON and pass to host code unchanged. `Sort.Edited` above **is**
-  `"updated"`, so existing data and APIs keep working.
-- Declare stores and parameters with the enum type
-  (`store layout: Layout = Layout.List;`) so `match` can check them.
+- Refer to a variant as `Layout.Gallery` or construct a payload variant as `LoadState.Ready(user)`. A misspelled variant or mismatched payload type is a compile error.
+- Plain enum variants compile to their string or number values, so they serialize to JSON and compare with `==` directly.
+- Tagged-union variants compile to `{ tag: "Ready", value: payload }` and destructure cleanly in both `match` and render `Match` (`Ready(user) => Text(user.name)`).
+- `data<T>`, `enum<T>`, and `view<T>` accept generic type parameters that the static type checker substitutes across fields, payloads, and match arms.
 
 ## Match
 
@@ -416,21 +417,37 @@ Column {
   and `route.hash`, and effects can call `navigate("/path")` or
   `replace("/path")`.
 
-## Server-side rendering and hydration
+## Composition: Slots, Portals, Lifecycle & Error Boundaries
+
+- **Slots (`Slot()` / `Slot(name: "header")`)**: project caller children into a reusable child view while keeping them bound to the caller's reactive scope and events. Provide fallback content inside `Slot() { Text("Empty") }`, and assign named slots with `slot: "header"`.
+- **Portals (`Portal(target: "#modal-root") { … }`)**: render modals, popovers, and toasts into another DOM container (default `document.body`) with full delegated FOAR events and automatic cleanup on unmount.
+- **Lifecycle hooks (`on_enter`, `on_unmount`)**: states support `on_enter { … }`, `on_exit { … }` (for async transitions), and `on_unmount { … }`; views also support view-level `on_unmount { … }` run on disposal.
+- **Error boundaries (`Catch { … } Fallback { err => … }`)**: isolate runtime and SSR errors in a subtree without crashing sibling views. The `err` binding has typed `CatchError` fields (`err.message` and `err.view`), and `callbacks.onError(errObj, rawErr)` notifies host telemetry.
+
+## Server-side rendering, streaming and hydration
 
 `web/foar-runtime.js` runs in Node, Deno, Bun, and Edge workers with zero DOM
 dependencies:
 
 ```js
-// Server (Node / Edge)
-import { renderToString } from './dist/app.js';
+// Server (Node / Edge): synchronous, async loaders, or streaming Web ReadableStream
+import { renderToString, renderToStringAsync, renderToStream } from './dist/app.js';
 
-const { html, css, state, head } = renderToString({
+const { html, css, state, head } = await renderToStringAsync({
   url: req.url,
+  loaders: {
+    '/orders/:id': async ({ id }) => ({ order: await db.getOrder(id) }),
+  },
   bindings: { format_price },
 });
-// Embed `head` in <head> (scoped <style data-f4-ssr> + serialized state)
-// and `html` inside <div id="app">...</div>.
+
+// Or stream progressively with Web ReadableStream (flushes CSS shell immediately):
+const stream = renderToStream({
+  url: req.url,
+  loaders,
+  shellBefore: '<!doctype html><html><head>',
+  shellAfter: '</body></html>',
+});
 
 // Client
 import { hydrate } from './dist/app.js';
@@ -447,7 +464,14 @@ elements when the server HTML matches).
 ## Host functions and the runtime
 
 ```js
-import { createFoarRuntime, hydrate, renderToString, createI18n } from './web/foar-runtime.js';
+import {
+  createFoarRuntime,
+  hydrate,
+  renderToString,
+  renderToStringAsync,
+  renderToStream,
+  createI18n,
+} from './web/foar-runtime.js';
 
 const rt = createFoarRuntime(program, mountElement, {
   bindings: { load_notes, save_note: async (n) => { … } }, // callable by name from .foar code

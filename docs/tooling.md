@@ -17,20 +17,23 @@ pnpm build:wasm                    # web/foar.wasm (needs: rustup target add was
 ```sh
 foar check app.foar                         # parse, resolve imports/@packages, typecheck
 foar build app.foar --pretty                # program JSON (for createFoarRuntime)
-foar build app.foar --format js -o app.js   # ES module: { program, mount, hydrate, renderToString, createI18n }
+foar build app.foar --format js -o app.js   # ES module: { program, mount, hydrate, renderToString, renderToStringAsync, renderToStream, createI18n }
 foar build app.foar --format js --runtime ./foar-runtime.js -o dist/app.js
 foar build - < app.foar                     # one source from stdin
 foar build - --project < project.json       # {"entry", "files": {path: source}} from stdin
 foar init [dir]                             # scaffold foar.toml + app.foar
-foar add ui --path ./packages/ui            # add a local path dependency to foar.toml
-foar add ui --git https://...               # clone into foar_packages/ and record in foar.toml
-foar pkg                                    # inspect foar.toml dependencies
+foar add ui --path ./packages/ui            # add a local path dependency and update foar.lock
+foar add ui --git https://...               # clone into foar_packages/ and lock SHA-256 integrity
+foar add ui --version ^1.0.0 --registry ... # add a versioned registry package
+foar install [--frozen]                     # install dependencies & write/verify SHA-256 foar.lock
+foar pkg [--verify]                         # inspect foar.toml dependencies or verify foar.lock integrity
+foar lsp                                    # run the native Rust Language Server (JSON-RPC 2.0 stdio)
 foar i18n locales/ app.foar host/*.js       # check translation catalogs
 ```
 
-### Packages (`foar.toml`)
+### Packages (`foar.toml` & `foar.lock`)
 
-Declare local or Git packages in `foar.toml`:
+Declare local, Git, or registry packages in `foar.toml`:
 
 ```toml
 [package]
@@ -41,6 +44,14 @@ entry = "app.foar"
 [dependencies]
 ui = { path = "./packages/ui" }
 ```
+
+Run `foar install` to compute deterministic SHA-256 integrity hashes in `foar.lock`, and `foar pkg --verify` (or `foar install --frozen` in CI) to verify no dependency file has been tampered with.
+
+### Editor & Vite integration
+
+- **Native Rust LSP (`foar lsp`)**: speaks JSON-RPC 2.0 over stdio with multi-file compiler diagnostics, context-aware completions (including `Enum.` variants), hover docs, and go-to-definition.
+- **VS Code extension (`editors/vscode/`)**: includes a full TextMate grammar (`syntaxes/foar.tmLanguage.json`), bracket/comment rules, and a zero-dependency client launching `foar lsp`.
+- **Vite plugin (`integrations/vite-plugin-foar.js`)**: compiles `.foar` imports directly in Vite with transitive file watching and state-preserving `import.meta.hot` HMR.
 
 Then import modules from them anywhere in your project:
 
@@ -68,8 +79,9 @@ run in CI.
 
 ## The runtime
 
-`web/foar-runtime.js` is one ES module (≈18 KB gzipped) with no dependencies:
-`createFoarRuntime`, `hydrate`, `renderToString`, and `createI18n`. See
+`web/foar-runtime.js` is one ES module (≈21 KB gzipped) with no dependencies:
+`createFoarRuntime`, `hydrate`, `renderToString`, `renderToStringAsync`,
+`renderToStream`, and `createI18n`. See
 the [reference](./language.md#host-functions-and-the-runtime).
 
 ## The playground

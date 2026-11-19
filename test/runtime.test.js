@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { makeDom, tick, fire, compile as parseFoar, loadProject } from './dom.js';
-import { createFoarRuntime, hydrate, renderToString, matchRoute, parseUrl } from '../web/foar-runtime.js';
+import { createFoarRuntime, hydrate, renderToString, renderToStringAsync, renderToStream, matchRoute, parseUrl } from '../web/foar-runtime.js';
 
 const todoSrc = loadProject('todo'); // multi-file project
 const counterSrc = fs.readFileSync(new URL('../examples/counter/app.foar', import.meta.url), 'utf8');
@@ -765,4 +765,334 @@ test('SSR renderToString (zero DOM) + zero-recreation client hydrate()', async (
   assert.equal(rt.getRoute().path, '/');
   assert.equal(container.querySelector('.f4-router .f4-text').textContent, 'Welcome home');
   rt.destroy();
+});
+
+test('Slots: default + named slots + fallback content + caller events + SSR + hydrate', async () => {
+  const src = `
+view Card(title: String) {
+  state Ready {
+    render {
+      Column {
+        Row { Slot(name: "header") { Text("Default Header") } }
+        Text(title)
+        Column { Slot() { Text("Empty Body") } }
+        Row { Slot(name: "footer") { Text("No Footer") } }
+      }
+    }
+  }
+}
+
+view App {
+  store count: i32 = 1;
+  state Ready {
+    render {
+      Card(title: "Card #{count}") {
+        Text("Custom Header", slot: "header")
+        Text("Count is {count}")
+        Button("Inc") -> on_click(Inc)
+      }
+    }
+    effect Inc() { count += 1; }
+  }
+}
+`;
+  const ast = parseFoar(src);
+  // Swap entry view so App is first? Remember ast.views[0] is root!
+  // Let's put App first in a second test or reorder src so App is first:
+  assert.equal(ast.views[0].name, 'Card');
+  const appFirst = `
+view App {
+  store count: i32 = 1;
+  state Ready {
+    render {
+      Card(title: "Card #{count}") {
+        Text("Custom Header", slot: "header")
+        Text("Count is {count}")
+        Button("Inc") -> on_click(Inc)
+      }
+    }
+    effect Inc() { count += 1; }
+  }
+}
+
+view Card(title: String) {
+  state Ready {
+    render {
+      Column {
+        Row { Slot(name: "header") { Text("Default Header") } }
+        Text(title)
+        Column { Slot() { Text("Empty Body") } }
+        Row { Slot(name: "footer") { Text("No Footer") } }
+      }
+    }
+  }
+}
+`;
+  const appAst = parseFoar(appFirst);
+
+  // 1. SSR renders named slot, default slot, and slot fallback
+  const ssr = renderToString(appAst);
+  assert.ok(ssr.html.includes('Custom Header'), ssr.html);
+  assert.ok(ssr.html.includes('Card #1'), ssr.html);
+  assert.ok(ssr.html.includes('Count is 1'), ssr.html);
+  assert.ok(ssr.html.includes('No Footer'), 'unfilled named slot uses fallback');
+
+  // 2. Client hydrate preserves zero-recreation DOM + keeps caller events live!
+  const { document, container } = makeDom();
+  document.head.innerHTML = ssr.head;
+  container.innerHTML = ssr.html;
+  const origBtn = container.querySelector('button');
+  let created = 0;
+  const origCreate = document.createElement.bind(document);
+  document.createElement = (...a) => { created++; return origCreate(...a); };
+  let rt;
+  try {
+    rt = hydrate(appAst, container);
+  } finally {
+    document.createElement = origCreate;
+  }
+  assert.equal(created, 0, 'slot hydration creates 0 DOM nodes');
+  assert.equal(container.querySelector('button'), origBtn);
+
+  // Clicking button inside projected slot runs caller's Inc effect and updates both Card prop & slotted Text!
+  origBtn.click();
+  await tick();
+  const txts = q(container, '.f4-text').map((e) => e.textContent);
+  assert.deepEqual(txts, ['Custom Header', 'Card #2', 'Count is 2', 'No Footer']);
+  rt.destroy();
+});
+
+test('Portals: renders into target container, delegates events, and cleans up on unmount', async () => {
+  const src = `
+view App {
+  store open: bool = true;
+  store clicks: i32 = 0;
+  state Ready {
+    render {
+      Column {
+        Text("Clicks: {clicks}")
+        Button("Toggle") -> on_click(Toggle)
+        If(open) {
+          Portal(target: "#modal-root") {
+            Column {
+              Text("Modal Body {clicks}")
+              Button("Portal Click") -> on_click(Hit)
+            }
+          }
+        }
+      }
+    }
+    effect Toggle() { open = !open; }
+    effect Hit() { clicks += 1; }
+  }
+}
+`;
+  const { document, container } = makeDom();
+  const modalRoot = document.createElement('div');
+  modalRoot.id = 'modal-root';
+  document.body.appendChild(modalRoot);
+
+  const ast = parseFoar(src);
+  const rt = createFoarRuntime(ast, container);
+
+  assert.equal(container.querySelectorAll('.f4-portal-root').length, 0, 'portal is not inside app container');
+  assert.equal(modalRoot.querySelectorAll('.f4-portal-root').length, 1, 'portal mounted into #modal-root');
+  assert.equal(modalRoot.querySelector('.f4-text').textContent, 'Modal Body 0');
+
+  // Event delegation works inside the portal
+  modalRoot.querySelector('button').click();
+  await tick();
+  assert.equal(container.querySelector('.f4-text').textContent, 'Clicks: 1');
+  assert.equal(modalRoot.querySelector('.f4-text').textContent, 'Modal Body 1');
+
+  // Toggling If(open) off unmounts and removes the portal cleanly
+  container.querySelector('button').click();
+  await tick();
+  assert.equal(modalRoot.querySelectorAll('.f4-portal-root').length, 0, 'portal removed on unmount');
+  rt.destroy();
+});
+
+test('Lifecycle hooks: on_enter, state on_unmount, and view on_unmount fire in order', async () => {
+  const src = `
+extern fn log_event(name: String) -> Void;
+
+view App {
+  on_unmount { log_event("view:unmount"); }
+  state Alpha {
+    on_enter { log_event("Alpha:enter"); }
+    on_unmount { log_event("Alpha:unmount"); }
+    render { Button("Next") -> on_click(Go) }
+    effect Go() { transition Beta; }
+  }
+  state Beta {
+    on_enter { log_event("Beta:enter"); }
+    on_unmount { log_event("Beta:unmount"); }
+    render { Text("In Beta") }
+  }
+}
+`;
+  const { container } = makeDom();
+  const events = [];
+  const rt = createFoarRuntime(parseFoar(src), container, {
+    bindings: { log_event: (n) => events.push(n) },
+  });
+  assert.deepEqual(events, ['Alpha:enter']);
+
+  container.querySelector('button').click();
+  await tick();
+  assert.deepEqual(events, ['Alpha:enter', 'Alpha:unmount', 'Beta:enter']);
+
+  rt.destroy();
+  assert.deepEqual(events, ['Alpha:enter', 'Alpha:unmount', 'Beta:enter', 'Beta:unmount', 'view:unmount']);
+});
+
+test('Error boundaries: Catch / Fallback isolates runtime & SSR errors without crashing siblings', async () => {
+  const src = `
+extern fn risky(boom: bool) -> String;
+
+view App {
+  store boom: bool = false;
+  state Ready {
+    render {
+      Column {
+        Text("Safe Sibling")
+        Button("Break") -> on_click(Break)
+        Catch {
+          Text(risky(boom))
+        } Fallback { err =>
+          Text("Caught: {err.message} @ {err.view}")
+        }
+      }
+    }
+    effect Break() { boom = true; }
+  }
+}
+`;
+  const ast = parseFoar(src);
+  const errors = [];
+  const risky = (b) => {
+    if (b) throw new Error('Kaboom');
+    return 'All Good';
+  };
+
+  // 1. Live client runtime: starts healthy, then catches error on reactive update
+  const { container } = makeDom();
+  const rt = createFoarRuntime(ast, container, {
+    bindings: { risky },
+    onError: (e) => errors.push(e),
+  });
+  assert.deepEqual(q(container, '.f4-text').map((e) => e.textContent), ['Safe Sibling', 'All Good']);
+
+  container.querySelector('button').click();
+  await tick();
+  assert.deepEqual(q(container, '.f4-text').map((e) => e.textContent), ['Safe Sibling', 'Caught: Kaboom @ App']);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].message, 'Kaboom');
+  rt.destroy();
+
+  // 2. SSR Catch isolates render-time errors too
+  const ssrSrc = src.replace('store boom: bool = false;', 'store boom: bool = true;');
+  const ssr = renderToString(parseFoar(ssrSrc), { bindings: { risky } });
+  assert.ok(ssr.html.includes('Safe Sibling'), ssr.html);
+  assert.ok(ssr.html.includes('Caught: Kaboom @ App'), ssr.html);
+});
+
+test('Tagged-union enums with payloads + generic data<T> / enum<T> at runtime & SSR', async () => {
+  const src = `
+data User { name: String }
+enum LoadState<T> { Idle, Loading, Ready(T), Failed(String) }
+
+view App {
+  store req: LoadState<User> = LoadState.Ready(User { name: "Ada" });
+  let summary: String = match req {
+    LoadState.Ready(u) => "Hello {u.name}",
+    LoadState.Failed(msg) => "Err: {msg}",
+    LoadState.Idle | LoadState.Loading => "Waiting",
+  };
+  state Main {
+    render {
+      Column {
+        Text(summary)
+        Match(req) {
+          Ready(u) => Text("User: {u.name}")
+          Failed(err) => Text("Failed: {err}")
+          Idle | Loading => Spinner("...")
+        }
+        Button("Fail") -> on_click(Fail)
+      }
+    }
+    effect Fail() { req = LoadState.Failed("timeout"); }
+  }
+}
+`;
+  const ast = parseFoar(src);
+  const ssr = renderToString(ast);
+  assert.ok(ssr.html.includes('Hello Ada'), ssr.html);
+  assert.ok(ssr.html.includes('User: Ada'), ssr.html);
+
+  const { container } = makeDom();
+  const rt = createFoarRuntime(ast, container);
+  assert.deepEqual(q(container, '.f4-text').map((e) => e.textContent), ['Hello Ada', 'User: Ada']);
+
+  container.querySelector('button').click();
+  await tick();
+  assert.deepEqual(q(container, '.f4-text').map((e) => e.textContent), ['Err: timeout', 'Failed: timeout']);
+  rt.destroy();
+});
+
+test('Streaming SSR (renderToStream) + async route loaders (renderToStringAsync)', async () => {
+  const src = `
+extern fn get_title() -> String;
+
+view App {
+  let title: String = get_title();
+  state Ready {
+    render {
+      Column {
+        Text(title)
+        Router {
+          Route("/posts/:id") { p => Text("Post #{p.id}") }
+          Route("*") { Text("Home") }
+        }
+      }
+    }
+  }
+}
+`;
+  const ast = parseFoar(src);
+  const loaders = {
+    '/posts/:id': async (params) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return { get_title: () => `Loaded Post ${params.id}` };
+    },
+  };
+
+  // 1. renderToStringAsync
+  const asyncRes = await renderToStringAsync(ast, { url: '/posts/404', loaders });
+  assert.ok(asyncRes.html.includes('Loaded Post 404'), asyncRes.html);
+  assert.ok(asyncRes.html.includes('Post #404'), asyncRes.html);
+
+  // 2. renderToStream (Web ReadableStream, flushes style shell before async body)
+  const stream = renderToStream(ast, {
+    url: '/posts/88',
+    loaders,
+    shellBefore: '<!doctype html><html><head>',
+    shellAfter: '</body></html>',
+  });
+  const reader = stream.getReader();
+  const dec = new TextDecoder();
+  const chunks = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(dec.decode(value));
+  }
+  assert.ok(chunks.length >= 3, `expected progressive chunks, got ${chunks.length}`);
+  assert.ok(chunks[0].startsWith('<!doctype html>'));
+  assert.ok(chunks[1].includes('<style data-f4-ssr>'));
+  const full = chunks.join('');
+  assert.ok(full.includes('Loaded Post 88'), full);
+  assert.ok(full.includes('Post #88'), full);
+  assert.ok(full.includes('id="__foar_state__"'), full);
+  assert.ok(full.endsWith('</body></html>'));
 });

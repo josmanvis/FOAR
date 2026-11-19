@@ -8,7 +8,7 @@ use std::process::exit;
 
 fn usage() -> ! {
     eprintln!(
-        "foar {}\n\nUsage:\n  foar build <file.foar | -> [-o <out>] [--format json|js] [--pretty] [--runtime <path>]\n  foar check <file.foar>\n  foar init [dir]\n  foar add <name> --path <dir> | --git <url>\n  foar pkg\n  foar i18n <locales-dir> <source files...> [--fallback en] [--format json]\n\n  --format json   program JSON for createFoarRuntime (default)\n  --format js     ES module exporting {{ program, mount, hydrate, renderToString, createI18n }}\n  --runtime       import path of foar-runtime.js in the JS module (default ./foar-runtime.js)\n  -               read source from stdin\n  --project       with -: stdin is a project {{\"entry\", \"files\": {{path: source}}}}\n\nA file is compiled together with its imports (relative paths or @package via foar.toml).",
+        "foar {}\n\nUsage:\n  foar build <file.foar | -> [-o <out>] [--format json|js] [--pretty] [--runtime <path>]\n  foar check <file.foar>\n  foar init [dir]\n  foar add <name> --path <dir> | --git <url> | --version <ver> [--registry <url>]\n  foar install [--frozen]\n  foar pkg [--verify]\n  foar lsp\n  foar i18n <locales-dir> <source files...> [--fallback en] [--format json]\n\n  --format json   program JSON for createFoarRuntime (default)\n  --format js     ES module exporting {{ program, mount, hydrate, renderToString, renderToStringAsync, renderToStream, createI18n }}\n  --runtime       import path of foar-runtime.js in the JS module (default ./foar-runtime.js)\n  -               read source from stdin\n  --project       with -: stdin is a project {{\"entry\", \"files\": {{path: source}}}}\n\nA file is compiled together with its imports (relative paths or @package via foar.toml).",
         foar::version()
     );
     exit(2)
@@ -53,8 +53,16 @@ fn main() {
             add_cmd(&args[1..]);
             return;
         }
+        "install" => {
+            install_cmd(&args[1..]);
+            return;
+        }
         "pkg" => {
-            pkg_cmd();
+            pkg_cmd(&args[1..]);
+            return;
+        }
+        "lsp" => {
+            foar::lsp::run_stdio();
             return;
         }
         _ => {}
@@ -287,11 +295,16 @@ fn init_cmd(args: &[String]) {
 
 fn add_cmd(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("Usage: foar add <name> --path <dir> | --git <url>");
+        eprintln!("Usage: foar add <name> --path <dir> | --git <url> | --version <ver> [--registry <url>]");
         exit(2);
     }
     let name = &args[0];
     let (flag, val) = (args[1].as_str(), &args[2]);
+    let registry = args
+        .windows(2)
+        .find(|w| w[0] == "--registry")
+        .map(|w| w[1].as_str())
+        .unwrap_or("https://registry.foar-lang.org");
     let line = match flag {
         "--path" => format!("{} = {{ path = \"{}\" }}\n", name, val),
         "--git" => {
@@ -311,8 +324,11 @@ fn add_cmd(args: &[String]) {
             }
             format!("{} = {{ git = \"{}\", path = \"foar_packages/{}\" }}\n", name, val, name)
         }
+        "--version" => {
+            format!("{} = {{ version = \"{}\", registry = \"{}\" }}\n", name, val, registry)
+        }
         _ => {
-            eprintln!("Usage: foar add <name> --path <dir> | --git <url>");
+            eprintln!("Usage: foar add <name> --path <dir> | --git <url> | --version <ver> [--registry <url>]");
             exit(2);
         }
     };
@@ -331,9 +347,133 @@ fn add_cmd(args: &[String]) {
         exit(1);
     });
     println!("✓ added dependency '{}' to foar.toml", name);
+    if flag == "--path" || flag == "--git" {
+        install_cmd(&[]);
+    }
 }
 
-fn pkg_cmd() {
+fn install_cmd(args: &[String]) {
+    let frozen = args.iter().any(|a| a == "--frozen");
+    let text = match std::fs::read_to_string("foar.toml") {
+        Ok(s) => s,
+        Err(_) => {
+            eprintln!("foar: no foar.toml in current directory (run `foar init`)");
+            exit(1);
+        }
+    };
+    let manifest = foar::project::parse_manifest(&text);
+    let existing_lock = std::fs::read_to_string("foar.lock").ok().map(|s| foar::project::parse_lockfile(&s));
+    if frozen && existing_lock.is_none() {
+        eprintln!("foar: --frozen requires an existing foar.lock");
+        exit(1);
+    }
+
+    let mut locked = Vec::new();
+    for (name, dep) in &manifest.dependencies {
+        let (rel_path, source, version) = if let Some(p) = &dep.path {
+            let clean = p.trim_start_matches("./").trim_end_matches('/').to_string();
+            let src = dep
+                .git
+                .as_ref()
+                .map(|g| format!("git+{}", g))
+                .unwrap_or_else(|| format!("path:{}", p));
+            let pkg_manifest = std::fs::read_to_string(std::path::Path::new(&clean).join("foar.toml"))
+                .ok()
+                .map(|s| foar::project::parse_manifest(&s));
+            let ver = dep
+                .version
+                .clone()
+                .or_else(|| pkg_manifest.map(|m| m.version).filter(|v| !v.is_empty()))
+                .unwrap_or_else(|| "0.1.0".to_string());
+            (clean, src, ver)
+        } else if let Some(git) = &dep.git {
+            let dest = format!("foar_packages/{}", name);
+            if !std::path::Path::new(&dest).exists() {
+                std::fs::create_dir_all("foar_packages").ok();
+                let status = std::process::Command::new("git")
+                    .args(["clone", "--depth", "1", git, &dest])
+                    .status();
+                match status {
+                    Ok(s) if s.success() => {}
+                    _ => {
+                        eprintln!("foar: git clone {} failed", git);
+                        exit(1);
+                    }
+                }
+            }
+            (dest, format!("git+{}", git), dep.version.clone().unwrap_or_else(|| "0.1.0".to_string()))
+        } else {
+            let ver = dep.version.clone().unwrap_or_else(|| "latest".to_string());
+            let reg = dep.registry.as_deref().unwrap_or("https://registry.foar-lang.org").trim_end_matches('/');
+            let dest = format!("foar_packages/{}", name);
+            if !std::path::Path::new(&dest).exists() {
+                let url = format!("{}/packages/{}/{}.tar.gz", reg, name, ver.trim_start_matches('^'));
+                std::fs::create_dir_all(&dest).ok();
+                let status = std::process::Command::new("sh")
+                    .args(["-c", &format!("curl -fsSL {} | tar -xz -C {}", url, dest)])
+                    .status();
+                match status {
+                    Ok(s) if s.success() => {}
+                    _ => {
+                        eprintln!("foar: failed to fetch @{} ({}) from {}", name, ver, url);
+                        exit(1);
+                    }
+                }
+            }
+            (dest, format!("registry+{}", reg), ver)
+        };
+
+        let integrity = match foar::project::hash_package_dir(std::path::Path::new(&rel_path)) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("foar: cannot hash @{}: {}", name, e);
+                exit(1);
+            }
+        };
+
+        if frozen {
+            if let Some(lock) = &existing_lock {
+                let found = lock.packages.iter().find(|p| p.name == *name);
+                match found {
+                    Some(prev) if prev.integrity == integrity => {}
+                    Some(prev) => {
+                        eprintln!("foar: frozen lockfile mismatch for @{}: expected {}, got {}", name, prev.integrity, integrity);
+                        exit(1);
+                    }
+                    None => {
+                        eprintln!("foar: @{} is missing from foar.lock (run `foar install` without --frozen)", name);
+                        exit(1);
+                    }
+                }
+            }
+        }
+
+        locked.push(foar::project::LockedPackage {
+            name: name.clone(),
+            version,
+            source,
+            path: rel_path,
+            integrity,
+        });
+    }
+
+    let lock = foar::project::Lockfile { version: 1, packages: locked };
+    if !frozen {
+        let rendered = foar::project::render_lockfile(&lock);
+        std::fs::write("foar.lock", rendered).unwrap_or_else(|e| {
+            eprintln!("foar: cannot write foar.lock: {}", e);
+            exit(1);
+        });
+    }
+    println!(
+        "✓ {} {} package(s) in foar.lock",
+        if frozen { "verified" } else { "locked" },
+        lock.packages.len()
+    );
+}
+
+fn pkg_cmd(args: &[String]) {
+    let verify = args.iter().any(|a| a == "--verify");
     let text = match std::fs::read_to_string("foar.toml") {
         Ok(s) => s,
         Err(_) => {
@@ -342,13 +482,45 @@ fn pkg_cmd() {
         }
     };
     let m = foar::project::parse_manifest(&text);
+    let lock = std::fs::read_to_string("foar.lock").ok().map(|s| foar::project::parse_lockfile(&s));
+    if verify {
+        let Some(l) = lock else {
+            eprintln!("foar: no foar.lock found (run `foar install` first)");
+            exit(1);
+        };
+        match foar::project::verify_lockfile(std::path::Path::new("."), &l) {
+            Ok(ok) => {
+                for line in ok {
+                    println!("✓ {}", line);
+                }
+                println!("✓ foar.lock integrity verified ({} package(s))", l.packages.len());
+                return;
+            }
+            Err(errs) => {
+                for e in errs {
+                    eprintln!("✗ {}", e);
+                }
+                exit(1);
+            }
+        }
+    }
     println!("{} {} (entry: {})", m.name, m.version, m.entry);
     if m.dependencies.is_empty() {
         println!("  (no dependencies)");
         return;
     }
     for (name, dep) in &m.dependencies {
-        let loc = dep.path.as_deref().or(dep.git.as_deref()).unwrap_or("foar_packages/");
-        println!("  @{} -> {}", name, loc);
+        let loc = dep
+            .path
+            .as_deref()
+            .or(dep.git.as_deref())
+            .or(dep.version.as_deref())
+            .unwrap_or("foar_packages/");
+        let hash = lock
+            .as_ref()
+            .and_then(|l| l.packages.iter().find(|p| p.name == *name))
+            .map(|p| format!(" [{}]", &p.integrity[..19.min(p.integrity.len())]))
+            .unwrap_or_default();
+        println!("  @{} -> {}{}", name, loc, hash);
     }
 }
