@@ -3,9 +3,9 @@
 ## The compiler
 
 The compiler is written in Rust and builds two ways from the same source: a
-native command-line tool, and a WebAssembly module (≈210 KB gzipped) that the
-playground runs in the browser. Both compile the 21-file Notes app (≈2,000
-lines) in about 30 ms.
+native command-line tool, and a WebAssembly module (≈237 KB gzipped) that the
+playground runs in the browser. Both compile and typecheck the 21-file Notes app
+(≈2,000 lines) in about 30 ms.
 
 ```sh
 cargo build --release              # target/release/foar
@@ -15,13 +15,37 @@ pnpm build:wasm                    # web/foar.wasm (needs: rustup target add was
 ### CLI
 
 ```sh
-foar check app.foar                         # compile app.foar and its imports, report errors
+foar check app.foar                         # parse, resolve imports/@packages, typecheck
 foar build app.foar --pretty                # program JSON (for createFoarRuntime)
-foar build app.foar --format js -o app.js   # ES module: { program, mount, createI18n }
+foar build app.foar --format js -o app.js   # ES module: { program, mount, hydrate, renderToString, createI18n }
 foar build app.foar --format js --runtime ./foar-runtime.js -o dist/app.js
 foar build - < app.foar                     # one source from stdin
 foar build - --project < project.json       # {"entry", "files": {path: source}} from stdin
+foar init [dir]                             # scaffold foar.toml + app.foar
+foar add ui --path ./packages/ui            # add a local path dependency to foar.toml
+foar add ui --git https://...               # clone into foar_packages/ and record in foar.toml
+foar pkg                                    # inspect foar.toml dependencies
 foar i18n locales/ app.foar host/*.js       # check translation catalogs
+```
+
+### Packages (`foar.toml`)
+
+Declare local or Git packages in `foar.toml`:
+
+```toml
+[package]
+name = "my-app"
+version = "0.1.0"
+entry = "app.foar"
+
+[dependencies]
+ui = { path = "./packages/ui" }
+```
+
+Then import modules from them anywhere in your project:
+
+```foar
+import "@ui/Badge"
 ```
 
 Errors name the file, line and column (`components/Row.foar:12:9: …`), and
@@ -44,8 +68,8 @@ run in CI.
 
 ## The runtime
 
-`web/foar-runtime.js` is one ES module (≈13 KB gzipped) with no dependencies:
-`createFoarRuntime(program, element, callbacks)` and `createI18n(config)`. See
+`web/foar-runtime.js` is one ES module (≈18 KB gzipped) with no dependencies:
+`createFoarRuntime`, `hydrate`, `renderToString`, and `createI18n`. See
 the [reference](./language.md#host-functions-and-the-runtime).
 
 ## The playground

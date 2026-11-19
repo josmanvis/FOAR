@@ -13,10 +13,11 @@
 </p>
 
 FOAR is a language for user interfaces. Every component declares its
-**states**, what each state shows, and which events it handles. Enums and an
-**exhaustive `match`** replace flags and `switch` statements. A **Rust
-compiler**, native or WebAssembly, turns it into a 13 KB runtime that updates
-the DOM in place, with no virtual DOM.
+**states**, what each state shows, and which events it handles. Enums, an
+**exhaustive `match`**, a **static type checker** (including typed `extern fn`
+host bindings), a built-in **router**, **zero-DOM SSR + hydration**, and
+`foar.toml` **packages** ship in one **Rust compiler** (native + WebAssembly)
+targeting an 18 KB retained-DOM runtime with no virtual DOM.
 
 ```rust
 enum Status { Draft, Review, Published }
@@ -77,8 +78,14 @@ article.foar:10:13: This match doesn't handle Status.Archived (add an arm for it
 - **i18n and accessibility.** `t(key, params)` with plurals and a catalog
   checker; `label:`, `role:`, `aria:` everywhere; clickable elements are
   keyboard-operable by default.
-- **Multi-file programs.** `import "components/Row"`; errors point at
-  file:line:col.
+- **Static type checking & typed `extern fn`.** Stores, derived `let`s, `data`
+  literals & fields, view props, assignments, transitions, and declared
+  `extern fn` host calls are checked at compile time with `file:line:col`.
+- **Built-in routing & SSR + hydration.** Declarative `Router` / `Route` /
+  `Link` and `navigate()`, zero-DOM `renderToString` (Node/Edge), and
+  zero-recreation `hydrate` that adopts server DOM nodes in place.
+- **Packages & multi-file programs.** `foar.toml` manifests, `import "@ui/Badge"`,
+  and `foar init` / `foar add` / `foar pkg`.
 - **A browser IDE.** The [playground](https://josmanvis.github.io/FOAR/playground/)
   runs the Rust compiler as WebAssembly and has completions, hover docs,
   diagnostics as you type, go to definition, references, rename, a formatter,
@@ -115,7 +122,7 @@ mount(document.getElementById('app'), {
 | [Language reference](docs/language.md) | views, states, render, effects, enums, `match`, styles, i18n, runtime API |
 | [Tooling](docs/tooling.md) | the CLI, the playground and its keys, dev servers, tests |
 | [Why FOAR](docs/why.md) | the design, how it compares, and its current limits |
-| [Examples](examples/README.md) | starter, counter, todo, orders, notes-on-foar |
+| [Examples](examples/README.md) | starter, counter, todo, orders, router, notes-on-foar |
 
 ## Repository
 
@@ -137,9 +144,9 @@ pnpm build:wasm    # web/foar.wasm (rustup target add wasm32-unknown-unknown)
 pnpm build:site    # the static website in _site/ (deployed to GitHub Pages)
 ```
 
-FOAR is young: no router, no server-side rendering and no package ecosystem
-yet, and effect code compiles to JavaScript without a full type checker. See
-[what FOAR is not (yet)](docs/why.md#what-foar-is-not-yet).
+FOAR is still young: local/Git `foar.toml` packages work today without a hosted
+public registry yet, and undeclared JS host calls remain a gradual escape hatch.
+See [what FOAR is not (yet)](docs/why.md#what-foar-is-not-yet).
 
 ## License
 

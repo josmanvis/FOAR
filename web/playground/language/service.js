@@ -381,7 +381,7 @@ export function createLanguageService() {
     if (!f) return null;
     const imp = f.imports.find((i) => i.s <= offset && offset <= i.e);
     if (imp) {
-      const t = resolveSpec(path, imp.spec);
+      const t = resolveSpec(path, imp.spec, index.files);
       return t && index.files.has(t) ? { path: t, offset: 0 } : null;
     }
     if (skipAt(f, offset)) return null;
@@ -519,7 +519,7 @@ export function createLanguageService() {
         if (!en.variants.some((x) => x.name === v.v)) push(f.path, v.s, v.e, 'error', `${en.name} has no variant '${v.v}'.${didYouMean(v.v, en.variants.map((x) => x.name))} Variants: ${en.variants.map((x) => x.name).join(', ')}.`);
       });
       for (const imp of f.imports) {
-        const t = resolveSpec(f.path, imp.spec);
+        const t = resolveSpec(f.path, imp.spec, index.files);
         if (t && !index.files.has(t)) push(f.path, imp.s, imp.e, 'error', `Cannot find ${t}.`);
       }
     }
@@ -544,9 +544,37 @@ export function createLanguageService() {
   };
 }
 
-// same rules as src/project.rs
-export function resolveSpec(from, spec) {
+// same rules as src/project.rs (including @package imports via foar.toml)
+export function resolveSpec(from, spec, files = null) {
   if (!spec || spec.startsWith('/') || spec.includes('://')) return null;
+  if (spec.startsWith('@')) {
+    const body = spec.slice(1);
+    const slash = body.indexOf('/');
+    const pkg = slash >= 0 ? body.slice(0, slash) : body;
+    const sub = slash >= 0 ? body.slice(slash + 1) : '';
+    const bases = [];
+    const manifest = files?.get?.('foar.toml')?.text;
+    if (manifest) {
+      const m = new RegExp(`^\\s*${pkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=\\s*(?:\\{[^}]*path\\s*=\\s*"([^"]+)"|"([^"]+)")`, 'm').exec(manifest);
+      const p = (m?.[1] || m?.[2] || '').replace(/^\.\//, '').replace(/\/$/, '');
+      if (p) bases.push(p);
+    }
+    bases.push(`foar_packages/${pkg}`, `packages/${pkg}`);
+    const cands = [];
+    for (const base of bases) {
+      const pre = base ? `${base}/` : '';
+      if (sub) {
+        const file = sub.endsWith('.foar') ? sub : `${sub}.foar`;
+        cands.push(`${pre}${file}`, `${pre}src/${file}`);
+      } else {
+        cands.push(`${pre}index.foar`, `${pre}lib.foar`, `${pre}src/index.foar`, `${pre}src/lib.foar`, `${pre}app.foar`);
+      }
+    }
+    if (files) {
+      for (const c of cands) if (files.has(c)) return c;
+    }
+    return cands[0] ?? null;
+  }
   const parts = [];
   if (spec.startsWith('./') || spec.startsWith('../')) {
     parts.push(...from.split('/'));

@@ -363,25 +363,109 @@ including right-to-left). `t_key("…")` marks a key that is stored now and
 translated later. `foar i18n` checks the catalogs against the code (see
 [tooling](./tooling.md#i18n)).
 
+## Static type checking and `extern fn`
+
+The Rust compiler statically checks types across the entire program before
+emitting output:
+
+- `store` initializers and explicit `let` annotations;
+- `data` struct literals (missing required fields, unknown fields with
+  "did you mean", and field value types) and `.field` accesses;
+- child view instantiation props (unknown props and prop types);
+- assignments and operators in `effect` blocks, enum comparisons, `match` arm
+  types, and `transition` target state names.
+
+To typecheck calls into JavaScript host functions, declare their signatures at
+the top level with `extern fn`:
+
+```foar
+extern fn format_price(cents: i32) -> String;
+extern fn save_note(id: String, body: String) -> Promise<bool>;
+```
+
+Every call to a declared `extern fn` is checked for argument count and argument
+types, and its return type flows into `let` inference and downstream checks.
+Use `any` explicitly when you want a gradual escape hatch.
+
+## Routing
+
+FOAR includes a declarative URL router in the language and runtime:
+
+```foar
+Column {
+    Row {
+        Link("/", "Overview")
+        Link("/orders/42", "Order 42")
+    }
+    Router {
+        Route("/") { HomePage() }
+        Route("/orders/:id") { params => OrderDetail(id: params.id) }
+        Route("*") { Text("Not found: {route.path}") }
+    }
+}
+```
+
+- `Router` renders the first matching `Route` child, keeping it mounted and
+  updating `params` in place when staying on the same route pattern.
+- `Route` supports static segments, `:param` parameters, `*catchall` tails, and
+  `*` wildcards.
+- `Link(href, label)` renders a real `<a href>` with `aria-current="page"` when
+  active and intercepts unmodified left-clicks to navigate via the History API
+  (or hash/memory mode).
+- Every view and effect can read `route.path`, `route.params`, `route.query`,
+  and `route.hash`, and effects can call `navigate("/path")` or
+  `replace("/path")`.
+
+## Server-side rendering and hydration
+
+`web/foar-runtime.js` runs in Node, Deno, Bun, and Edge workers with zero DOM
+dependencies:
+
+```js
+// Server (Node / Edge)
+import { renderToString } from './dist/app.js';
+
+const { html, css, state, head } = renderToString({
+  url: req.url,
+  bindings: { format_price },
+});
+// Embed `head` in <head> (scoped <style data-f4-ssr> + serialized state)
+// and `html` inside <div id="app">...</div>.
+
+// Client
+import { hydrate } from './dist/app.js';
+
+hydrate(document.getElementById('app'), {
+  bindings: { format_price },
+});
+```
+
+`hydrate` restores serialized store/state snapshots from `<script id="__foar_state__">`
+and adopts the existing server-rendered DOM nodes in place (creating zero new
+elements when the server HTML matches).
+
 ## Host functions and the runtime
 
 ```js
-import { createFoarRuntime, createI18n } from './web/foar-runtime.js';
+import { createFoarRuntime, hydrate, renderToString, createI18n } from './web/foar-runtime.js';
 
 const rt = createFoarRuntime(program, mountElement, {
   bindings: { load_notes, save_note: async (n) => { … } }, // callable by name from .foar code
   i18n: createI18n({ locale: 'en', fallback: 'en', messages: { en, es } }),
-  onRender(snapshot) {}, onEffect(info) {}, onTransition(info) {}, onEmit(info) {},
+  router: { mode: 'history' }, // 'history' | 'hash' | 'memory'
+  onRender(snapshot) {}, onEffect(info) {}, onTransition(info) {}, onEmit(info) {}, onNavigate(info) {},
 });
 rt.getSnapshot();                    // [{ key, viewName, state, stores, props }]
 rt.invokeEffect('root', 'Refresh');  // run an effect from outside
+rt.navigate('/orders/42');
+rt.getRoute();                       // { path, params, query, hash }
 rt.setLocale('de');
 rt.destroy();
 ```
 
 `program` comes from `foar build app.foar` (JSON), or use
 `foar build app.foar --format js`, which produces an ES module exporting
-`{ program, mount(container, callbacks), createI18n }`.
+`{ program, mount, hydrate, renderToString, createI18n }`.
 
 ### How updates work
 

@@ -15,7 +15,9 @@ export const KEYWORDS = {
   theme: 'Design tokens: CSS custom properties on :root, with `@dark { … }` / `@light { … }` variants.',
   style: '`style Name { … }` declares a named style (apply with `.style(Name)` or `@use Name`); `style { … }` inside a view styles its host element.',
   css: 'A raw CSS block, copied into the stylesheet as is.',
-  import: 'Makes another file part of the program: `import "components/Row"` (root-relative) or `import "./Row"` (relative).',
+  import: 'Makes another file or `@package` part of the program: `import "components/Row"`, `import "./Row"`, or `import "@ui/Badge"` (resolved via `foar.toml`).',
+  extern: 'Declares a typed JavaScript host binding checked by the compiler: `extern fn save_note(text: String) -> Promise<bool>;`',
+  fn: 'Used with `extern fn` to declare typed host functions.',
   let: 'In a view: a derived value, recomputed on every update (`let open = items.filter(|t| !t.done).len();`). In an effect: a local variable.',
   enum: 'A closed set of named values: `enum Layout { List, Gallery = "grid" }`. Use `Layout.List`; values compile to their strings/numbers, so they serialize and compare with `==`.',
   match: 'Picks one arm by pattern — no fall-through, and the compiler checks every case is handled (all enum variants, true/false, or a `_` arm). Patterns: literals, `a | b`, ranges `1..=5`, enum variants, `name if guard`, `_`. Works as a statement or as a value.',
@@ -42,6 +44,9 @@ export const TYPES = {
   any: 'Any value (no type check).',
   Vec: 'A list: `Vec<Note>`.',
   Option: 'A value that may be missing: `Option<String>`.',
+  Promise: 'An asynchronous host result: `Promise<bool>`.',
+  Void: 'No return value.',
+  Record: 'Key-value map: `Record<String, String>`.',
 };
 
 const COMMON = ['label', 'title', 'role', 'aria', 'tab_index', 'drag', 'drag_text', 'autofocus'];
@@ -80,6 +85,9 @@ export const ELEMENTS = {
   List: { sig: 'List(items, empty: element) { item => … }', doc: 'Renders one block per item, keyed by `item.id` (rows are reused, not rebuilt).', named: ['empty', 'role', 'label', 'aria'], events: ['on_context_menu', 'on_drop'], snippet: 'List(${1:items}) { ${2:item} =>\n    $0\n}' },
   If: { sig: 'If(condition) { … } Else { … }', doc: 'Shows its children while the condition is true; `Else { … }` / `Else If(…) { … }` otherwise.', named: [], events: [], snippet: 'If(${1:condition}) {\n    $0\n}' },
   Match: { sig: 'Match(value) { pattern => element, … }', doc: 'Shows the first arm whose pattern matches; the compiler checks every case is handled. The arm stays mounted (and updates) until another arm wins.', named: [], events: [], snippet: 'Match(${1:value}) {\n    ${2:pattern} => $0,\n    _ => Text(""),\n}' },
+  Router: { sig: 'Router { Route("/path") { … } }', doc: 'Declarative URL router. Mounts the first matching `Route` child and updates params in place without remounting.', named: [], events: [], snippet: 'Router {\n    Route("/") { $0 }\n    Route("*") { Text("Not found") }\n}' },
+  Route: { sig: 'Route("/orders/:id") { params => … }', doc: 'One route inside a `Router`. Supports `:param`, `*catchall`, and `*` wildcard; optional `params =>` binding receives matched parameters.', named: ['path'], events: [], snippet: 'Route("${1:/path}") {\n    $0\n}' },
+  Link: { sig: 'Link("/path", "Label")', doc: 'Client-routed `<a href>` with automatic `aria-current="page"`. Calls `navigate()` on unmodified left-clicks.', named: ['to', 'href', 'replace', ...COMMON], events: ['on_click'], snippet: 'Link("${1:/path}", "${2:Label}")' },
 };
 
 export const EVENTS = {

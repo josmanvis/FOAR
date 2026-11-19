@@ -170,7 +170,8 @@ export function examplesIndex() {
     if (!fs.existsSync(path.join(dir, 'app.foar'))) continue;
     const files = {};
     for (const rel of fs.readdirSync(dir, { recursive: true })) {
-      if (String(rel).endsWith('.foar')) files[String(rel).split(path.sep).join('/')] = fs.readFileSync(path.join(dir, String(rel)), 'utf8');
+      const s = String(rel).split(path.sep).join('/');
+      if (s.endsWith('.foar') || s === 'foar.toml') files[s] = fs.readFileSync(path.join(dir, String(rel)), 'utf8');
     }
     const headerLines = files['app.foar']
       .split('\n')
@@ -183,7 +184,7 @@ export function examplesIndex() {
     const host = fs.existsSync(path.join(dir, 'host.js')) ? `../examples/${e.name}/host.js` : null;
     out.push({ id: e.name, title: title.replace(/^FOAR\s+/, ''), description, entry: 'app.foar', files, ...(host ? { host } : {}) });
   }
-  const order = ['starter', 'counter', 'todo', 'orders', 'notes-on-foar'];
+  const order = ['starter', 'counter', 'todo', 'orders', 'router', 'notes-on-foar'];
   return out.sort((a, b) => (order.indexOf(a.id) + 1 || 99) - (order.indexOf(b.id) + 1 || 99) || a.id.localeCompare(b.id));
 }
 

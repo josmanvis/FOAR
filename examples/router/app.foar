@@ -1,0 +1,116 @@
+// Router — declarative routes, typed params, Link, navigate(), and @ui package imports.
+import "@ui/Badge"
+
+data Service {
+    id: String,
+    name: String,
+    region: String,
+    healthy: bool,
+    latency_ms: i32,
+}
+
+style NavLink {
+    padding: 6px 12px;
+    border-radius: 6px;
+    text-decoration: none;
+    color: #334155;
+    font-weight: 500;
+    font-size: 14px;
+    @hover { background: #f1f5f9; }
+}
+
+view App {
+    store services: Vec<Service> = [
+        Service { id: "edge-us", name: "Edge API (US-East)", region: "iad", healthy: true, latency_ms: 14 },
+        Service { id: "edge-eu", name: "Edge API (EU-West)", region: "fra", healthy: true, latency_ms: 21 },
+        Service { id: "worker-db", name: "Replica Writer", region: "sjc", healthy: false, latency_ms: 148 },
+    ];
+
+    style {
+        layout: vertical;
+        gap: 16px;
+        padding: 24px;
+        font-family: system-ui, -apple-system, sans-serif;
+    }
+
+    state Ready {
+        render {
+            Column {
+                Row {
+                    Text("Fleet").style({ font-size: 20px; font-weight: 700; margin-right: 12px; })
+                    Link("/", "Overview").style(NavLink)
+                    Link("/services", "Services").style(NavLink)
+                    Link("/services/edge-us", "US-East").style(NavLink)
+                    Text("path: {route.path}").style({
+                        margin-left: auto;
+                        font-family: monospace;
+                        font-size: 12px;
+                        color: #64748b;
+                        background: #f1f5f9;
+                        padding: 4px 8px;
+                        border-radius: 4px;
+                    })
+                }.style({ border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; })
+
+                Router {
+                    Route("/") {
+                        Column {
+                            Text("All routes share one state-machine runtime and render cleanly on server (SSR) or client.").style({ color: #475569; font-size: 14px; })
+                            Row {
+                                Button("Open Services") -> on_click(GoServices)
+                                Button("Inspect Replica Writer") -> on_click(GoDegraded)
+                            }
+                        }.style({ gap: 12px; })
+                    }
+                    Route("/services") {
+                        List(services) { svc =>
+                            Row {
+                                Link("/services/{svc.id}", svc.name).style({ font-weight: 600; color: #0f4c81; text-decoration: none; flex: 1; })
+                                Text("{svc.latency_ms} ms").style({ font-family: monospace; font-size: 13px; color: #64748b; })
+                                Badge(text: svc.healthy ? "Healthy" : "Degraded", tone: svc.healthy ? "ok" : "warn")
+                            }.style({ padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; })
+                        }.style({ display: flex; flex-direction: column; gap: 8px; })
+                    }
+                    Route("/services/:id") { params =>
+                        ServiceDetail(id: params.id, services: services)
+                    }
+                    Route("*") {
+                        Column {
+                            Text("No route matches {route.path}").style({ font-weight: 600; color: #b91c1c; })
+                            Link("/", "Back to overview")
+                        }
+                    }
+                }
+            }.style({ gap: 16px; })
+        }
+        effect GoServices() { navigate("/services"); }
+        effect GoDegraded() { navigate("/services/worker-db"); }
+    }
+}
+
+view ServiceDetail(id: String, services: Vec<Service>) {
+    let found = services.find(|s| s.id == id);
+
+    state Ready {
+        render {
+            If(found) {
+                Column {
+                    Row {
+                        Text(found.name).style({ font-size: 18px; font-weight: 700; })
+                        Badge(text: found.healthy ? "Healthy" : "Degraded", tone: found.healthy ? "ok" : "warn")
+                    }
+                    Text("Region: {found.region} — p95 latency: {found.latency_ms} ms").style({ color: #475569; font-size: 14px; })
+                    Row {
+                        Link("/services", "All services").style(NavLink)
+                        Link("/services/edge-eu", "Switch to EU-West").style(NavLink)
+                    }
+                }.style({ gap: 10px; padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; })
+            } Else {
+                Column {
+                    Text("Unknown service: {id}").style({ font-weight: 600; color: #b91c1c; })
+                    Link("/services", "Back to services")
+                }
+            }
+        }
+    }
+}

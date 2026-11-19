@@ -8,7 +8,7 @@ use std::process::exit;
 
 fn usage() -> ! {
     eprintln!(
-        "foar {}\n\nUsage:\n  foar build <file.foar | -> [-o <out>] [--format json|js] [--pretty] [--runtime <path>]\n  foar check <file.foar>\n  foar i18n <locales-dir> <source files...> [--fallback en] [--format json]\n\n  --format json   program JSON for createFoarRuntime (default)\n  --format js     ES module exporting {{ program, mount }}\n  --runtime       import path of foar-runtime.js in the JS module (default ./foar-runtime.js)\n  -               read source from stdin\n  --project       with -: stdin is a project {{\"entry\", \"files\": {{path: source}}}}\n\nA file is compiled together with the files it imports (import \"./components/Row\").",
+        "foar {}\n\nUsage:\n  foar build <file.foar | -> [-o <out>] [--format json|js] [--pretty] [--runtime <path>]\n  foar check <file.foar>\n  foar init [dir]\n  foar add <name> --path <dir> | --git <url>\n  foar pkg\n  foar i18n <locales-dir> <source files...> [--fallback en] [--format json]\n\n  --format json   program JSON for createFoarRuntime (default)\n  --format js     ES module exporting {{ program, mount, hydrate, renderToString, createI18n }}\n  --runtime       import path of foar-runtime.js in the JS module (default ./foar-runtime.js)\n  -               read source from stdin\n  --project       with -: stdin is a project {{\"entry\", \"files\": {{path: source}}}}\n\nA file is compiled together with its imports (relative paths or @package via foar.toml).",
         foar::version()
     );
     exit(2)
@@ -40,9 +40,24 @@ fn main() {
         return;
     }
     let cmd = args[0].as_str();
-    if cmd == "i18n" {
-        i18n_cmd(&args[1..]);
-        return;
+    match cmd {
+        "i18n" => {
+            i18n_cmd(&args[1..]);
+            return;
+        }
+        "init" => {
+            init_cmd(&args[1..]);
+            return;
+        }
+        "add" => {
+            add_cmd(&args[1..]);
+            return;
+        }
+        "pkg" => {
+            pkg_cmd();
+            return;
+        }
+        _ => {}
     }
     let mut input = None;
     let mut out = None;
@@ -106,7 +121,15 @@ fn main() {
 
     match cmd {
         "check" => match compiled {
-            Ok(p) => println!("✓ {}: {} view(s), {} data type(s), {} bytes of CSS", input, p.views.len(), p.data_decls.len(), p.css.len()),
+            Ok(p) => println!(
+                "✓ {}: {} view(s), {} data type(s), {} enum(s), {} extern(s), {} bytes of CSS",
+                input,
+                p.views.len(),
+                p.data_decls.len(),
+                p.enums.len(),
+                p.externs.len(),
+                p.css.len()
+            ),
             Err(e) => {
                 eprintln!("{}", show(&e));
                 exit(1)
@@ -224,5 +247,108 @@ fn i18n_cmd(args: &[String]) {
     }
     if !report.ok() {
         exit(1)
+    }
+}
+
+fn init_cmd(args: &[String]) {
+    let dir = args.first().map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from("."));
+    if dir != std::path::Path::new(".") {
+        std::fs::create_dir_all(&dir).unwrap_or_else(|e| {
+            eprintln!("foar: cannot create {}: {}", dir.display(), e);
+            exit(1)
+        });
+    }
+    let name = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty() && *n != ".")
+        .unwrap_or("foar-app");
+    let manifest_path = dir.join("foar.toml");
+    let app_path = dir.join("app.foar");
+    if !manifest_path.exists() {
+        let toml = format!(
+            "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nentry = \"app.foar\"\n\n[dependencies]\n",
+            name
+        );
+        std::fs::write(&manifest_path, toml).unwrap_or_else(|e| {
+            eprintln!("foar: cannot write {}: {}", manifest_path.display(), e);
+            exit(1)
+        });
+    }
+    if !app_path.exists() {
+        let starter = "view App {\n    store count: i32 = 0;\n\n    state Ready {\n        render {\n            Column {\n                Text(\"Count: {count}\")\n                Button(\"Increment\") -> on_click(Inc)\n            }\n        }\n        effect Inc() {\n            count += 1;\n        }\n    }\n}\n";
+        std::fs::write(&app_path, starter).unwrap_or_else(|e| {
+            eprintln!("foar: cannot write {}: {}", app_path.display(), e);
+            exit(1)
+        });
+    }
+    println!("✓ initialized FOAR project in {}", dir.display());
+}
+
+fn add_cmd(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("Usage: foar add <name> --path <dir> | --git <url>");
+        exit(2);
+    }
+    let name = &args[0];
+    let (flag, val) = (args[1].as_str(), &args[2]);
+    let line = match flag {
+        "--path" => format!("{} = {{ path = \"{}\" }}\n", name, val),
+        "--git" => {
+            let dest = std::path::Path::new("foar_packages").join(name);
+            if !dest.exists() {
+                std::fs::create_dir_all("foar_packages").ok();
+                let status = std::process::Command::new("git")
+                    .args(["clone", "--depth", "1", val, &dest.to_string_lossy()])
+                    .status();
+                match status {
+                    Ok(s) if s.success() => {}
+                    _ => {
+                        eprintln!("foar: git clone {} failed", val);
+                        exit(1);
+                    }
+                }
+            }
+            format!("{} = {{ git = \"{}\", path = \"foar_packages/{}\" }}\n", name, val, name)
+        }
+        _ => {
+            eprintln!("Usage: foar add <name> --path <dir> | --git <url>");
+            exit(2);
+        }
+    };
+    let mut content = std::fs::read_to_string("foar.toml").unwrap_or_else(|_| {
+        "[package]\nname = \"foar-app\"\nversion = \"0.1.0\"\nentry = \"app.foar\"\n\n[dependencies]\n".to_string()
+    });
+    if !content.contains("[dependencies]") {
+        content.push_str("\n[dependencies]\n");
+    }
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str(&line);
+    std::fs::write("foar.toml", content).unwrap_or_else(|e| {
+        eprintln!("foar: cannot write foar.toml: {}", e);
+        exit(1);
+    });
+    println!("✓ added dependency '{}' to foar.toml", name);
+}
+
+fn pkg_cmd() {
+    let text = match std::fs::read_to_string("foar.toml") {
+        Ok(s) => s,
+        Err(_) => {
+            eprintln!("foar: no foar.toml in current directory (run `foar init`)");
+            exit(1);
+        }
+    };
+    let m = foar::project::parse_manifest(&text);
+    println!("{} {} (entry: {})", m.name, m.version, m.entry);
+    if m.dependencies.is_empty() {
+        println!("  (no dependencies)");
+        return;
+    }
+    for (name, dep) in &m.dependencies {
+        let loc = dep.path.as_deref().or(dep.git.as_deref()).unwrap_or("foar_packages/");
+        println!("  @{} -> {}", name, loc);
     }
 }

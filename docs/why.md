@@ -106,12 +106,17 @@ values that changed.
   dynamic values are touched at runtime.
 - Inputs are never re-created, so focus, selection, scroll and CSS
   transitions survive every update.
-- The runtime is one dependency-free module of ≈13 KB gzipped.
+- The runtime is one dependency-free module of ≈18 KB gzipped (including the
+  router, zero-DOM SSR, client hydration, i18n, and accessibility helpers).
 
 ## One language for the whole interface
 
 | | |
 |---|---|
+| **Static typing** | checks `store` initializers, `let` derived values, `data` struct literals & fields, view props, assignments, transitions, and typed `extern fn` host calls at compile time |
+| **Routing** | declarative `Router`, `Route("/orders/:id")`, `Link`, reactive `route`, and `navigate()` / `replace()` with History, Hash, and memory modes |
+| **SSR & hydration** | zero-DOM `renderToString(program, { url })` on Node/Deno/Bun/Edge and zero-recreation `hydrate(program, el)` that adopts server DOM nodes in place |
+| **Packages** | `foar.toml` manifests, `@pkg/Module` imports, and `foar init` / `foar add` / `foar pkg` CLI commands |
 | **Styling** | real CSS, scoped per element, with themes, dark mode, `@hover`/`@media` nesting, and `@state Editing { … }` for styles that follow the state machine |
 | **Accessibility** | `label:`, `role:`, `aria: {…}` on any element; clickable rows become keyboard-operable buttons by default |
 | **i18n** | `t(key, params)` with plurals everywhere; a checker that finds missing and unused keys |
@@ -125,6 +130,8 @@ values that changed.
 | Component state | flags in hooks | variables | one model + messages | **explicit states** per view |
 | Showing a branch | `cond && …`, ternaries | `{#if}`, `{#each}` | `case` | `Match`, `If`/`Else`, `List` |
 | Exhaustive branching | opt-in via TypeScript | — | yes | **yes** (enums, bools) |
+| Type checking | external (TypeScript) | external (TS) | built-in | **built-in** (stores, data, props, effects, `extern fn`) |
+| Routing & SSR | external framework (Next/Remix) | SvelteKit | Elm Land | **built-in** (`Router`, `renderToString`, `hydrate`) |
 | Derived values | `useMemo` + dependency list | `$derived` | functions of the model | `let` (no dependencies to list) |
 | Updates | virtual DOM diff | compiled, fine-grained | virtual DOM diff | compiled bindings, retained DOM |
 | Styling | external / CSS-in-JS | scoped `<style>` | external / elm-css | in the language, state-aware |
@@ -136,17 +143,19 @@ them in one small language.
 
 ## What FOAR is not (yet)
 
-Honesty about the limits:
+Honesty about the remaining limits:
 
-- **Young.** FOAR is new: no package ecosystem, no router, no server-side
-  rendering yet.
-- **Expressions are checked, not fully typed.** Types drive `match`
-  exhaustiveness and document intent, but effect code compiles to JavaScript
-  without a full type checker. A typed expression language is the next big
-  step.
-- **Host code is JavaScript.** Storage, network and anything the platform
-  offers are plain JS functions you pass in by name. That's simple and
-  flexible, but those calls aren't checked by FOAR.
+- **No central public package registry yet.** Projects can declare local path
+  and Git dependencies in `foar.toml` and import `@pkg/Module`, but there is no
+  hosted registry like npm or crates.io yet.
+- **Gradual typing at the JS boundary.** `extern fn` declarations are statically
+  checked on every call, and FOAR code is typechecked across stores, data
+  literals, fields, view props, and assignments — but undeclared JS host
+  functions and `any` annotations remain a gradual escape hatch, and FOAR does
+  not yet have user-defined generic views or algebraic data types with payloads.
+- **Synchronous SSR.** `renderToString` and `hydrate` run synchronously with
+  zero DOM dependency and adopt existing DOM nodes in place, but streaming
+  suspense SSR and partial islands hydration are not built yet.
 
 If those trade-offs work for you, [try it in the playground](https://josmanvis.github.io/FOAR/playground/)
 or read the [guide](./guide.md).

@@ -11,10 +11,21 @@ pub struct Program {
     pub data_decls: Vec<DataDecl>,
     /// `enum Name { A, B = "b" }`: variants compile to their values (strings or numbers).
     pub enums: Vec<EnumDecl>,
+    /// `extern fn name(a: Type) -> RetType;`: typed host JS bindings checked by the compiler.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub externs: Vec<ExternDecl>,
     pub views: Vec<ViewDecl>,
     /// All generated CSS for the program (themes, named styles, keyframes,
     /// raw css blocks, and every view/element style block).
     pub css: String,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct ExternDecl {
+    pub name: String,
+    pub params: Vec<Param>,
+    #[serde(rename = "returnType")]
+    pub return_type: String,
 }
 
 #[derive(Serialize, Debug, Clone)]

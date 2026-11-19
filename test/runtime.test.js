@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { makeDom, tick, fire, compile as parseFoar, loadProject } from './dom.js';
-import { createFoarRuntime } from '../web/foar-runtime.js';
+import { createFoarRuntime, hydrate, renderToString, matchRoute, parseUrl } from '../web/foar-runtime.js';
 
 const todoSrc = loadProject('todo'); // multi-file project
 const counterSrc = fs.readFileSync(new URL('../examples/counter/app.foar', import.meta.url), 'utf8');
@@ -624,5 +624,145 @@ test('orders example: exhaustive matches drive badges and actions; let values re
   await tick();
   assert.deepEqual(row(0).slice(2), ['Cancelled', '—']);
   assert.equal(container.querySelector('.f4-view-Orders > .f4-row .f4-text').textContent, '2 open · revenue $506.40');
+  rt.destroy();
+});
+
+const routedSrc = `
+extern fn format_badge(id: String) -> String;
+
+view App {
+    state Ready {
+        render {
+            Column {
+                Row {
+                    Link("/", "Home")
+                    Link("/orders/42", "Order 42")
+                    Link("/orders/99", "Order 99")
+                }
+                Router {
+                    Route("/") { Text("Welcome home") }
+                    Route("/orders/:id") { params => OrderPage(id: params.id) }
+                    Route("*") { Text("404: {route.path}") }
+                }
+                Button("Go missing") -> on_click(GoMissing)
+            }
+        }
+        effect GoMissing() { navigate("/nope?from=btn"); }
+    }
+}
+
+view OrderPage(id: String) {
+    store clicks: i32 = 0;
+    let label: String = format_badge(id);
+    state Ready {
+        render {
+            Column {
+                Text("Order {label} ({clicks})")
+                Button("Ping") -> on_click(Ping)
+            }
+        }
+        effect Ping() { clicks += 1; }
+    }
+}
+`;
+
+test('router: Route matching, Link navigation, aria-current, param updates, and navigate()', async () => {
+  assert.deepEqual(matchRoute('/orders/:id', '/orders/A-1002'), { id: 'A-1002' });
+  assert.deepEqual(matchRoute('/docs/*slug', '/docs/a/b/c'), { slug: 'a/b/c' });
+  assert.equal(matchRoute('/orders/:id', '/orders'), null);
+  assert.deepEqual(parseUrl('/orders/42?tab=items#sec'), { path: '/orders/42', query: { tab: 'items' }, hash: 'sec' });
+
+  const { window, container } = makeDom();
+  const ast = parseFoar(routedSrc);
+  const bindings = { format_badge: (id) => `#${id}` };
+  const rt = createFoarRuntime(ast, container, { url: '/', bindings });
+
+  assert.equal(q(container, '.f4-text')[0].textContent, 'Welcome home');
+  const links = q(container, 'a.f4-link');
+  assert.equal(links[0].getAttribute('aria-current'), 'page');
+  assert.equal(links[1].getAttribute('aria-current'), null);
+
+  // Click Link("/orders/42")
+  links[1].click();
+  await tick();
+  assert.equal(rt.getRoute().path, '/orders/42');
+  assert.deepEqual(rt.getRoute().params, { id: '42' });
+  assert.equal(links[0].getAttribute('aria-current'), null);
+  assert.equal(links[1].getAttribute('aria-current'), 'page');
+  const orderText = container.querySelector('.f4-view-OrderPage .f4-text');
+  assert.equal(orderText.textContent, 'Order #42 (0)');
+
+  // Navigating to another order reuses the mounted Route and updates params in place
+  links[2].click();
+  await tick();
+  assert.equal(container.querySelector('.f4-view-OrderPage .f4-text'), orderText, 'same Route kept mounted');
+  assert.equal(orderText.textContent, 'Order #99 (0)');
+
+  // Effect calling navigate("/nope?from=btn") hits wildcard Route("*")
+  q(container, '.f4-button').find((b) => b.textContent === 'Go missing').click();
+  await tick();
+  assert.equal(rt.getRoute().path, '/nope');
+  assert.deepEqual(rt.getRoute().query, { from: 'btn' });
+  assert.equal(container.querySelector('.f4-router .f4-text').textContent, '404: /nope');
+  assert.equal(rt.getSnapshot().length, 1, 'unmounted OrderPage disposed cleanly');
+  rt.destroy();
+});
+
+test('SSR renderToString (zero DOM) + zero-recreation client hydrate()', async () => {
+  const ast = parseFoar(routedSrc);
+  const bindings = { format_badge: (id) => `#${id}` };
+
+  // 1. Server render with NO DOM globals
+  const prevDoc = globalThis.document;
+  delete globalThis.document;
+  let ssr;
+  try {
+    ssr = renderToString(ast, { url: '/orders/77', bindings });
+  } finally {
+    globalThis.document = prevDoc;
+  }
+  assert.ok(ssr.html.includes('Order #77 (0)'), ssr.html);
+  assert.ok(ssr.html.includes('href="/orders/42"'), ssr.html);
+  assert.ok(ssr.css.includes('.f4-row'), 'emits scoped CSS');
+  assert.equal(ssr.state.route, '/orders/77');
+  assert.ok(ssr.head.includes('data-f4-ssr') && ssr.head.includes('__foar_state__'));
+
+  // 2. Client hydrate() in place — verify ZERO createElement calls!
+  const { document, container } = makeDom();
+  document.head.innerHTML = ssr.head;
+  container.innerHTML = ssr.html;
+
+  const ssrTextNode = container.querySelector('.f4-view-OrderPage .f4-text');
+  const ssrPingBtn = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Ping');
+  const ssrHomeLink = container.querySelector('a.f4-link');
+  assert.ok(ssrTextNode && ssrPingBtn && ssrHomeLink);
+
+  let createdDuringHydrate = 0;
+  const origCreate = document.createElement.bind(document);
+  document.createElement = (...args) => {
+    createdDuringHydrate++;
+    return origCreate(...args);
+  };
+  let rt;
+  try {
+    rt = hydrate(ast, container, { bindings });
+  } finally {
+    document.createElement = origCreate;
+  }
+
+  assert.equal(createdDuringHydrate, 0, `expected 0 DOM elements created during hydrate, got ${createdDuringHydrate}`);
+  assert.equal(container.querySelector('.f4-view-OrderPage .f4-text'), ssrTextNode, 'adopted exact text node');
+  assert.equal([...container.querySelectorAll('button')].find((b) => b.textContent === 'Ping'), ssrPingBtn, 'adopted exact button');
+  assert.equal(container.querySelector('a.f4-link'), ssrHomeLink, 'adopted exact link');
+
+  // 3. Hydrated app is immediately live & interactive
+  ssrPingBtn.click();
+  await tick();
+  assert.equal(ssrTextNode.textContent, 'Order #77 (1)');
+
+  ssrHomeLink.click();
+  await tick();
+  assert.equal(rt.getRoute().path, '/');
+  assert.equal(container.querySelector('.f4-router .f4-text').textContent, 'Welcome home');
   rt.destroy();
 });

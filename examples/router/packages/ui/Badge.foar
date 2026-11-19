@@ -1,0 +1,16 @@
+// Reusable Badge component loaded from a local package via `import "@ui/Badge"`.
+view Badge(text: String, tone: String) {
+    state Ready {
+        render {
+            Text(text).style({
+                display: inline-block;
+                padding: 3px 10px;
+                border-radius: 999px;
+                font-size: 12px;
+                font-weight: 600;
+                background: tone == "ok" ? #dcfce7 : tone == "warn" ? #fef3c7 : #e2e8f0;
+                color: tone == "ok" ? #166534 : tone == "warn" ? #92400e : #334155;
+            })
+        }
+    }
+}

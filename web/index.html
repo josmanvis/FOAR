@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FOAR — Interfaces as state machines</title>
-  <meta name="description" content="FOAR is a UI programming language where every component is an explicit state machine, with exhaustive match and enums, compiled by a Rust compiler (native and WebAssembly) to a 13 KB retained-DOM runtime.">
+  <meta name="description" content="FOAR is a statically typed UI language where every component is an explicit state machine, with exhaustive match, typed externs, built-in routing, zero-DOM SSR + hydration, and a Rust compiler (native and WebAssembly).">
   <meta property="og:title" content="FOAR — Interfaces as state machines">
   <meta property="og:description" content="A UI language with explicit states, exhaustive match, and a Rust to WebAssembly compiler. Try it in the browser.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -59,16 +59,16 @@
           </div>
           <dl class="hero-specs">
             <div class="hero-spec">
-              <dt>13 KB</dt>
-              <dd>Gzipped retained-DOM runtime, zero dependencies</dd>
+              <dt>18 KB</dt>
+              <dd>Gzipped runtime with router, SSR, hydration, and i18n</dd>
             </div>
             <div class="hero-spec">
               <dt>Rust + WASM</dt>
-              <dd>Native CLI and 210 KB in-browser compiler</dd>
+              <dd>Typed compiler, native CLI, and 237 KB browser WASM</dd>
             </div>
             <div class="hero-spec">
-              <dt>Exhaustive</dt>
-              <dd>Enums and <code>match</code> checked before runtime</dd>
+              <dt>0 nodes</dt>
+              <dd>Created on hydration or filtering a 500-row keyed list</dd>
             </div>
           </dl>
         </div>
@@ -279,8 +279,8 @@ Match(cart.len()) {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
           </div>
           <div>
-            <h3>Checked at compile time</h3>
-            <p>Exhaustive <code>match</code> on enums. Unknown views, states, effects, styles, variants, and imports report file, line, column, and suggestions.</p>
+            <h3>Statically typechecked, including <code>extern fn</code></h3>
+            <p>Exhaustive <code>match</code> on enums plus static checking of stores, <code>data</code> literals and fields, view props, assignments, transitions, and typed <code>extern fn</code> host calls.</p>
           </div>
         </div>
 
@@ -289,8 +289,8 @@ Match(cart.len()) {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
           </div>
           <div>
-            <h3>Retained DOM, no virtual DOM</h3>
-            <p>Elements compile to blocks with direct bindings. Updates patch only changed values, keyed lists reuse rows, and inputs keep focus and selection.</p>
+            <h3>Retained DOM, SSR, and zero-recreation hydration</h3>
+            <p>Zero-DOM <code>renderToString</code> runs on Node or Edge workers; <code>hydrate</code> adopts existing server nodes in place without creating a single element, and keyed lists reuse rows.</p>
           </div>
         </div>
 
@@ -299,8 +299,8 @@ Match(cart.len()) {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M14 3h7v7"/><path d="m21 3-9 9"/></svg>
           </div>
           <div>
-            <h3>State-aware styling</h3>
-            <p>Scoped CSS with design tokens, dark mode, nested <code>@hover</code> and <code>@media</code> rules, and <code>@state Editing { … }</code> blocks that track the machine.</p>
+            <h3>Built-in router and state-aware styling</h3>
+            <p>Declarative <code>Router</code>, <code>Route("/orders/:id")</code>, <code>Link</code>, and <code>navigate()</code> alongside scoped CSS with dark mode and <code>@state Editing { … }</code>.</p>
           </div>
         </div>
 
@@ -309,8 +309,8 @@ Match(cart.len()) {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
           </div>
           <div>
-            <h3>Built-in i18n and accessibility</h3>
-            <p><code>t(key, params)</code> with pluralization, RTL support, and a catalog checker. First-class <code>label:</code>, <code>role:</code>, and <code>aria:</code> props on every element.</p>
+            <h3>i18n, accessibility, and <code>foar.toml</code> packages</h3>
+            <p><code>t(key, params)</code> with plurals and RTL, first-class <code>label:</code>/<code>role:</code>/<code>aria:</code> props, and <code>import "@pkg/Module"</code> resolved through <code>foar.toml</code>.</p>
           </div>
         </div>
 
@@ -337,16 +337,16 @@ Match(cart.len()) {
 
       <div class="metrics-bar">
         <div class="metric">
-          <span class="metric-value">13 KB</span>
-          <span class="metric-desc">Gzipped runtime as a single ES module with zero dependencies.</span>
+          <span class="metric-value">18 KB</span>
+          <span class="metric-desc">Gzipped runtime as one zero-dependency ES module, including router, SSR, hydration, and i18n.</span>
         </div>
         <div class="metric">
           <span class="metric-value">32 ms</span>
-          <span class="metric-desc">Compile time for a 21-file, 2,000-line app natively or in WebAssembly.</span>
+          <span class="metric-desc">Compile and typecheck time for the 21-file, 2,000-line Notes app natively or in WebAssembly.</span>
         </div>
         <div class="metric">
           <span class="metric-value">0</span>
-          <span class="metric-desc">DOM elements created per keystroke when filtering a 500-row keyed list.</span>
+          <span class="metric-desc">DOM elements created on client hydration or when filtering a 500-row keyed list.</span>
         </div>
         <div class="metric">
           <span class="metric-value">~2 ms</span>
@@ -406,6 +406,20 @@ Match(cart.len()) {
                 <td class="col-foar">In the language, state-aware</td>
               </tr>
               <tr>
+                <td>Type checking</td>
+                <td>External (TypeScript)</td>
+                <td>External (TS)</td>
+                <td>Built-in</td>
+                <td class="col-foar">Built-in, including <code>extern fn</code></td>
+              </tr>
+              <tr>
+                <td>Routing &amp; SSR</td>
+                <td>External (Next / Remix)</td>
+                <td>SvelteKit</td>
+                <td>Elm Land</td>
+                <td class="col-foar">Built-in: <code>Router</code>, SSR, <code>hydrate</code></td>
+              </tr>
+              <tr>
                 <td>Compiler</td>
                 <td>JS (Babel / TS)</td>
                 <td>JS</td>
@@ -415,7 +429,7 @@ Match(cart.len()) {
             </tbody>
           </table>
         </div>
-        <p class="note">FOAR is early: there is no router, no server-side rendering, and no package ecosystem yet, and effect code compiles to JavaScript without a full type checker. <a href="docs/why.html#what-foar-is-not-yet">Read the full list of trade-offs.</a></p>
+        <p class="note">FOAR is still young: local and Git <code>foar.toml</code> packages work today without a hosted public registry yet, and undeclared JS host functions remain a gradual escape hatch. <a href="docs/why.html#what-foar-is-not-yet">Read the full list of trade-offs.</a></p>
       </div>
     </div>
   </section>
@@ -508,6 +522,36 @@ Match(cart.len()) {
             <span class="example-pill">enum Status</span>
             <span class="example-pill">exhaustive match</span>
             <span class="example-pill">Match(…) UI</span>
+          </div>
+        </a>
+
+        <a class="example-tile" href="playground/?example=router">
+          <div>
+            <div class="example-head">
+              <h3>Router &amp; Packages</h3>
+              <svg class="example-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+            </div>
+            <p>Declarative routes with <code>:id</code> parameters, <code>Link</code>, <code>navigate()</code>, and a local <code>@ui/Badge</code> package via <code>foar.toml</code>.</p>
+          </div>
+          <div class="example-meta">
+            <span class="example-pill">Router / Route</span>
+            <span class="example-pill">@ui package</span>
+            <span class="example-pill">SSR-ready</span>
+          </div>
+        </a>
+
+        <a class="example-tile" href="playground/?example=notes-on-foar">
+          <div>
+            <div class="example-head">
+              <h3>Notes on FOAR</h3>
+              <svg class="example-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+            </div>
+            <p>A full 21-file macOS Notes clone with folders, tags, locked notes, rich-text editor, drag and drop, and 3 languages.</p>
+          </div>
+          <div class="example-meta">
+            <span class="example-pill">21 files</span>
+            <span class="example-pill">i18n + a11y</span>
+            <span class="example-pill">rich text</span>
           </div>
         </a>
       </div>

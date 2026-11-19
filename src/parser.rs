@@ -59,10 +59,17 @@ pub struct Parser<'s> {
     match_id: std::cell::Cell<usize>,
     /// declared types of the current view's params / stores / lets (+ effect params)
     var_types: std::collections::HashMap<String, String>,
+    /// captured expressions/statements/view-calls to typecheck once all decls are parsed
+    check_items: Vec<crate::typecheck::CheckItem>,
+    /// active lexical locals in the current render tree (List / Route bindings)
+    render_locals: Vec<(String, Option<String>)>,
 }
 
 /// Elements the runtime provides (web/foar-runtime.js mountNode/mountElement).
-const BUILTIN_ELEMENTS: &[&str] = &["Text", "Button", "Input", "TextArea", "Checkbox", "RichText", "Image", "Spinner", "Row", "Column", "List", "If", "Match"];
+const BUILTIN_ELEMENTS: &[&str] = &[
+    "Text", "Button", "Input", "TextArea", "Checkbox", "RichText", "Image", "Spinner",
+    "Row", "Column", "List", "If", "Match", "Router", "Route", "Link",
+];
 
 impl<'s> Parser<'s> {
     pub fn new(src: &'s str) -> PResult<Self> {
@@ -82,6 +89,8 @@ impl<'s> Parser<'s> {
             deferred: Default::default(),
             match_id: Default::default(),
             var_types: Default::default(),
+            check_items: Vec::new(),
+            render_locals: Vec::new(),
         })
     }
 
@@ -175,6 +184,7 @@ impl<'s> Parser<'s> {
         // `css { }` blocks, then view/element styles (which use doubled classes).
         let mut chunks: Vec<(u8, std::ops::Range<usize>)> = Vec::new();
         let mut enums = Vec::new();
+        let mut externs = Vec::new();
         while !self.at_end() {
             let first = self.hoisted.rules.len();
             let kind = match self.text(self.peek()) {
@@ -184,7 +194,7 @@ impl<'s> Parser<'s> {
                 "css" => 3,
                 _ => 4,
             };
-            self.parse_top_level(&mut data_decls, &mut views, &mut enums)?;
+            self.parse_top_level(&mut data_decls, &mut views, &mut enums, &mut externs)?;
             if let Some(e) = self.deferred.borrow_mut().take() {
                 return Err(e);
             }
@@ -204,6 +214,9 @@ impl<'s> Parser<'s> {
             let hint = if tag.starts_with(|c: char| c.is_ascii_uppercase()) { " (is the file that declares it imported?)" } else { "" };
             return Err(err_at(self.src, *at, format!("Unknown view or element '{}'{}", tag, hint)));
         }
+        // Static type check across the whole program (stores, lets, data literals,
+        // field accesses, view props, effects, transitions, and typed extern fns).
+        crate::typecheck::check_program(self.src, &data_decls, &enums, &externs, &views, &self.check_items)?;
         // `style A { @use B; }` then `.style(A)`: the element needs B's class too.
         // Done after parsing because named styles may be declared after their use.
         let mut views = views;
@@ -220,10 +233,16 @@ impl<'s> Parser<'s> {
         if let Some(e) = self.deferred.borrow_mut().take() {
             return Err(e);
         }
-        Ok(Program { kind: "Program", data_decls, enums, views, css: self.hoisted.css() })
+        Ok(Program { kind: "Program", data_decls, enums, externs, views, css: self.hoisted.css() })
     }
 
-    fn parse_top_level(&mut self, data_decls: &mut Vec<DataDecl>, views: &mut Vec<ViewDecl>, enums: &mut Vec<EnumDecl>) -> PResult<()> {
+    fn parse_top_level(
+        &mut self,
+        data_decls: &mut Vec<DataDecl>,
+        views: &mut Vec<ViewDecl>,
+        enums: &mut Vec<EnumDecl>,
+        externs: &mut Vec<ExternDecl>,
+    ) -> PResult<()> {
         {
             if self.is("import") && self.peek_at(1).kind == Kind::Str {
                 // `import "./components/Row.foar"`: resolved by crate::project
@@ -231,6 +250,8 @@ impl<'s> Parser<'s> {
                 self.advance();
                 self.advance();
                 self.eat(";");
+            } else if self.is("extern") {
+                externs.push(self.parse_extern()?);
             } else if self.is("data") {
                 data_decls.push(self.parse_data()?);
             } else if self.is("enum") {
@@ -253,12 +274,34 @@ impl<'s> Parser<'s> {
         Ok(())
     }
 
+    fn parse_extern(&mut self) -> PResult<ExternDecl> {
+        self.expect("extern")?;
+        self.expect("fn")?;
+        let name = self.declare("Extern function")?;
+        self.expect("(")?;
+        let mut params = Vec::new();
+        while !self.at_end() && !self.is(")") {
+            let pname = self.expect_ident()?;
+            self.expect(":")?;
+            let param_type = self.parse_type()?;
+            self.eat(",");
+            params.push(Param { name: pname, param_type });
+        }
+        self.expect(")")?;
+        let return_type = if self.eat("->") { self.parse_type()? } else { "Void".to_string() };
+        self.eat(";");
+        Ok(ExternDecl { name, params, return_type })
+    }
+
     fn parse_type(&mut self) -> PResult<String> {
         let base = self.expect_ident()?;
         if self.eat("<") {
-            let inner = self.parse_type()?;
+            let mut inner = vec![self.parse_type()?];
+            while self.eat(",") {
+                inner.push(self.parse_type()?);
+            }
             self.expect(">")?;
-            return Ok(format!("{}<{}>", base, inner));
+            return Ok(format!("{}<{}>", base, inner.join(", ")));
         }
         Ok(base)
     }
@@ -316,6 +359,7 @@ impl<'s> Parser<'s> {
         while !self.at_end() && !self.is("}") {
             if self.is("store") {
                 self.advance();
+                let sat = self.peek().start;
                 let sname = self.expect_ident()?;
                 let store_type = if self.eat(":") { self.parse_type()? } else { "any".to_string() };
                 self.expect("=")?;
@@ -328,10 +372,18 @@ impl<'s> Parser<'s> {
                 }
                 self.expect(";")?;
                 self.var_types.insert(sname.clone(), store_type.clone());
+                self.check_items.push(crate::typecheck::CheckItem::StoreInit {
+                    view: name.clone(),
+                    name: sname.clone(),
+                    declared: store_type.clone(),
+                    tokens: init.clone(),
+                    at: init.first().map(|t| t.start).unwrap_or(sat),
+                });
                 stores.push(Store { name: sname, store_type, init_expr: self.join_js(&init) });
             } else if self.is("let") {
                 // `let total = items.len();` — a derived value, recomputed on every update
                 self.advance();
+                let dat = self.peek().start;
                 let dname = self.expect_ident()?;
                 let derived_type = if self.eat(":") { self.parse_type()? } else { "any".to_string() };
                 self.expect("=")?;
@@ -344,6 +396,13 @@ impl<'s> Parser<'s> {
                 }
                 self.expect(";")?;
                 self.var_types.insert(dname.clone(), derived_type.clone());
+                self.check_items.push(crate::typecheck::CheckItem::DerivedInit {
+                    view: name.clone(),
+                    name: dname.clone(),
+                    declared: derived_type.clone(),
+                    tokens: expr.clone(),
+                    at: expr.first().map(|t| t.start).unwrap_or(dat),
+                });
                 derived.push(Derived { name: dname, derived_type, expr: self.join_js(&expr) });
             } else if self.is("style") {
                 self.advance();
@@ -385,6 +444,13 @@ impl<'s> Parser<'s> {
             } else if self.is("on_exit") {
                 self.advance();
                 let body = self.parse_balanced_braces()?;
+                if let Some(view) = &self.cur_view {
+                    self.check_items.push(crate::typecheck::CheckItem::EffectBody {
+                        view: view.clone(),
+                        params: Vec::new(),
+                        tokens: body.clone(),
+                    });
+                }
                 on_exit = Some(self.effect_body(&body));
             } else {
                 return self.err(format!("Unexpected token '{}' in state {}", self.describe(), name));
@@ -439,6 +505,9 @@ impl<'s> Parser<'s> {
         if tag == "Else" {
             return Err(err_at(self.src, at, "Else must follow an If block: `If(cond) { … } Else { … }`".to_string()));
         }
+        let mut raw_pos_args: Vec<(Vec<Token>, usize)> = Vec::new();
+        let mut raw_named_args: Vec<(String, Vec<Token>, usize)> = Vec::new();
+        let mut list_src_hint: Option<String> = None;
         if self.eat("(") {
             if tag == "List" {
                 let mut depth = 1;
@@ -472,7 +541,17 @@ impl<'s> Parser<'s> {
                     }
                 }
                 let mut segs = segs.into_iter();
-                el.list_expr = Some(self.join_js(&segs.next().unwrap_or_default()));
+                let items_toks = segs.next().unwrap_or_default();
+                let items_js = self.join_js(&items_toks);
+                list_src_hint = Some(items_js.clone());
+                if let Some(view) = &self.cur_view {
+                    self.check_items.push(crate::typecheck::CheckItem::RenderExpr {
+                        view: view.clone(),
+                        locals: self.render_locals.clone(),
+                        tokens: items_toks,
+                    });
+                }
+                el.list_expr = Some(items_js);
                 for seg in segs {
                     if seg.len() >= 3 && seg[0].kind == Kind::Ident && self.tok_is(&seg[1], ":") {
                         let name = self.text(&seg[0]).to_string();
@@ -486,16 +565,50 @@ impl<'s> Parser<'s> {
                     if self.peek().kind == Kind::Ident && self.is_at(1, ":") {
                         let name = self.expect_ident()?;
                         self.expect(":")?;
+                        let arg_at = self.peek().start;
                         let toks = self.collect_arg_tokens();
-                        el.named_args.insert(name, J::String(self.join_js(&toks)));
+                        el.named_args.insert(name.clone(), J::String(self.join_js(&toks)));
+                        raw_named_args.push((name, toks, arg_at));
                     } else {
+                        let arg_at = self.peek().start;
                         let toks = self.collect_arg_tokens();
                         el.args.push(self.join_js(&toks));
+                        raw_pos_args.push((toks, arg_at));
                     }
                     self.eat(",");
                 }
                 self.expect(")")?;
             }
+        }
+        if let Some(view) = &self.cur_view {
+            if !BUILTIN_ELEMENTS.contains(&tag.as_str()) {
+                self.check_items.push(crate::typecheck::CheckItem::ViewCall {
+                    view: view.clone(),
+                    locals: self.render_locals.clone(),
+                    target: tag.clone(),
+                    pos_args: raw_pos_args,
+                    named_args: raw_named_args,
+                    at,
+                });
+            } else {
+                for (toks, _) in raw_pos_args {
+                    self.check_items.push(crate::typecheck::CheckItem::RenderExpr {
+                        view: view.clone(),
+                        locals: self.render_locals.clone(),
+                        tokens: toks,
+                    });
+                }
+                for (_, toks, _) in raw_named_args {
+                    self.check_items.push(crate::typecheck::CheckItem::RenderExpr {
+                        view: view.clone(),
+                        locals: self.render_locals.clone(),
+                        tokens: toks,
+                    });
+                }
+            }
+        }
+        if tag == "Route" && el.args.is_empty() && !el.named_args.contains_key("path") {
+            return Err(err_at(self.src, at, "Route requires a path pattern: `Route(\"/orders/:id\") { … }`".to_string()));
         }
         if tag == "Match" {
             if el.args.len() != 1 {
@@ -506,11 +619,19 @@ impl<'s> Parser<'s> {
             el.arms = Some(self.parse_render_arms(&scrut, at)?);
             self.expect("}")?;
         } else if self.eat("{") {
-            if tag == "List" && self.peek().kind == Kind::Ident && self.is_at(1, "=>") {
-                el.list_binding = Some(self.expect_ident()?);
+            let mut pushed_local = false;
+            if (tag == "List" || tag == "Route") && self.peek().kind == Kind::Ident && self.is_at(1, "=>") {
+                let bname = self.expect_ident()?;
+                el.list_binding = Some(bname.clone());
                 self.expect("=>")?;
+                let hint = if tag == "Route" { Some("RouteParams".to_string()) } else { list_src_hint };
+                self.render_locals.push((bname, hint));
+                pushed_local = true;
             }
             el.children = self.parse_render_block()?;
+            if pushed_local {
+                self.render_locals.pop();
+            }
             self.expect("}")?;
         }
         if tag == "If" && self.is("Else") {
@@ -531,7 +652,7 @@ impl<'s> Parser<'s> {
                 self.expect(")")?;
                 el.events.insert(ev, J::String(handler));
             } else if self.is(".") && self.is_at(1, "style") {
-                if tag == "If" || tag == "Match" {
+                if tag == "If" || tag == "Match" || tag == "Router" || tag == "Route" {
                     return self.err(format!("{} has no box of its own to style: style the elements inside it, or wrap it in a Row/Column", tag));
                 }
                 self.advance();
@@ -603,6 +724,13 @@ impl<'s> Parser<'s> {
         }
         self.expect(")")?;
         let body = self.parse_balanced_braces()?;
+        if let Some(view) = &self.cur_view {
+            self.check_items.push(crate::typecheck::CheckItem::EffectBody {
+                view: view.clone(),
+                params: params.clone(),
+                tokens: body.clone(),
+            });
+        }
         let saved = self.var_types.clone();
         for p in &params {
             self.var_types.insert(p.name.clone(), p.param_type.clone());

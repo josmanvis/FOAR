@@ -4,11 +4,11 @@
 
 const KEYWORDS = new Set([
   'view', 'state', 'store', 'effect', 'render', 'transition', 'emit', 'data', 'theme', 'style', 'css',
-  'import', 'if', 'else', 'for', 'in', 'let', 'const', 'return', 'on_exit', 'async', 'await', 'match',
+  'import', 'extern', 'if', 'else', 'for', 'in', 'let', 'const', 'return', 'on_exit', 'async', 'await', 'match',
   'while', 'break', 'continue', 'fn', 'mut', 'new', 'typeof', 'of', 'enum', 'loop',
 ]);
 const LITERALS = new Set(['true', 'false', 'null', 'undefined', 'None', 'Some']);
-const TYPES = new Set(['String', 'bool', 'i32', 'i64', 'u32', 'u64', 'f32', 'f64', 'Vec', 'any', 'Option']);
+const TYPES = new Set(['String', 'bool', 'i32', 'i64', 'u32', 'u64', 'f32', 'f64', 'Vec', 'any', 'Option', 'Promise', 'Void', 'Record']);
 
 // Order matters: the first alternative that matches at a position wins.
 const TOKEN = new RegExp(

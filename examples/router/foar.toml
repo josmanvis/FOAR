@@ -1,0 +1,7 @@
+[package]
+name = "foar-router-example"
+version = "0.1.0"
+entry = "app.foar"
+
+[dependencies]
+ui = { path = "./packages/ui" }
