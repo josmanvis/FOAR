@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FOAR App</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f8fafc;
+      color: #0f172a;
+      -webkit-font-smoothing: antialiased;
+    }
+    #app {
+      width: 100%;
+      min-height: 100vh;
+    }
+    body.is-fullbleed {
+      overflow: hidden;
+      background: #ffffff;
+    }
+    body.is-fullbleed #app {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    body.is-fullbleed #app > .f4-view-host {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      min-width: 0;
+      min-height: 0;
+    }
+    body:not(.is-fullbleed) #app {
+      padding: 28px 24px 64px;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+    }
+    body:not(.is-fullbleed) #app > .f4-view-host {
+      width: 100%;
+      max-width: 860px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.04);
+      overflow: hidden;
+    }
+    /* Sensible base styles for FOAR built-in controls (overridden by .foar styles) */
+    .f4-button {
+      padding: 7px 14px;
+      border-radius: 7px;
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+      color: #0f172a;
+      font-size: 13.5px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .f4-button:hover { background: #f1f5f9; border-color: #94a3b8; }
+    .f4-input, .f4-textarea {
+      padding: 8px 11px;
+      border-radius: 7px;
+      border: 1px solid #cbd5e1;
+      font: inherit;
+      font-size: 14px;
+      color: #0f172a;
+      background: #ffffff;
+    }
+    .f4-input:focus, .f4-textarea:focus { outline: 2px solid #0f4c81; outline-offset: -1px; border-color: #0f4c81; }
+    .f4-link { color: #0f4c81; }
+    .f4-link[aria-current="page"] { background: #e8f1f8; color: #0f4c81; font-weight: 600; }
+    .f4-spinner-wrap { display: inline-flex; align-items: center; gap: 8px; color: #475569; font-size: 13.5px; }
+    .f4-spinner-ring {
+      width: 16px; height: 16px; border-radius: 50%;
+      border: 2px solid #cbd5e1; border-top-color: #0f4c81;
+      animation: f4-spin 0.75s linear infinite;
+    }
+    @keyframes f4-spin { to { transform: rotate(360deg); } }
+    .f4-error {
+      max-width: 680px;
+      margin: 48px auto;
+      padding: 18px 20px;
+      border-radius: 10px;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+    .f4-pill {
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      z-index: 9000;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px 6px 12px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.86);
+      color: #e2e8f0;
+      font-size: 12px;
+      font-weight: 500;
+      box-shadow: 0 6px 20px rgba(15, 23, 42, 0.22);
+      backdrop-filter: blur(8px);
+      opacity: 0.78;
+      transition: opacity 0.15s ease;
+    }
+    .f4-pill:hover { opacity: 1; }
+    .f4-pill a {
+      color: #93c5fd;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .f4-pill a:hover { text-decoration: underline; color: #ffffff; }
+    .f4-pill button {
+      border: 0;
+      background: transparent;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      padding: 0 2px;
+    }
+    .f4-pill button:hover { color: #ffffff; }
+    .f4-pill[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="foar-pill" class="f4-pill" role="region" aria-label="Playground shortcut">
+    <a id="edit-in-playground" href="./">Edit in Playground</a>
+    <button id="dismiss-pill" type="button" title="Hide shortcut" aria-label="Hide shortcut">&times;</button>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -144,21 +144,27 @@ FOAR takes Elm's best idea (exhaustive pattern matching), Svelte's
 (compile the framework away), and XState's (UI as a state machine), and puts
 them in one small language.
 
-## What FOAR is not (yet)
+## Trade-offs and roadmap
 
-Honesty about the remaining limits:
+FOAR ships with built-in routing, streaming SSR + zero-recreation hydration,
+static type checking (with generics, tagged-union ADTs, and `extern fn`),
+Slots, Portals, Catch/Fallback error boundaries, `foar.toml` + SHA-256
+`foar.lock` packages, a native Rust LSP, Vite HMR, and a VS Code extension.
 
-- **No hosted central package registry yet.** `foar.toml`, `foar.lock` (SHA-256
-  integrity), local path, Git, and custom HTTP registry URLs work today, but
-  there is no central public registry like npm or crates.io yet.
-- **Gradual escape hatch at the JS boundary.** Declared `extern fn` calls,
-  generic `data<T>`, tagged-union `enum<T>` payloads, view props, stores, and
-  effects are statically checked — while undeclared JS host calls and explicit
-  `any` remain opt-in gradual escape hatches.
-- **Full-document hydration (no partial islands yet).** `renderToStream`,
+Three intentional trade-offs and roadmap items to keep in mind:
+
+- **Decentralized packages today, hosted central registry on the roadmap.**
+  `foar.toml`, SHA-256 `foar.lock`, local path, Git, and custom HTTP registry
+  URLs work out of the box without requiring a central server.
+- **Gradual interop at the JS boundary.** Declared `extern fn` calls, generic
+  `data<T>`, tagged-union `enum<T>` payloads, view props, stores, and effects
+  are statically checked at compile time — while undeclared JS host calls and
+  explicit `any` remain opt-in gradual escape hatches so adopting existing JS
+  platform APIs stays frictionless.
+- **Full-document streaming SSR & hydration.** `renderToStream`,
   `renderToStringAsync`, and zero-recreation `hydrate` run across Node, Deno,
-  Bun, and Edge workers, while partial islands / out-of-order suspense
-  streaming boundaries remain future work.
+  Bun, and Edge workers; partial islands / out-of-order suspense streaming
+  boundaries are next on the roadmap.
 
-If those trade-offs work for you, [try it in the playground](https://josmanvis.github.io/FOAR/playground/)
+Ready to try it? [Open the playground](https://josmanvis.github.io/FOAR/playground/)
 or read the [guide](./guide.md).

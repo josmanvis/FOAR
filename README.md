@@ -129,7 +129,7 @@ mount(document.getElementById('app'), {
 | [Guide](docs/guide.md) | from a counter to a multi-file app, in fifteen minutes |
 | [Language reference](docs/language.md) | views, states, render, effects, enums, `match`, styles, i18n, runtime API |
 | [Tooling](docs/tooling.md) | the CLI, the playground and its keys, dev servers, tests |
-| [Why FOAR](docs/why.md) | the design, how it compares, and its current limits |
+| [Why FOAR](docs/why.md) | the design, how it compares, and architectural trade-offs |
 | [Examples](examples/README.md) | starter, counter, todo, orders, router, notes-on-foar |
 | [Changelog](CHANGELOG.md) | release notes and recent milestones |
 
@@ -141,7 +141,7 @@ web/foar-runtime.js  the DOM + SSR + streaming runtime (one module, ~21 KB gzipp
 web/foar-compiler.js runs the compiler in the browser (WASM)
 integrations/        Vite plugin with state-preserving HMR (vite-plugin-foar.js)
 editors/vscode/      VS Code extension + TextMate grammar launching `foar lsp`
-web/playground/      the browser IDE: workbench/ and language/ (the language service)
+web/playground/      the browser IDE: workbench/, language/, and full-viewport app runner (app.html)
 web/index.html       the website's landing page; docs/ are rendered into it
 examples/            example projects, one folder each
 scripts/site.mjs     builds the static website (pnpm build:site)
@@ -155,9 +155,7 @@ pnpm build:wasm    # web/foar.wasm (rustup target add wasm32-unknown-unknown)
 pnpm build:site    # the static website in _site/ (deployed to GitHub Pages)
 ```
 
-FOAR is still young: local, Git, and custom-registry `foar.toml` + `foar.lock`
-packages work today without a hosted public central registry yet, and undeclared
-JS host calls remain a gradual escape hatch. See [what FOAR is not (yet)](docs/why.md#what-foar-is-not-yet).
+For architectural trade-offs and roadmap items (a central hosted public package registry and partial islands hydration), see [trade-offs & roadmap](docs/why.md#trade-offs-and-roadmap).
 
 ## License
 
