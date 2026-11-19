@@ -709,3 +709,8 @@ select:hover {
   color: #d2a8ff;
   overflow: auto;
 }
+
+/* ?src= mode: the running app, embedded and filling the preview area */
+*:has(> .f4-mount.remote) { padding: 0; align-items: stretch; min-width: 0; }
+.f4-mount.remote { max-width: none; height: 100%; border-radius: 0; border: 0; box-shadow: none; min-width: 0; }
+.remote-preview { width: 100%; height: 100%; border: 0; background: #fff; display: block; }

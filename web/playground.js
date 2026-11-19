@@ -21,6 +21,12 @@ const btnClearLog = document.getElementById('btn-clear-log');
 let currentRuntime = null;
 let currentMachines = [];
 let debounceTimer = null;
+// ?src=<url of a .foar file>: compile it here; when it needs host functions
+// (an app with its own JS), the preview embeds the running app (?app=<url>,
+// default: the source's origin) instead of mounting it bare.
+const params = new URLSearchParams(location.search);
+const remoteSrc = params.get('src');
+const previewUrl = remoteSrc ? params.get('app') || new URL(remoteSrc, location.href).origin + '/' : null;
 
 function updateLineNumbers() {
   const count = codeEditor.value.split('\n').length;
@@ -32,6 +38,20 @@ function updateLineNumbers() {
 codeEditor.addEventListener('scroll', () => {
   lineNumbers.scrollTop = codeEditor.scrollTop;
 });
+
+// Data (store values, effect args, payloads) is escaped before it goes into
+// innerHTML: with ?src= it comes from a real app and may contain HTML.
+const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+function show(v) {
+  let j;
+  try {
+    j = JSON.stringify(v);
+  } catch {
+    j = String(v);
+  }
+  if (j === undefined) j = String(v);
+  return esc(j.length > 160 ? `${j.slice(0, 160)}…` : j);
+}
 
 function appendLog(type, htmlText) {
   const row = document.createElement('div');
@@ -50,7 +70,7 @@ function renderStateMachinesAndStores(snapshot) {
   activeStatesSummary.innerHTML = snapshot
     .map(
       (inst) =>
-        `<span class="summary-chip">${inst.viewName}: <strong>${inst.state}</strong></span>`
+        `<span class="summary-chip">${esc(inst.viewName)}: <strong>${esc(inst.state)}</strong></span>`
     )
     .join('');
 
@@ -127,10 +147,10 @@ function renderStateMachinesAndStores(snapshot) {
     const row = document.createElement('div');
     row.className = 'store-instance-row';
     const formattedStores = storeEntries
-      .map(([k, v]) => `<span style="color:#79c0ff">${k}</span>: ${ JSON.stringify(v) }`)
+      .map(([k, v]) => `<span style="color:#79c0ff">${esc(k)}</span>: ${show(v)}`)
       .join(', ');
     row.innerHTML = `
-      <div><strong style="color:#e6edf3">${inst.viewName}</strong> <span style="color:#3fb950">[${inst.state}]</span></div>
+      <div><strong style="color:#e6edf3">${esc(inst.viewName)}</strong> <span style="color:#3fb950">[${esc(inst.state)}]</span></div>
       <div style="color:#8b949e;margin-top:2px;word-break:break-all;">${formattedStores}</div>
     `;
     storesInspector.appendChild(row);
@@ -147,6 +167,37 @@ function scheduleInspector(snapshot) {
     renderStateMachinesAndStores(pendingSnapshot);
   });
 }
+
+// Runtime callbacks feeding the inspector (also used for an embedded app, via postMessage).
+const inspectorCallbacks = {
+  onRender(snapshot) {
+    scheduleInspector(snapshot);
+  },
+  onEffect({ viewName, state, effect, arg }) {
+    const argStr = arg !== undefined ? `(${show(arg)})` : '()';
+    appendLog(
+      'effect',
+      `<span class="log-tag-effect">⚡ effect</span> <strong>${esc(viewName)}.${esc(state)}.${esc(effect)}</strong>${argStr}`
+    );
+  },
+  onTransition({ viewName, from, to, asyncCall, manual }) {
+    const extra = asyncCall
+      ? ` <span style="color:#d29922">[await ${esc(asyncCall)}]</span>`
+      : manual
+        ? ` <span style="color:#8b949e">[inspector forced]</span>`
+        : '';
+    appendLog(
+      'transition',
+      `<span class="log-tag-transition">🔀 transition</span> <strong>${esc(viewName)}</strong>: ${esc(from)} ──▶ <strong>${esc(to)}</strong>${extra}`
+    );
+  },
+  onEmit({ viewName, event, payload }) {
+    appendLog(
+      'emit',
+      `<span class="log-tag-emit">📡 emit</span> <strong>${esc(viewName)}</strong> ──▶ <code>on_${esc(event)}(${show(payload)})</code>`
+    );
+  },
+};
 
 let compileSeq = 0;
 async function compileAndMount(source) {
@@ -166,39 +217,26 @@ async function compileAndMount(source) {
 
     if (currentRuntime) {
       currentRuntime.destroy();
+      currentRuntime = null;
+    }
+
+    if (previewUrl) {
+      if (!foarMount.querySelector('iframe')) {
+        foarMount.textContent = '';
+        const frame = document.createElement('iframe');
+        frame.src = previewUrl;
+        frame.title = 'Running app';
+        frame.className = 'remote-preview';
+        foarMount.appendChild(frame);
+        foarMount.classList.add('remote');
+      }
+      compilerStatus.textContent = `● ${backend} ${elapsed}ms · ${ast.views.length} views · preview: ${previewUrl}`;
+      renderStateMachinesAndStores(lastRemoteSnapshot);
+      return;
     }
 
     const tMount = performance.now();
-    currentRuntime = createFoarRuntime(ast, foarMount, {
-      badges: true,
-      onRender(snapshot) {
-        scheduleInspector(snapshot);
-      },
-      onEffect({ viewName, state, effect, arg }) {
-        const argStr = arg !== undefined ? `(${JSON.stringify(arg)})` : '()';
-        appendLog(
-          'effect',
-          `<span class="log-tag-effect">⚡ effect</span> <strong>${viewName}.${state}.${effect}</strong>${argStr}`
-        );
-      },
-      onTransition({ viewName, from, to, asyncCall, manual }) {
-        const extra = asyncCall
-          ? ` <span style="color:#d29922">[await ${asyncCall}]</span>`
-          : manual
-            ? ` <span style="color:#8b949e">[inspector forced]</span>`
-            : '';
-        appendLog(
-          'transition',
-          `<span class="log-tag-transition">🔀 transition</span> <strong>${viewName}</strong>: ${from} ──▶ <strong>${to}</strong>${extra}`
-        );
-      },
-      onEmit({ viewName, event, payload }) {
-        appendLog(
-          'emit',
-          `<span class="log-tag-emit">📡 emit</span> <strong>${viewName}</strong> ──▶ <code>on_${event}(${JSON.stringify(payload)})</code>`
-        );
-      },
-    });
+    currentRuntime = createFoarRuntime(ast, foarMount, { badges: true, ...inspectorCallbacks });
     const mountMs = (performance.now() - tMount).toFixed(2);
     compilerStatus.textContent = `● ${backend} ${elapsed}ms · mounted ${mountMs}ms`;
   } catch (err) {
@@ -227,6 +265,11 @@ async function loadExample(filename) {
 }
 
 exampleSelect.addEventListener('change', () => {
+  if (!exampleSelect.value) return;
+  if (remoteSrc) {
+    location.search = ''; // leave remote mode for the bundled examples
+    return;
+  }
   loadExample(exampleSelect.value);
 });
 
@@ -262,5 +305,47 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
   });
 });
 
+// The embedded app posts its runtime events here (see notes-on-foar/main.js).
+let lastRemoteSnapshot = [];
+if (previewUrl) {
+  const appOrigin = new URL(previewUrl).origin;
+  window.addEventListener('message', (e) => {
+    if (e.origin !== appOrigin || e.data?.type !== 'foar') return;
+    const { kind, data } = e.data;
+    if (kind === 'render') {
+      lastRemoteSnapshot = data;
+      inspectorCallbacks.onRender(data);
+    } else if (inspectorCallbacks[kind]) inspectorCallbacks[kind](data);
+  });
+}
+
+async function loadRemote(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const source = await res.text();
+    currentFilename.textContent = url;
+    codeEditor.value = source;
+    updateLineNumbers();
+    eventLog.innerHTML = '';
+    await compileAndMount(source);
+    appendLog('info', `<span style="color:#8b949e">Loaded ${url} · live app on the right; edits here are compiled and checked, not saved</span>`);
+  } catch (err) {
+    compilerStatus.textContent = '✖ Could not load source';
+    compilerStatus.className = 'status-pill status-err';
+    errorBanner.textContent = `Could not load ${url}: ${err.message}`;
+    errorBanner.classList.remove('hidden');
+  }
+}
+
 // Initial boot
-loadExample(exampleSelect.value);
+if (remoteSrc) {
+  const opt = document.createElement('option');
+  opt.value = '';
+  opt.textContent = remoteSrc.split('/').pop() + ' (remote)';
+  exampleSelect.prepend(opt);
+  exampleSelect.value = '';
+  loadRemote(remoteSrc);
+} else {
+  loadExample(exampleSelect.value);
+}
