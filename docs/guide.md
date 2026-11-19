@@ -7,7 +7,7 @@ small retained-DOM runtime that updates the page by touching only what
 changed.
 
 This guide takes you from a counter to a multi-file app in about fifteen
-minutes. Everything here runs in the [playground](../playground/), so you can
+minutes. Everything here runs in the [playground](https://josmanvis.github.io/FOAR/playground/), so you can
 follow along without installing anything.
 
 - [Language reference](./language.md): every construct, in detail.
@@ -312,7 +312,7 @@ states, not flags.
 
 ## Where next
 
-- Open the [playground](../playground/). It has completions, hover docs,
+- Open the [playground](https://josmanvis.github.io/FOAR/playground/). It has completions, hover docs,
   errors as you type, go to definition, rename and a formatter.
 - Read the [language reference](./language.md).
 - Read [why FOAR is built this way](./why.md).

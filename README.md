@@ -1,4 +1,4 @@
-<p align="center"><img src="web/favicon.svg" width="72" height="72" alt=""></p>
+<p align="center"><img src="web/favicon.svg" width="72" height="72" alt="FOAR logo"></p>
 
 <h1 align="center">FOAR</h1>
 
@@ -7,9 +7,9 @@
 <p align="center">
   <a href="https://josmanvis.github.io/FOAR/">Website</a> ·
   <a href="https://josmanvis.github.io/FOAR/playground/">Playground</a> ·
-  <a href="docs/guide.md">Guide</a> ·
-  <a href="docs/language.md">Reference</a> ·
-  <a href="docs/why.md">Why FOAR</a>
+  <a href="https://josmanvis.github.io/FOAR/docs/">Guide</a> ·
+  <a href="https://josmanvis.github.io/FOAR/docs/language.html">Reference</a> ·
+  <a href="https://josmanvis.github.io/FOAR/docs/why.html">Why FOAR</a>
 </p>
 
 FOAR is a language for user interfaces. Every component declares its
@@ -115,7 +115,7 @@ mount(document.getElementById('app'), {
 | [Language reference](docs/language.md) | views, states, render, effects, enums, `match`, styles, i18n, runtime API |
 | [Tooling](docs/tooling.md) | the CLI, the playground and its keys, dev servers, tests |
 | [Why FOAR](docs/why.md) | the design, how it compares, and its current limits |
-| [Examples](examples) | starter, counter, todo, orders |
+| [Examples](examples/README.md) | starter, counter, todo, orders, notes-on-foar |
 
 ## Repository
 

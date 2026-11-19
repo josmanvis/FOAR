@@ -50,7 +50,7 @@ the [reference](./language.md#host-functions-and-the-runtime).
 
 ## The playground
 
-The [playground](../playground/) is a small IDE for FOAR projects, running the
+The [playground](https://josmanvis.github.io/FOAR/playground/) is a small IDE for FOAR projects, running the
 Rust compiler as WebAssembly in your browser.
 
 **Projects.** The examples (starter, counter, todo, orders) and a Scratch

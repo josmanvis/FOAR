@@ -65,9 +65,8 @@ theme {
 
 // Rich-text content and a few structural rules (verbatim CSS).
 css {
-    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--window-bg); }
-    ::selection { background: color-mix(in srgb, var(--accent) 40%, transparent); }
-    :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+    .f4-view-NotesApp ::selection { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+    .f4-view-NotesApp :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
     [role=option]:focus-visible, .f4-SidebarItem:focus-visible { outline-offset: -2px; }
     .f4-richtext:focus-visible { outline: none; }
     .visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

@@ -148,5 +148,5 @@ Honesty about the limits:
   offers are plain JS functions you pass in by name. That's simple and
   flexible, but those calls aren't checked by FOAR.
 
-If those trade-offs work for you, [try it in the playground](../playground/)
+If those trade-offs work for you, [try it in the playground](https://josmanvis.github.io/FOAR/playground/)
 or read the [guide](./guide.md).

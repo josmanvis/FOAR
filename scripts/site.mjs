@@ -51,6 +51,7 @@ function markdown(src) {
         // docs link to each other as ./name.md (readable on GitHub); the site serves .html
         let h = href.replace(/^\.\/(\w+)\.md(#.*)?$/, (_, n, hash) => `${n === 'guide' ? 'index' : n}.html${hash ?? ''}`);
         h = h.replace(/^\.\.\/examples\/([\w-]+)\/?$/, '../playground/?example=$1');
+        h = h.replace(/^https:\/\/josmanvis\.github\.io\/FOAR\/playground\/?(\?.*)?$/, '../playground/$1');
         const ext = /^https?:/.test(h);
         return `<a href="${esc(h)}"${title ? ` title="${esc(title)}"` : ''}${ext ? ' rel="noopener"' : ''}>${text}</a>`;
       },
@@ -160,7 +161,7 @@ ${pager}
 `;
 }
 
-/** examples/<id>/ projects: [{ id, title, description, entry, files }] */
+/** examples/<id>/ projects: [{ id, title, description, entry, files, host }] */
 export function examplesIndex() {
   const out = [];
   for (const e of fs.readdirSync(EXAMPLES, { withFileTypes: true })) {
@@ -171,9 +172,16 @@ export function examplesIndex() {
     for (const rel of fs.readdirSync(dir, { recursive: true })) {
       if (String(rel).endsWith('.foar')) files[String(rel).split(path.sep).join('/')] = fs.readFileSync(path.join(dir, String(rel)), 'utf8');
     }
-    const first = /^\/\/\s*(.+)$/m.exec(files['app.foar'])?.[1] ?? e.name;
-    const [title, description = ''] = first.split(/\s+—\s+/);
-    out.push({ id: e.name, title: title.replace(/^FOAR\s+/, ''), description, entry: 'app.foar', files });
+    const headerLines = files['app.foar']
+      .split('\n')
+      .slice(0, 4)
+      .map((l) => /^\/\/\s*(.+)$/.exec(l)?.[1]?.trim())
+      .filter(Boolean);
+    const first = headerLines[0] ?? e.name;
+    let [title, description = ''] = first.split(/\s+—\s+/);
+    if (!description && headerLines[1]) description = headerLines[1].replace(/\.$/, '');
+    const host = fs.existsSync(path.join(dir, 'host.js')) ? `../examples/${e.name}/host.js` : null;
+    out.push({ id: e.name, title: title.replace(/^FOAR\s+/, ''), description, entry: 'app.foar', files, ...(host ? { host } : {}) });
   }
   const order = ['starter', 'counter', 'todo', 'orders', 'notes-on-foar'];
   return out.sort((a, b) => (order.indexOf(a.id) + 1 || 99) - (order.indexOf(b.id) + 1 || 99) || a.id.localeCompare(b.id));
@@ -190,6 +198,14 @@ export function buildSite(out) {
   for (const p of PAGES) fs.writeFileSync(path.join(out, 'docs', `${p.name}.html`), renderDoc(p.name));
   fs.mkdirSync(path.join(out, 'examples'), { recursive: true });
   fs.writeFileSync(path.join(out, 'examples', 'index.json'), JSON.stringify(examplesIndex()));
+  for (const e of fs.readdirSync(EXAMPLES, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    const srcDir = path.join(EXAMPLES, e.name);
+    for (const asset of ['host.js', 'host', 'locales']) {
+      const from = path.join(srcDir, asset);
+      if (fs.existsSync(from)) fs.cpSync(from, path.join(out, 'examples', e.name, asset), { recursive: true });
+    }
+  }
   fs.writeFileSync(path.join(out, '.nojekyll'), '');
   return out;
 }

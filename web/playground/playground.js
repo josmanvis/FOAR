@@ -5,7 +5,7 @@ import { createFindBar } from './workbench/findbar.js';
 import { createPalette } from './workbench/palette.js';
 import { createLayout } from './workbench/layout.js';
 import { createLanguageFeatures } from './language/editor.js';
-import { createFoarRuntime } from '../foar-runtime.js';
+import { createFoarRuntime, createI18n } from '../foar-runtime.js';
 
 const exampleSelect = document.getElementById('example-select');
 const projectTitle = document.getElementById('project-title');
@@ -25,6 +25,8 @@ const btnClearLog = document.getElementById('btn-clear-log');
 let currentRuntime = null;
 let currentMachines = [];
 let debounceTimer = null;
+let currentHostUrl = null;
+let activeHost = null;
 // ?src=<url of a .foar file>: compile it here; when it needs host functions
 // (an app with its own JS), the preview embeds the running app (?app=<url>,
 // default: the source's origin) instead of mounting it bare.
@@ -216,6 +218,10 @@ async function compileAndMount(project) {
       currentRuntime.destroy();
       currentRuntime = null;
     }
+    if (activeHost) {
+      activeHost.destroy?.();
+      activeHost = null;
+    }
 
     if (previewUrl) {
       if (!foarMount.querySelector('iframe')) {
@@ -233,8 +239,32 @@ async function compileAndMount(project) {
       return;
     }
 
+    let hostOpts = {};
+    if (currentHostUrl) {
+      const mod = await import(new URL(currentHostUrl, import.meta.url).href);
+      if (seq !== compileSeq) return;
+      activeHost = await mod.createHost({ createI18n, getApp: () => currentRuntime });
+      if (seq !== compileSeq) {
+        activeHost?.destroy?.();
+        activeHost = null;
+        return;
+      }
+      hostOpts = {
+        i18n: activeHost.i18n,
+        bindings: activeHost.bindings,
+      };
+    }
+
+    const fullBleed = Boolean(activeHost?.fullBleed);
+    foarMount.classList.toggle('fullbleed', fullBleed);
+
     const tMount = performance.now();
-    currentRuntime = createFoarRuntime(ast, foarMount, { badges: true, ...inspectorCallbacks });
+    currentRuntime = createFoarRuntime(ast, foarMount, {
+      badges: !fullBleed,
+      ...hostOpts,
+      ...inspectorCallbacks,
+    });
+    activeHost?.attach?.(currentRuntime, foarMount);
     const mountMs = (performance.now() - tMount).toFixed(2);
     compilerStatus.textContent = `● ${backend} ${elapsed}ms · ${fileCount} file${fileCount === 1 ? '' : 's'} · mounted ${mountMs}ms`;
   } catch (err) {
@@ -298,6 +328,7 @@ async function openProject(backend, info) {
 }
 
 function openScratch() {
+  currentHostUrl = null;
   const starter = examples.find((e) => e.id === 'starter');
   const original = { entry: starter?.entry ?? 'app.foar', files: starter?.files ?? { 'app.foar': 'view App {\n    state Ready {\n        render {\n            Text("Hello")\n        }\n    }\n}\n' } };
   return openProject(localBackend('scratch', original), { name: 'Scratch', id: 'scratch', original });
@@ -306,6 +337,7 @@ function openScratch() {
 function loadExample(id) {
   const ex = examples.find((e) => e.id === id);
   if (!ex) return openScratch();
+  currentHostUrl = ex.host ?? null;
   const original = { entry: ex.entry, files: ex.files };
   return openProject(localBackend(`example:${id}`, original), { name: `examples/${id}`, id: `example:${id}`, original });
 }
