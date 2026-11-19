@@ -88,6 +88,9 @@
             <button class="tab-btn" data-tab="tab-ast">
               🌳 AST
             </button>
+            <button class="tab-btn" data-tab="tab-problems">
+              ⚠ Problems <span id="problems-count" class="tab-count"></span>
+            </button>
           </div>
           <button id="btn-clear-log" class="btn-tiny">Clear Log</button>
         </div>
@@ -112,6 +115,11 @@
           <!-- Tab 2: Compiled JS -->
           <div id="tab-js" class="tab-panel">
             <pre id="compiled-js-output" class="code-output"></pre>
+          </div>
+
+          <!-- Tab 4: Problems (compiler + language service) -->
+          <div id="tab-problems" class="tab-panel">
+            <div id="problems-list" class="problems-list" role="list" aria-label="Problems"></div>
           </div>
 
           <!-- Tab 3: AST -->

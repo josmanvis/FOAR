@@ -1001,7 +1001,8 @@ select:hover {
 .code-gutter {
   width: 48px;
   flex-shrink: 0;
-  padding: 14px 10px 14px 0;
+  /* same bottom padding as the textarea, so both can scroll equally far */
+  padding: 14px 10px 40vh 0;
   text-align: right;
   color: #484f58;
   border-right: 1px solid #21262d;
@@ -1452,3 +1453,159 @@ button.sb-item:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
 .fb-rows { flex: 1; min-width: 0; }
 .findbar .sf { width: auto; flex: 1 1 250px; min-width: 110px; }
 .fb-count { min-width: 0; }
+
+/* ---------------------------------------------------------------------------
+   Language features: suggestions, parameter hints, hover, squiggles,
+   bracket matching, rename box, problems
+   --------------------------------------------------------------------------- */
+.lang-suggest {
+  position: fixed;
+  z-index: 1500;
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  font-size: 12.5px;
+  animation: ws-pop 0.08s ease-out;
+}
+.lang-suggest.hidden, .lang-sig.hidden, .lang-hover.hidden { display: none; }
+.ls-list {
+  width: 360px;
+  max-height: 252px;
+  overflow: auto;
+  padding: 3px;
+  background: var(--bg-elevated);
+  border: 1px solid #3d444d;
+  border-radius: 7px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+.ls-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  font-size: 12.5px;
+}
+.ls-item.active { background: rgba(56, 139, 253, 0.28); }
+.ls-label { color: var(--text-main); }
+.ls-label b { color: #58a6ff; font-weight: 700; }
+.ls-detail { margin-left: auto; padding-left: 12px; color: var(--text-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+.ls-icon { width: 16px; text-align: center; font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+.ls-icon.k-element, .ls-icon.k-view { color: #7ee787; }
+.ls-icon.k-keyword, .ls-icon.k-snippet { color: #ff7b72; }
+.ls-icon.k-prop, .ls-icon.k-arg { color: #79c0ff; }
+.ls-icon.k-state, .ls-icon.k-cssvar, .ls-icon.k-type { color: #ffa657; }
+.ls-icon.k-effect, .ls-icon.k-fn { color: #d2a8ff; }
+.ls-icon.k-event { color: #f2cc60; }
+.ls-icon.k-style { color: #a5d6ff; }
+.ls-doc {
+  width: 300px;
+  max-height: 252px;
+  overflow: auto;
+  margin-left: 4px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid #3d444d;
+  border-radius: 7px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  color: #c9d1d9;
+  line-height: 1.45;
+}
+.ls-doc.hidden { display: none; }
+.ls-sig { font-family: "JetBrains Mono", Consolas, monospace; color: var(--text-main); margin-bottom: 4px; word-break: break-word; }
+.ls-doc code, .lh-doc code { font-family: "JetBrains Mono", Consolas, monospace; font-size: 11.5px; background: rgba(110, 118, 129, 0.25); padding: 0 4px; border-radius: 3px; }
+
+.lang-sig, .lang-hover {
+  position: fixed;
+  z-index: 1400;
+  max-width: 520px;
+  padding: 6px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid #3d444d;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-size: 12.5px;
+  color: #c9d1d9;
+  line-height: 1.45;
+}
+.lang-sig code { font-family: "JetBrains Mono", Consolas, monospace; color: var(--text-main); }
+.lang-sig code b { color: #58a6ff; text-decoration: underline; text-underline-offset: 3px; }
+.lh-code { margin: 0; font-family: "JetBrains Mono", Consolas, monospace; font-size: 12px; color: #7ee787; white-space: pre-wrap; }
+.lh-doc { margin-top: 4px; color: #c9d1d9; }
+.lh-problem { padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px solid var(--border-color); }
+.lh-problem:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+.lh-problem.error { color: #ffa198; }
+.lh-problem.warning { color: #e3b341; }
+
+/* squiggles under problems, boxes around matching brackets */
+.code-diag {
+  position: absolute;
+  height: 4px;
+  pointer-events: none;
+  background-repeat: repeat-x;
+  background-size: 6px 4px;
+}
+.code-diag.error { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='4'%3E%3Cpath d='M0 3 L1.5 1 L3 3 L4.5 1 L6 3' fill='none' stroke='%23f85149' stroke-width='1'/%3E%3C/svg%3E"); }
+.code-diag.warning { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='4'%3E%3Cpath d='M0 3 L1.5 1 L3 3 L4.5 1 L6 3' fill='none' stroke='%23d29922' stroke-width='1'/%3E%3C/svg%3E"); }
+.code-bracket { position: absolute; height: 20px; box-shadow: inset 0 0 0 1px #8b949e; background: rgba(139, 148, 158, 0.18); border-radius: 2px; pointer-events: none; }
+
+.lang-rename {
+  position: fixed;
+  z-index: 1600;
+  min-width: 180px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-dark);
+  color: var(--text-main);
+  font: 13px "JetBrains Mono", Consolas, monospace;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  outline: none;
+}
+.lang-rename.invalid { border-color: var(--danger); }
+
+.problems-list { padding: 6px 0; overflow: auto; height: 100%; }
+.pr-empty { padding: 12px 16px; color: var(--text-muted); font-size: 12.5px; }
+.pr-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 14px;
+  border: 0;
+  background: none;
+  color: #c9d1d9;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.pr-item:hover, .pr-item:focus-visible { background: rgba(177, 186, 196, 0.08); outline: none; }
+.pr-item.error .pr-icon { color: #f85149; }
+.pr-item.warning .pr-icon { color: #d29922; }
+.pr-msg { flex: 1; }
+.pr-loc { color: var(--text-muted); font-size: 11.5px; white-space: nowrap; }
+.tab-count:not(:empty) { margin-left: 4px; padding: 0 6px; border-radius: 9px; background: var(--bg-elevated); font-size: 11px; }
+
+.pg-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: 80%;
+  padding: 7px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-main);
+  font-size: 12.5px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  animation: ws-pop 0.12s ease-out;
+}
+.editor-col { position: relative; }

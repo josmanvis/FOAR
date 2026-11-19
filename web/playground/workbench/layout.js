@@ -31,6 +31,7 @@ export const ICONS = {
 
 export function createLayout({ ws, search, palette }) {
   let state = { ...DEFAULTS };
+  let problems = { errors: 0, warnings: 0 };
   try {
     state = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') };
   } catch {}
@@ -108,7 +109,7 @@ export function createLayout({ ws, search, palette }) {
   const sb = {
     project: h('button', { class: 'sb-item', type: 'button', title: 'Switch project', onclick: () => palette.run('project.open') }),
     save: h('span', { class: 'sb-item' }),
-    errors: h('button', { class: 'sb-item', type: 'button', title: 'Go to error (F8)', onclick: () => palette.run('go.error') }),
+    errors: h('button', { class: 'sb-item', type: 'button', title: 'Problems (Ctrl+Shift+M) · next: F8', onclick: () => palette.run('view.problems') }),
     pos: h('button', { class: 'sb-item', type: 'button', title: 'Go to line (Ctrl+G)', onclick: () => palette.open(':') }),
     indent: h('span', { class: 'sb-item', text: 'Spaces: 4' }),
     lang: h('span', { class: 'sb-item', text: 'FOAR' }),
@@ -133,9 +134,10 @@ export function createLayout({ ws, search, palette }) {
     const n = ws.dirtyCount;
     sb.save.textContent = ws.backendKind === 'remote' ? (n ? `● ${n} unsaved` : '✓ saved to disk') : 'kept in this browser';
     sb.save.classList.toggle('warn', !!n);
-    const err = ws.error;
-    sb.errors.textContent = err ? `⊗ 1  ${err.file}:${err.line}` : '⊗ 0';
-    sb.errors.classList.toggle('err', !!err);
+    const errors = problems.errors;
+    sb.errors.textContent = `⊗ ${errors}  ⚠ ${problems.warnings}`;
+    sb.errors.classList.toggle('err', errors > 0);
+    sb.errors.classList.toggle('warn', !errors && problems.warnings > 0);
     const ae = ws.activeEditor();
     if (ae) {
       const { ta } = ae;
@@ -281,5 +283,9 @@ export function createLayout({ ws, search, palette }) {
       apply();
     },
     updateStatus,
+    setProblems(p) {
+      problems = p;
+      updateStatus();
+    },
   };
 }

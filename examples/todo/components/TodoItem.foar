@@ -23,11 +23,11 @@ view TodoItem(item: Todo) {
     state Idle {
         render {
             Checkbox(checked: item.completed) -> on_change(Toggle)
-            
+
             Text(item.text)
-                .style({ 
-                    text-decoration: item.completed ? line-through : none; 
-                    flex: 1; 
+                .style({
+                    text-decoration: item.completed ? line-through : none;
+                    flex: 1;
                     color: item.completed ? var(--muted) : inherit;
                 })
                 -> on_double_click(StartEdit)
@@ -55,7 +55,7 @@ view TodoItem(item: Todo) {
     // Editing State: Layout completely changes surgically
     state Editing {
         render {
-            Input(value: draft_edit) 
+            Input(value: draft_edit)
                 -> on_input(UpdateEditDraft)
                 -> on_enter(SaveEdit)
                 .style({ flex: 1; padding: 6px; })

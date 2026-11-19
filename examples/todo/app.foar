@@ -34,7 +34,7 @@ view TodoApp {
                 .style({ font-size: 32px; font-weight: bold; color: #333; })
 
             // Search Bar
-            Input(value: search_query, placeholder: "🔍 Search todos...") 
+            Input(value: search_query, placeholder: "🔍 Search todos...")
                 -> on_input(UpdateSearch)
                 .style(Field)
 
@@ -44,8 +44,8 @@ view TodoApp {
                     -> on_input(UpdateDraft)
                     -> on_enter(AddTodo)
                     .style(Field, { flex: 1; })
-                
-                Button("Add") 
+
+                Button("Add")
                     -> on_click(AddTodo)
                     .style({ background: #007bff; color: white; border-radius: 6px; padding: 0 20px; })
             }
@@ -70,10 +70,10 @@ view TodoApp {
 
         effect AddTodo() {
             if draft.is_empty() { return; }
-            todos.push(Todo { 
-                id: random_uuid(), 
-                text: draft, 
-                completed: false 
+            todos.push(Todo {
+                id: random_uuid(),
+                text: draft,
+                completed: false
             });
             draft = ""; // Clear input
         }

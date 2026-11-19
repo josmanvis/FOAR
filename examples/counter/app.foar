@@ -1,12 +1,12 @@
 // Counter — one view, three states, an async transition and on_exit
-// A fresh take: UIs are inherently state machines. 
-// Instead of complex boolean flags (isLoading, isError, isActive) like React, 
+// A fresh take: UIs are inherently state machines.
+// Instead of complex boolean flags (isLoading, isError, isActive) like React,
 // FOAR uses explicit topological states for UI components.
 
 view AsyncCounter {
     // 1. Data Store (Persistent memory for the view)
     store count: i32 = 0;
-    
+
     // 2. Base Styling (Applied across all states)
     style {
         layout: vertical;
@@ -21,7 +21,7 @@ view AsyncCounter {
         render {
             Button("Start Counting") -> on_click(TransitionToActive)
         }
-        
+
         effect TransitionToActive() {
             transition Active;
         }
@@ -38,7 +38,7 @@ view AsyncCounter {
                 Button("-") -> on_click(Decrement)
                 Button("+") -> on_click(Increment)
             }
-            
+
             Button("Finish") -> on_click(FinishAndSave)
                 .style({ margin-top: 20px; background: red; })
         }

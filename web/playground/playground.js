@@ -4,6 +4,7 @@ import { createSearchPanel } from './workbench/search.js';
 import { createFindBar } from './workbench/findbar.js';
 import { createPalette } from './workbench/palette.js';
 import { createLayout } from './workbench/layout.js';
+import { createLanguageFeatures } from './language/editor.js';
 import { createFoarRuntime } from '../foar-runtime.js';
 
 const exampleSelect = document.getElementById('example-select');
@@ -390,6 +391,23 @@ const findBar = createFindBar(ws, ws.editorColEl.querySelector('.editor-host'));
 const palette = createPalette(ws);
 const layout = createLayout({ ws, search: searchPanel, palette });
 
+// small notifications at the bottom of the editor
+const toastEl = document.createElement('div');
+toastEl.className = 'pg-toast hidden';
+toastEl.setAttribute('role', 'status');
+ws.editorColEl.append(toastEl);
+let toastTimer = 0;
+const notify = (msg) => {
+  toastEl.textContent = msg;
+  toastEl.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.add('hidden'), 3200);
+};
+const lang = createLanguageFeatures({ ws, palette, notify });
+lang.events.addEventListener('problems', (e) => layout.setProblems(e.detail));
+// for debugging from the console (and tests)
+window.__playground = { ws, lang, palette, layout };
+
 const hasEditor = () => !!ws.activeEditor();
 const selectedText = () => {
   const ae = ws.activeEditor();
@@ -408,10 +426,9 @@ const COMMANDS = [
   ['go.line', 'Go', 'Go to Line/Column…', ['Ctrl+G'], () => palette.open(':'), hasEditor],
   ['go.symbol', 'Go', 'Go to Symbol in File…', ['Ctrl+Shift+O'], () => palette.open('@'), hasEditor],
   ['go.workspaceSymbol', 'Go', 'Go to Symbol in Project…', ['Ctrl+Alt+O'], () => palette.open('#')],
-  ['go.error', 'Go', 'Go to Compile Error', ['F8'], () => {
-    const e = ws.error;
-    if (e) ws.openFile(e.file, { line: e.line, col: e.col });
-  }, () => !!ws.error],
+  ['go.error', 'Go', 'Go to Next Problem', ['F8'], () => lang.nextProblem(1)],
+  ['go.prevError', 'Go', 'Go to Previous Problem', ['Shift+F8'], () => lang.nextProblem(-1)],
+  ['view.problems', 'View', 'Show Problems', ['Ctrl+Shift+M'], () => showInspectorTab('tab-problems')],
   ['go.nextTab', 'View', 'Open Next Editor', ['Alt+PageDown'], () => ws.cycleTab(1)],
   ['go.prevTab', 'View', 'Open Previous Editor', ['Alt+PageUp'], () => ws.cycleTab(-1)],
   // layout
@@ -471,6 +488,7 @@ const COMMANDS = [
   ['app.reset', 'Preview', 'Reset State (recompile and remount)', [], () => btnReset.click()],
   ['app.clearLog', 'Preview', 'Clear Event Log', [], () => btnClearLog.click()],
 ];
+COMMANDS.push(...lang.commands);
 for (const [id, category, title, keys, run, when, extra] of COMMANDS) palette.register({ id, category, title, keys, run, when: when || undefined, ...extra });
 
 // Initial boot

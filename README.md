@@ -336,6 +336,24 @@ foar i18n locales app.foar host/*.js                 # check translation catalog
   arrow keys or reset with a double-click; the layout is remembered. The status
   bar shows the project, save state, compile errors (click or F8 to jump),
   line/column and compile time.
+- **Language support** (web/playground/language/, over the whole project):
+  - *suggestions* as you type and with Ctrl+Space, each with its docs:
+    elements and views (with their parameters as snippets with tab stops), named
+    arguments, events for that element (`-> on_…`; for a view, the events it
+    emits), effects of the current state (`on_click(…)`), states after
+    `transition`, named styles in `.style(…)` / `@use`, CSS properties and their
+    values, `@hover`/`@state`/`@media`… rules, theme variables in `var(--…)`,
+    types, stores and parameters, import paths, keywords;
+  - *parameter hints* in calls, *hover* docs for every name, *problems* as you
+    type (squiggles, a Problems tab, the status bar): unknown states in
+    `transition`, effects that don't exist or belong to another state, unknown
+    styles, undefined CSS variables, events an element never fires, missing
+    imports — plus the compiler's errors, with "did you mean" suggestions;
+  - *go to definition* (F12, Ctrl+click), *find all references* (Shift+F12),
+    *rename symbol* (F2: views, styles and data types across files; states,
+    effects, stores and parameters in their view — parameters also at call
+    sites), *format document* (Shift+Alt+F), auto-closing brackets and quotes,
+    bracket matching.
 - **Search**: quick open with fuzzy matching and recent files; project-wide
   search with match case / whole word / regex, include and exclude globs,
   results per file, and replace (one, per file, or all after a confirmation,
@@ -354,7 +372,10 @@ foar i18n locales app.foar host/*.js                 # check translation catalog
 | Alt+N · Alt+Shift+N · F2 · Delete | New file · new folder · rename · delete (in the tree) |
 | Ctrl+S | Save all |
 | Alt+W · Alt+PageDown / PageUp | Close editor · next / previous editor |
-| F8 | Go to the compile error |
+| Ctrl+Space · Ctrl+Shift+Space | Suggestions · parameter hints |
+| F12 · Shift+F12 · F2 | Go to definition · find all references · rename symbol |
+| Shift+Alt+F | Format document |
+| F8 · Shift+F8 · Ctrl+Shift+M | Next · previous problem · show Problems |
 | Ctrl+/ · Ctrl+Shift+D · Tab / Shift+Tab | Comment · duplicate line · indent / outdent |
 | Ctrl/Cmd+click | Open the file that declares a view (or an import) |
 

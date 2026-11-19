@@ -236,6 +236,7 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
   root.append(explorer, editorCol);
   // 'active' (tab switched), 'change' (buffers), 'compile' (result in), 'cursor'
   const events = new EventTarget();
+  let definitionProvider = null; // (path, offset) -> { path, offset } (the language service)
   const emit = (type, detail) => events.dispatchEvent(new CustomEvent(type, { detail }));
 
   // ---- state helpers ----
@@ -269,7 +270,9 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
   }
 
   // ---- editor (one per open file: each keeps its own undo history) ----
-  function makeEditor(path) {
+  function makeEditor(initialPath) {
+    // the file can be renamed or moved while open: read the path from `self`
+    const self = { path: initialPath };
     const gutter = h('div', { class: 'code-gutter', 'aria-hidden': 'true' });
     const code = h('code');
     const marker = h('div', { class: 'code-error-line hidden' });
@@ -280,12 +283,14 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
       autocomplete: 'off',
       autocapitalize: 'off',
       wrap: 'off',
-      'aria-label': `${path} source`,
+      'aria-label': `${self.path} source`,
       'aria-multiline': 'true',
     });
-    ta.value = files[path] ?? '';
+    ta.value = files[self.path] ?? '';
     const marks = h('div', { class: 'code-marks' });
-    pre.prepend(marks);
+    const diags = h('div', { class: 'code-diags' });
+    const brackets = h('div', { class: 'code-brackets' });
+    pre.prepend(marks, diags, brackets);
     const wrap = h('div', { class: 'code-view', role: 'tabpanel' }, gutter, h('div', { class: 'code-stack' }, pre, ta));
     ta.addEventListener('keyup', () => emit('cursor'));
     ta.addEventListener('mouseup', () => emit('cursor'));
@@ -307,7 +312,7 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
       gutter.scrollTop = ta.scrollTop;
     };
     const paintError = () => {
-      const on = error && error.file === path && error.line > 0;
+      const on = error && error.file === self.path && error.line > 0;
       marker.classList.toggle('hidden', !on);
       if (on) marker.style.top = `${PAD_TOP + (error.line - 1) * LINE_HEIGHT}px`;
       for (const el of gutter.querySelectorAll('.err')) el.classList.remove('err');
@@ -315,17 +320,21 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
       gutter.style.setProperty('--err-top', on ? `${PAD_TOP + (error.line - 1) * LINE_HEIGHT}px` : '-100px');
     };
     ta.addEventListener('input', () => {
-      files[path] = ta.value;
+      files[self.path] = ta.value;
       paint();
       changed();
     });
     ta.addEventListener('scroll', sync);
     ta.addEventListener('keydown', (e) => onEditorKey(e, ta));
     ta.addEventListener('click', (e) => {
-      if (e.ctrlKey || e.metaKey) goToDefinition(ta);
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const at = definitionProvider?.(self.path, ta.selectionStart);
+      if (at) openFile(at.path, { select: [at.offset, at.offset + (at.length ?? 0)] });
+      else goToDefinition(ta);
     });
     paint();
     return {
+      self,
       wrap,
       ta,
       paint,
@@ -369,6 +378,75 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
         });
         marks.append(frag);
       },
+      /** Viewport position of `offset`: { left, top, bottom } (for popups). */
+      coords(offset) {
+        const v = ta.value;
+        const ls = v.lastIndexOf('\n', offset - 1) + 1;
+        const line = v.slice(0, ls).split('\n').length - 1;
+        const r = ta.getBoundingClientRect();
+        const left = r.left + PAD_LEFT + visualCol(v, ls, offset) * charWidth(pre) - ta.scrollLeft;
+        const top = r.top + PAD_TOP + line * LINE_HEIGHT - ta.scrollTop;
+        return { left, top, bottom: top + LINE_HEIGHT };
+      },
+      /** Text offset under a viewport point (or -1 past the end of a line). */
+      offsetAt(x, y) {
+        const v = ta.value;
+        const r = ta.getBoundingClientRect();
+        const line = Math.floor((y - r.top + ta.scrollTop - PAD_TOP) / LINE_HEIGHT);
+        const col = (x - r.left + ta.scrollLeft - PAD_LEFT) / charWidth(pre);
+        if (line < 0 || col < 0) return -1;
+        const starts = [0];
+        for (let i = 0; i < v.length && starts.length <= line; i++) if (v.charCodeAt(i) === 10) starts.push(i + 1);
+        if (line >= starts.length) return -1;
+        const ls = starts[line];
+        let le = v.indexOf('\n', ls);
+        if (le < 0) le = v.length;
+        let c = 0;
+        for (let i = ls; i < le; i++) {
+          const w = v[i] === '\t' ? 4 - (c % 4) : 1;
+          if (col < c + w) return i;
+          c += w;
+        }
+        return -1;
+      },
+      /** Squiggles: [{ s, e, severity }] */
+      setDiagnostics(list = []) {
+        diags.textContent = '';
+        const v = ta.value;
+        const cw = charWidth(pre);
+        const frag = document.createDocumentFragment();
+        for (const d of list.slice(0, 500)) {
+          const ls = v.lastIndexOf('\n', d.s - 1) + 1;
+          const line = v.slice(0, ls).split('\n').length - 1;
+          let le = v.indexOf('\n', d.s);
+          if (le < 0) le = v.length;
+          const a = visualCol(v, ls, d.s);
+          const b = visualCol(v, ls, Math.max(d.s + 1, Math.min(d.e, le)));
+          const m = document.createElement('div');
+          m.className = `code-diag ${d.severity}`;
+          m.style.cssText = `top:${PAD_TOP + line * LINE_HEIGHT + LINE_HEIGHT - 4}px;left:${PAD_LEFT + a * cw}px;width:${Math.max(cw, (b - a) * cw)}px`;
+          frag.append(m);
+        }
+        diags.append(frag);
+      },
+      /** Matching bracket boxes: [offset, …] */
+      setBrackets(offsets = []) {
+        brackets.textContent = '';
+        const v = ta.value;
+        const cw = charWidth(pre);
+        for (const o of offsets) {
+          const ls = v.lastIndexOf('\n', o - 1) + 1;
+          const line = v.slice(0, ls).split('\n').length - 1;
+          const m = document.createElement('div');
+          m.className = 'code-bracket';
+          m.style.cssText = `top:${PAD_TOP + line * LINE_HEIGHT}px;left:${PAD_LEFT + visualCol(v, ls, o) * cw}px;width:${cw}px`;
+          brackets.append(m);
+        }
+      },
+      /** Replace [from, to) with `text` as one undoable edit; caret at `caret` (or selection). */
+      replace(from, to, text, selStart, selEnd) {
+        replaceRange(ta, from, to, text, selStart, selEnd);
+      },
       /** Select [start, end) and scroll it into view (centred if off screen). */
       select(start, end = start, { focus = true } = {}) {
         if (focus) ta.focus({ preventScroll: true });
@@ -400,7 +478,9 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
   function replaceRange(ta, start, end, text, selStart, selEnd) {
     ta.focus();
     ta.setSelectionRange(start, end);
-    if (!document.execCommand('insertText', false, text)) ta.setRangeText(text, start, end, 'end');
+    // A background tab's textarea can't take focus: execCommand would type
+    // into whatever has focus, so edit its value directly (no native undo).
+    if (document.activeElement !== ta || !document.execCommand('insertText', false, text)) ta.setRangeText(text, start, end, 'end');
     if (selStart != null) ta.setSelectionRange(selStart, selEnd ?? selStart);
     ta.dispatchEvent(new Event('input'));
   }
@@ -624,22 +704,38 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
         e.stopPropagation();
       },
       onblur: () => {
-        if (renaming) onCommit(input.value.trim(), true);
+        // a re-render replacing the input is not the user leaving it
+        if (renaming && !rerendering) onCommit(input.value.trim(), true);
       },
     });
     const row = h('div', { class: 'tree-row editing', style: `--depth:${depth}` }, icon(renaming?.creating === 'dir' || renaming?.isDir ? 'folder' : 'file'), input);
-    requestAnimationFrame(() => {
-      input.focus();
-      const dot = value.lastIndexOf('.');
-      input.setSelectionRange(0, dot > 0 && !renaming?.isDir ? dot : value.length);
-    });
+    if (carry) {
+      // re-rendered while editing: keep what was typed, the selection and focus
+      input.value = carry.value;
+      queueMicrotask(() => {
+        if (carry.focused) input.focus();
+        input.setSelectionRange(carry.start, carry.end);
+      });
+    } else {
+      requestAnimationFrame(() => {
+        input.focus();
+        const dot = value.lastIndexOf('.');
+        input.setSelectionRange(0, dot > 0 && !renaming?.isDir ? dot : value.length);
+      });
+    }
     return row;
   }
 
+  let rerendering = false;
+  let carry = null; // an in-progress rename input's state, carried across re-renders
   function renderTree() {
     const focusedKey = document.activeElement?.closest?.('.tree-row')?.dataset;
     const focusPath = focusedKey?.path ?? (focusedKey?.dir != null ? `dir:${focusedKey.dir}` : null);
+    const old = tree.querySelector('.tree-input');
+    carry = renaming && old ? { value: old.value, start: old.selectionStart, end: old.selectionEnd, focused: document.activeElement === old } : null;
+    rerendering = true;
     tree.textContent = '';
+    rerendering = false;
     const add = (node, depth) => {
       const dirNames = [...node.dirs.keys()].sort((a, b) => a.localeCompare(b));
       if (renaming?.creating && renaming.parent === (node.path ?? '')) {
@@ -975,6 +1071,7 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
       if (ed) {
         editors.delete(oldP);
         editors.set(newP, ed);
+        ed.self.path = newP;
         ed.ta.setAttribute('aria-label', `${newP} source`);
       }
     }
@@ -1278,6 +1375,12 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
   return {
     events,
     explorerEl: explorer,
+    setDefinitionProvider(fn) {
+      definitionProvider = fn;
+    },
+    editorFor(path) {
+      return editors.get(path) ?? null;
+    },
     editorColEl: editorCol,
     get name() {
       return projectName;
