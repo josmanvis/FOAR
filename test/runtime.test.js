@@ -243,3 +243,40 @@ test('CSS features: theme vars, custom-property bindings, named styles, @state, 
   assert.equal(host.style.getPropertyValue('--level'), '60%', 'custom property binding updates');
   rt.destroy();
 });
+
+test('externs: host functions callable from store init, expressions and effects', async () => {
+  const src = `
+    view N {
+      store notes: any = load();
+      store sel: String = "";
+      state S {
+        render {
+          List(notes.filter(|n| n.id == sel), empty: "Nothing selected") { n => Text(shout(n.text)) }
+          TextArea(value: notes[0].text, placeholder: "Body") -> on_input(Edit)
+          Button("pick") -> on_click(Pick)
+        }
+        effect Pick() { sel = notes[0].id; }
+        effect Edit(t: String) { notes = [{ id: notes[0].id, text: t }]; save(notes); }
+      }
+    }`;
+  const saved = [];
+  const { window, container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(src), container, {
+    bindings: { load: () => [{ id: 'a', text: 'hi' }], shout: (s) => s.toUpperCase() + '!', save: (n) => saved.push(n) },
+  });
+  assert.equal(q(container, '.f4-list-empty')[0].textContent, 'Nothing selected');
+  fire(window, q(container, '.f4-button')[0], 'click');
+  await tick();
+  assert.equal(q(container, '.f4-list .f4-text')[0].textContent, 'HI!');
+  assert.equal(q(container, '.f4-list-empty').filter((e) => e.isConnected).length, 0);
+  const ta = q(container, '.f4-textarea')[0];
+  assert.equal(ta.value, 'hi');
+  assert.equal(ta.placeholder, 'Body');
+  ta.value = 'yo\nthere';
+  fire(window, ta, 'input');
+  await tick();
+  assert.equal(q(container, '.f4-textarea')[0], ta, 'textarea must not be recreated');
+  assert.equal(q(container, '.f4-list .f4-text')[0].textContent, 'YO\nTHERE!');
+  assert.deepEqual(saved, [[{ id: 'a', text: 'yo\nthere' }]]);
+  rt.destroy();
+});

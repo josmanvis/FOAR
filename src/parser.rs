@@ -322,7 +322,32 @@ impl<'s> Parser<'s> {
                     toks.push(self.advance());
                 }
                 self.expect(")")?;
-                el.list_expr = Some(self.join_js(&toks));
+                // `List(items, empty: "No notes")`: split top-level commas;
+                // the first segment is the items expression, the rest are named args.
+                let mut segs: Vec<Vec<Token>> = vec![Vec::new()];
+                let mut d = 0i32;
+                for t in toks {
+                    if self.tok_is(&t, "(") || self.tok_is(&t, "[") || self.tok_is(&t, "{") {
+                        d += 1;
+                    } else if self.tok_is(&t, ")") || self.tok_is(&t, "]") || self.tok_is(&t, "}") {
+                        d -= 1;
+                    }
+                    if d == 0 && self.tok_is(&t, ",") {
+                        segs.push(Vec::new());
+                    } else {
+                        segs.last_mut().unwrap().push(t);
+                    }
+                }
+                let mut segs = segs.into_iter();
+                el.list_expr = Some(self.join_js(&segs.next().unwrap_or_default()));
+                for seg in segs {
+                    if seg.len() >= 3 && seg[0].kind == Kind::Ident && self.tok_is(&seg[1], ":") {
+                        let name = self.text(&seg[0]).to_string();
+                        el.named_args.insert(name, J::String(self.join_js(&seg[2..])));
+                    } else if !seg.is_empty() {
+                        return Err(err_at(self.src, seg[0].start, "Expected `name: value` after the List items expression".to_string()));
+                    }
+                }
             } else {
                 while !self.at_end() && !self.is(")") {
                     if self.peek().kind == Kind::Ident && self.is_at(1, ":") {
@@ -764,6 +789,14 @@ mod tests {
         assert!(css.contains(".f4-V-1.f4-V-1:focus-within{color:red}"));
         let btn = p.views[0].states[0].render[1].style.as_ref().unwrap();
         assert_eq!(btn.cls.as_deref(), Some("f4-V-2 f4-Card"));
+    }
+
+    #[test]
+    fn list_named_args() {
+        let p = compile(r#"view V { store xs: any = []; state S { render { List(xs.filter(|x| x > 1), empty: "None yet") { x => Text("{x}") } } } }"#).unwrap();
+        let l = &p.views[0].states[0].render[0];
+        assert_eq!(l.list_expr.as_deref(), Some("xs.filter((x) => x > 1)"));
+        assert_eq!(l.named_args["empty"], "\"None yet\"");
     }
 
     #[test]

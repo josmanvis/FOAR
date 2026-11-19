@@ -52,6 +52,22 @@ WASM runtime driving the DOM is slower, not faster.
 | `test/` | Runtime test suite (`pnpm test`, runs in happy-dom) |
 | `bench/` | Interaction benchmark (`pnpm bench`) |
 
+## Elements
+
+| Element | Arguments | Events |
+|---|---|---|
+| `Text(expr)` | | `on_click`, `on_double_click` |
+| `Button(label)` | | `on_click` |
+| `Input(value:, placeholder:, autofocus:)` | | `on_input(text)`, `on_enter` |
+| `TextArea(value:, placeholder:, autofocus:)` | | `on_input(text)` |
+| `Checkbox(checked:)` | | `on_change(bool)` |
+| `Spinner(label)` | | |
+| `Row { … }`, `Column { … }` | | `on_click`, … |
+| `List(items, empty: "…") { item => … }` | keyed by `item.id` / `item.key` | |
+| `SomeView(prop: expr)` | sub-view | `on_<emitted event>` |
+
+See [notes-on-foar](../notes-on-foar) for a complete app.
+
 ## Styling
 
 Style blocks are real CSS (any property, `calc()`, `var()`, gradients,
@@ -151,6 +167,10 @@ rt.forceStateTransition('root', 'Active');
 rt.flush();                             // synchronous update
 rt.destroy();
 ```
+
+Every function in `bindings` is also callable by name from `.foar` code: store
+initializers, render expressions and effects
+(`store notes = load_notes();`, `Text(fmt_date(note.updated))`, `persist(notes);`).
 
 An `api_name(args) -> transition(State);` statement calls `bindings.api_name`
 (if provided), moves to `State`, and runs that state's `on_exit` when the

@@ -67,9 +67,13 @@ export function compileExpr(expr, varNames, localNames) {
   const key = `${varNames.join(',')}|${localNames.join(',')}|${expr}`;
   let fn = exprCache.get(key);
   if (fn) return fn;
-  const vars = varNames.filter((n) => !localNames.includes(n));
+  // Destructure only names the expression mentions: keeps evaluation cheap
+  // even with many stores/externs in scope.
+  const words = new Set(expr.match(/[A-Za-z_$][\w$]*/g) || []);
+  const locals = localNames.filter((n) => words.has(n));
+  const vars = varNames.filter((n) => !localNames.includes(n) && words.has(n));
   const dv = vars.length ? `const {${vars.join(',')}} = $v;` : '';
-  const dl = localNames.length ? `const {${localNames.join(',')}} = $l;` : '';
+  const dl = locals.length ? `const {${locals.join(',')}} = $l;` : '';
   try {
     fn = new Function('$v', '$l', `"use strict";${dv}${dl}return (${expr});`);
   } catch (err) {
@@ -83,16 +87,17 @@ export function compileExpr(expr, varNames, localNames) {
   return fn;
 }
 
-const effectCache = new WeakMap();
+const HELPERS = ['__transition', '__emit', '__asyncTransition'];
 
-// Compiles an effect body once. Returns { fn, names } where fn takes the
-// values for `names` followed by the runtime helpers, and returns the store
-// values (as an array, in storeNames order) after the body ran.
-function compileEffect(eff, storeNames, propNames) {
-  let compiled = effectCache.get(eff);
+// Compiles an effect body once. Returns { fn, names, externs } where fn takes
+// the values for `names`, the helpers, then the `externs` (host functions),
+// and returns the store values (in storeNames order) after the body ran.
+function compileEffect(eff, storeNames, propNames, externNames, cache) {
+  let compiled = cache.get(eff);
   if (compiled) return compiled;
   const paramNames = (eff.params || []).map((p) => p.name);
   const names = dedupe([...storeNames, ...propNames, ...paramNames]);
+  const externs = externNames.filter((n) => !names.includes(n) && !HELPERS.includes(n));
   const src = `"use strict";
 (() => {
 ${eff.jsBody}
@@ -100,13 +105,13 @@ ${eff.jsBody}
 return [${storeNames.join(',')}];`;
   let fn;
   try {
-    fn = new Function(...names, '__transition', '__emit', '__asyncTransition', 'random_uuid', src);
+    fn = new Function(...names, ...HELPERS, ...externs, src);
   } catch (err) {
     console.error(`FOAR: cannot compile effect ${eff.name || 'on_exit'}: ${err.message}\n${eff.jsBody}`);
     fn = () => null;
   }
-  compiled = { fn, names, paramNames };
-  effectCache.set(eff, compiled);
+  compiled = { fn, names, paramNames, externs };
+  cache.set(eff, compiled);
   return compiled;
 }
 
@@ -128,6 +133,11 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   const asyncTimers = new Set();
   const warned = new Set();
   const badges = callbacks.badges === true;
+  // Host functions callable from .foar expressions and effects
+  // (`persist(notes);`, `Text(fmt_date(note.updated))`).
+  const externs = Object.assign(Object.create(null), { random_uuid }, callbacks.bindings || {});
+  const externNames = Object.keys(externs).filter((n) => /^[A-Za-z_$][\w$]*$/.test(n));
+  const effectCache = new Map();
   let destroyed = false;
   let scheduled = false;
 
@@ -232,9 +242,9 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       helpers: null,
     };
     inst.helpers = makeHelpers(inst);
-    const initLocals = { random_uuid };
+    const initLocals = externs;
     for (const st of decl.stores) {
-      const fn = compileExpr(st.initExpr, meta.varNames, ['random_uuid']);
+      const fn = compileExpr(st.initExpr, meta.varNames, externNames);
       vars[st.name] = safeEval(fn, vars, initLocals, st.initExpr);
     }
     instances.set(key, inst);
@@ -288,22 +298,21 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         asyncTimers.add(t);
       }
     };
-    return [__transition, __emit, __asyncTransition, random_uuid];
+    return [__transition, __emit, __asyncTransition];
   }
 
   function runEffect(inst, eff, args) {
     const { storeNames, propNames } = inst.meta;
-    const { fn, names, paramNames } = compileEffect(eff, storeNames, propNames);
-    const vals = new Array(names.length + 4);
+    const c = compileEffect(eff, storeNames, propNames, externNames, effectCache);
+    const { fn, names, paramNames } = c;
+    const vals = [];
     for (let i = 0; i < names.length; i++) {
       const n = names[i];
       const pi = paramNames.indexOf(n);
-      vals[i] = pi !== -1 ? args[pi] : inst.vars[n];
+      vals.push(pi !== -1 ? args[pi] : inst.vars[n]);
     }
-    vals[names.length] = inst.helpers[0];
-    vals[names.length + 1] = inst.helpers[1];
-    vals[names.length + 2] = inst.helpers[2];
-    vals[names.length + 3] = inst.helpers[3];
+    vals.push(inst.helpers[0], inst.helpers[1], inst.helpers[2]);
+    for (const n of c.externs) vals.push(externs[n]);
     try {
       const out = fn.apply(null, vals);
       if (out) for (let i = 0; i < storeNames.length; i++) inst.vars[storeNames[i]] = out[i];
@@ -353,12 +362,12 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     }
     inst.host = host;
     inst.hostBindings = meta.hostStyle.dynamic.map((d) => ({
-      fn: compileExpr(d.expr, meta.varNames, []),
+      fn: compileExpr(d.expr, meta.varNames, externNames),
       expr: d.expr,
       last: UNSET,
       apply: (v) => applyInlineStyle(host, d.key, v),
     }));
-    runBindings(inst.hostBindings, inst.vars, EMPTY);
+    runBindings(inst.hostBindings, inst.vars, externs);
     mountState(inst);
     return host;
   }
@@ -368,7 +377,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     inst.mountedState = inst.state;
     inst.host.dataset.stateName = inst.state;
     if (inst.badgeState) inst.badgeState.textContent = inst.state;
-    inst.blocks = st ? st.decl.render.map((node, i) => mountNode(node, inst, [], EMPTY, String(i))) : [];
+    inst.blocks = st ? st.decl.render.map((node, i) => mountNode(node, inst, externNames, externs, String(i))) : [];
     for (const b of inst.blocks) inst.host.appendChild(b.el);
   }
 
@@ -385,10 +394,10 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       unmountState(inst);
       mountState(inst);
       // freshly mounted blocks already reflect current vars
-      runBindings(inst.hostBindings, inst.vars, EMPTY);
+      runBindings(inst.hostBindings, inst.vars, externs);
       return;
     }
-    runBindings(inst.hostBindings, inst.vars, EMPTY);
+    runBindings(inst.hostBindings, inst.vars, externs);
     for (const b of inst.blocks) b.update();
   }
 
@@ -477,6 +486,21 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         }
         break;
       }
+      case 'TextArea': {
+        el = doc.createElement('textarea');
+        el.className = 'f4-textarea';
+        const valueExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
+        if (valueExpr !== undefined) {
+          bind(valueExpr, (v) => {
+            const s = v == null ? '' : String(v);
+            if (el.value !== s) el.value = s;
+          }, true);
+        }
+        if (node.namedArgs.placeholder !== undefined) {
+          bind(node.namedArgs.placeholder, (v) => { el.placeholder = v ?? ''; });
+        }
+        break;
+      }
       case 'Checkbox': {
         el = doc.createElement('input');
         el.className = 'f4-checkbox';
@@ -519,6 +543,12 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     for (const d of sc.dynamic) bind(d.expr, (v) => applyInlineStyle(el, d.key, v));
     registerEvents(el, node, inst);
     runBindings(bindings, inst.vars, locals);
+    if (node.namedArgs.autofocus !== undefined) {
+      const af = compileExpr(node.namedArgs.autofocus, vn, localNames);
+      if (safeEval(af, inst.vars, locals, node.namedArgs.autofocus)) {
+        queueMicrotask(() => { if (el.isConnected) el.focus(); });
+      }
+    }
 
     return {
       el,
@@ -584,6 +614,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     addClasses(el, compileStyle(node.style).cls);
 
     const itemsFn = compileExpr(node.listExpr, inst.meta.varNames, localNames);
+    const emptyExpr = node.namedArgs && node.namedArgs.empty;
+    const emptyFn = emptyExpr !== undefined ? compileExpr(emptyExpr, inst.meta.varNames, localNames) : null;
     const binding = node.listBinding;
     const childLocalNames = binding ? dedupe([...localNames, binding]) : localNames;
     const rows = new Map(); // key -> { locals, blocks }
@@ -598,8 +630,10 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         if (!emptyEl) {
           emptyEl = doc.createElement('div');
           emptyEl.className = 'f4-list-empty';
-          emptyEl.textContent = 'No matching items.';
         }
+        const msg = emptyFn ? safeEval(emptyFn, inst.vars, locals, emptyExpr) : 'No matching items.';
+        emptyEl.textContent = msg ?? '';
+        emptyEl.hidden = msg == null || msg === '';
       } else if (emptyEl && emptyEl.parentNode) {
         emptyEl.remove();
       }
