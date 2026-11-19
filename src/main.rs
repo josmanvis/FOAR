@@ -1,5 +1,6 @@
 //! foar CLI
 //!   foar build <file.foar | -> [-o <out>] [--format json|js] [--pretty] [--runtime <path>]
+//!   foar build - --project      (stdin: {"entry", "files": {path: source}})
 //!   foar check <file.foar>
 //!   foar i18n <locales-dir> <source files...> [--fallback en] [--format json]
 use std::io::{Read, Write};
@@ -7,7 +8,7 @@ use std::process::exit;
 
 fn usage() -> ! {
     eprintln!(
-        "foar {}\n\nUsage:\n  foar build <file.foar | -> [-o <out>] [--format json|js] [--pretty] [--runtime <path>]\n  foar check <file.foar>\n  foar i18n <locales-dir> <source files...> [--fallback en] [--format json]\n\n  --format json   program JSON for createFoarRuntime (default)\n  --format js     ES module exporting {{ program, mount }}\n  --runtime       import path of foar-runtime.js in the JS module (default ./foar-runtime.js)\n  -               read source from stdin",
+        "foar {}\n\nUsage:\n  foar build <file.foar | -> [-o <out>] [--format json|js] [--pretty] [--runtime <path>]\n  foar check <file.foar>\n  foar i18n <locales-dir> <source files...> [--fallback en] [--format json]\n\n  --format json   program JSON for createFoarRuntime (default)\n  --format js     ES module exporting {{ program, mount }}\n  --runtime       import path of foar-runtime.js in the JS module (default ./foar-runtime.js)\n  -               read source from stdin\n  --project       with -: stdin is a project {{\"entry\", \"files\": {{path: source}}}}\n\nA file is compiled together with the files it imports (import \"./components/Row\").",
         foar::version()
     );
     exit(2)
@@ -47,6 +48,7 @@ fn main() {
     let mut out = None;
     let mut format = "json".to_string();
     let mut pretty = false;
+    let mut project = false;
     let mut runtime = "./foar-runtime.js".to_string();
     let mut i = 1;
     while i < args.len() {
@@ -64,6 +66,7 @@ fn main() {
                 runtime = args.get(i).cloned().unwrap_or_default();
             }
             "--pretty" | "-p" => pretty = true,
+            "--project" => project = true,
             a if input.is_none() => input = Some(a.to_string()),
             a => {
                 eprintln!("foar: unexpected argument {}", a);
@@ -73,23 +76,46 @@ fn main() {
         i += 1;
     }
     let input = input.unwrap_or_else(|| usage());
-    let src = read_source(&input);
+    if project {
+        // `foar build - --project`: stdin is {"entry", "files": {path: source}};
+        // prints the program JSON (with `files`) or {"error": ...}.
+        let out = foar::project::compile_project_json(&read_source(&input));
+        println!("{}", out);
+        exit(if out.starts_with("{\"error\"") { 1 } else { 0 })
+    }
+    // A file is compiled with everything it imports (see src/project.rs);
+    // stdin is a single self-contained source.
+    let compiled = if input == "-" {
+        foar::compile(&read_source(&input))
+    } else {
+        let entry = std::path::Path::new(&input);
+        let root = entry.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let name = entry.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if !entry.is_file() {
+            eprintln!("foar: cannot read {}", input);
+            exit(1)
+        }
+        foar::project::load(&name, &mut |p| std::fs::read_to_string(root.join(p)).ok()).and_then(|files| foar::project::compile_files(&files)).map_err(|mut e| {
+            if let Some(f) = &e.file {
+                e.file = Some(root.join(f).to_string_lossy().trim_start_matches("./").to_string());
+            }
+            e
+        })
+    };
+    let show = |e: &foar::CompileError| if e.file.is_some() { e.to_string() } else { format!("{}:{}", input, e) };
 
     match cmd {
-        "check" => match foar::compile(&src) {
+        "check" => match compiled {
             Ok(p) => println!("✓ {}: {} view(s), {} data type(s), {} bytes of CSS", input, p.views.len(), p.data_decls.len(), p.css.len()),
             Err(e) => {
-                eprintln!("{}:{}", input, e);
+                eprintln!("{}", show(&e));
                 exit(1)
             }
         },
         "build" => {
             let result = match format.as_str() {
-                "json" => match foar::compile(&src) {
-                    Ok(p) => Ok(if pretty { serde_json::to_string_pretty(&p).unwrap() } else { serde_json::to_string(&p).unwrap() }),
-                    Err(e) => Err(e),
-                },
-                "js" => foar::compile_to_js_module(&src, &runtime),
+                "json" => compiled.map(|p| if pretty { serde_json::to_string_pretty(&p).unwrap() } else { serde_json::to_string(&p).unwrap() }),
+                "js" => compiled.map(|p| foar::program_to_js_module(&p, &runtime)),
                 other => {
                     eprintln!("foar: unknown format {}", other);
                     exit(2)
@@ -115,7 +141,7 @@ fn main() {
                         // machine-readable for tooling (dev server, editors)
                         println!("{}", serde_json::json!({ "error": e }));
                     }
-                    eprintln!("{}:{}", input, e);
+                    eprintln!("{}", show(&e));
                     exit(1)
                 }
             }

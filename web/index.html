@@ -23,6 +23,9 @@
           <optgroup label="Apps">
             <option value="src:http://localhost:4400/app.foar">Notes on FOAR (live app · localhost:4400)</option>
           </optgroup>
+          <optgroup label="Your projects">
+            <option value="scratch">Scratch (multi-file, kept in this browser)</option>
+          </optgroup>
           <optgroup label="Examples">
             <option value="TodoApp.foar">TodoApp.foar (Sub-views &amp; Item State Machines)</option>
             <option value="Counter.foar">Counter.foar (Async Counter State Machine)</option>
@@ -42,30 +45,21 @@
   </header>
 
   <main class="workspace">
-    <!-- Left Pane: .foar Code Editor -->
-    <section class="pane editor-pane">
+    <!-- Left Pane: project explorer + editor -->
+    <section class="pane editor-pane" aria-label="Source">
       <div class="pane-header">
         <div class="pane-title">
-          <span class="file-icon">📄</span>
-          <span id="current-filename">examples/TodoApp.foar</span>
+          <span class="file-icon" aria-hidden="true">📁</span>
+          <span id="project-title">Project</span>
         </div>
-        <div id="compiler-status" class="status-pill status-ok">
+        <div id="compiler-status" class="status-pill status-ok" role="status">
           ● Compiled
         </div>
       </div>
 
-      <div class="editor-container">
-        <div id="line-numbers" class="line-numbers">1</div>
-        <textarea
-          id="code-editor"
-          class="code-editor"
-          spellcheck="false"
-          autocomplete="off"
-          autocapitalize="off"
-        ></textarea>
-      </div>
+      <div id="workspace-root" class="ide"></div>
 
-      <div id="error-banner" class="error-banner hidden"></div>
+      <div id="error-banner" class="error-banner hidden" role="alert"></div>
     </section>
 
     <!-- Right Pane: Live DOM Preview + State Machine Visualizer & Compiler Output -->

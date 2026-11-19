@@ -40,14 +40,47 @@ and as a `wasm32` module the playground loads. The **runtime is JavaScript**
 on purpose: WebAssembly cannot touch the DOM except through JS calls, so a
 WASM runtime driving the DOM is slower, not faster.
 
+## Files and imports
+
+A program can be one file or many. The entry file's first view is the root;
+other files join the program with `import`:
+
+```foar
+// app.foar
+import "models"                        // models.foar, from the project root
+import "components/list/NoteRow"       // .foar may be left out
+import "./theme.foar"                  // ./ and ../ are relative to this file
+
+view App { ... }
+```
+
+- Views, data types and named styles are **global by name**: an import says
+  "this file is part of the program", not "bring these names into scope". A
+  component file usually imports the files it uses, so it reads on its own.
+- Each file is loaded once (shared and circular imports are fine). Order: the
+  entry, then imports depth-first.
+- Declaring a view or data type twice is an error, and so is using a view that
+  no file in the program declares (usually a missing import).
+- Errors name the file: `components/Toast.foar:40:1: Expected '}'`.
+- The stylesheet is ordered by kind, not by file (`theme`, named styles,
+  `@keyframes`, `css { }`, then view styles), so moving code between files never
+  changes the cascade.
+
+`foar build app.foar` / `foar check app.foar` follow imports from the file's
+folder. In the browser, `compileFoarProject({ entry, files })` (WASM export
+`f4_compile_project`, or `foar build - --project` with that JSON on stdin)
+compiles a project held in memory and also returns `files`: each file in the
+program and what it imports.
+
 ## Layout
 
 | Path | What |
 |---|---|
-| `src/` | The Rust compiler: `lexer.rs`, `parser.rs`, `css.rs`, `transpile.rs`, `ast.rs`, CLI `main.rs`, WASM ABI `wasm.rs` |
+| `src/` | The Rust compiler: `lexer.rs`, `parser.rs`, `project.rs` (imports), `css.rs`, `transpile.rs`, `ast.rs`, `i18n.rs`, CLI `main.rs`, WASM ABI `wasm.rs` |
 | `web/foar-runtime.js` | The reactive DOM runtime (`createFoarRuntime`) |
 | `web/foar-compiler.js` | Browser front-end: runs the Rust compiler as WASM (or via the dev server), plus playground helpers |
-| `web/playground.js`, `web/index.html` | Browser playground: editor, live preview, state-machine inspector |
+| `web/playground.js`, `web/index.html` | Browser playground: live preview, state-machine inspector |
+| `web/workspace.js`, `web/foar-highlight.js` | Playground workspace: file tree, tabs, highlighted editor, saving |
 | `server.js` | Zero-dependency static server for the playground (`pnpm dev`) |
 | `test/` | Runtime test suite (`pnpm test`, runs in happy-dom) |
 | `bench/` | Interaction benchmark (`pnpm bench`) |
@@ -265,16 +298,46 @@ foar build examples/TodoApp.foar --format js -o app.js
 foar i18n locales app.foar host/*.js                 # check translation catalogs
 ```
 
-Open any app's source in the playground with
-`http://localhost:3000/?src=<url of the .foar file>`. It is compiled there
-(AST, compiled JS, state machines); an app that needs its own host functions
-is shown running from its origin (or `&app=<url>`), and if that app posts its
-runtime events to a localhost parent (as notes-on-foar does), the state
-machine and store inspector follow it live.
+### Playground
 
-The Example menu lists Notes on FOAR (`localhost:4400`) under Apps, and a plain
-visit to the playground opens it when its dev server is running; otherwise the
-bundled examples load (`?example=Counter.foar` picks one).
+`http://localhost:3000` is a small IDE for FOAR projects:
+
+- **Files**: a tree of the project's `.foar` files. New file / new folder (the
+  buttons, or right-click), rename with F2, move by dragging onto a folder,
+  duplicate, delete (asks first). A new file starts as a component named after
+  it and is imported from the entry file; renaming or moving a file rewrites the
+  imports that point at it; deleting one removes them. Files that nothing
+  imports are shown dimmed ("not imported").
+- **Editor**: syntax highlighting, a tab per open file (each keeps its own
+  undo), auto-indent, Tab / Shift+Tab, Ctrl+/ to comment, Ctrl+Shift+D to
+  duplicate lines, Ctrl/Cmd+click a view name or an import to open its file.
+  Compile errors show in the tree, the tab and the gutter; click the error to
+  jump to it. Clicking a view in the inspector opens its file too.
+- **Saving**: examples and the Scratch project are kept in this browser
+  (Revert restores an example). A running app opened with
+  `?src=<url of its .foar entry>` is saved to disk with **Ctrl+S** if its dev
+  server offers the project API below; the app then rebuilds and reloads, and
+  files changed on disk by another editor flow into the playground.
+
+The project API a dev server can offer (notes-on-foar's `dev.mjs` does):
+
+| Request | |
+|---|---|
+| `GET /__foar/project` | `{ entry, name, files: { path: source } }` |
+| `PUT /__foar/files?path=…` | write a `.foar` file (body: source) |
+| `DELETE /__foar/files?path=…` | delete a `.foar` file |
+| `GET /__dev` | server-sent events; `reload` after a rebuild |
+
+It should answer CORS only for the playground's origin, accept writes only
+with a localhost `Host` header (DNS rebinding), and only for `.foar` paths
+inside the project. Without it, the playground shows the single file and keeps
+edits in the browser.
+
+An app that needs its own host functions is shown running from its origin (or
+`&app=<url>`); if it posts its runtime events to a localhost parent (as
+notes-on-foar does), the inspector follows it live. The Example menu lists
+Notes on FOAR under Apps, and a plain visit opens it when its dev server is
+running (`?example=Counter.foar` or `?example=scratch` pick another project).
 
 Without `web/foar.wasm` the playground compiles through the dev server, which
 runs the native `foar` binary. Both paths use the same Rust compiler.

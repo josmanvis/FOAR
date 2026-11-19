@@ -10,11 +10,20 @@ pub struct CompileError {
     pub message: String,
     pub line: usize,
     pub col: usize,
+    /// Project-relative path of the file the error is in (multi-file builds).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Byte offset into the compiled source (remapped to `file`/`line`/`col`).
+    #[serde(skip)]
+    pub offset: usize,
 }
 
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}: {}", self.line, self.col, self.message)
+        match &self.file {
+            Some(file) => write!(f, "{}:{}:{}: {}", file, self.line, self.col, self.message),
+            None => write!(f, "{}:{}: {}", self.line, self.col, self.message),
+        }
     }
 }
 
@@ -22,7 +31,7 @@ fn err_at(src: &str, at: usize, message: String) -> CompileError {
     let at = at.min(src.len());
     let line = src[..at].matches('\n').count() + 1;
     let col = at - src[..at].rfind('\n').map(|i| i + 1).unwrap_or(0) + 1;
-    CompileError { message, line, col }
+    CompileError { message, line, col, file: None, offset: at }
 }
 
 type PResult<T> = Result<T, CompileError>;
@@ -36,12 +45,19 @@ pub struct Parser<'s> {
     cls_counter: usize,
     /// named style -> the styles it `@use`s (expanded onto elements after parsing)
     style_uses: std::collections::HashMap<String, Vec<String>>,
+    /// declared view / data names (duplicates are errors: views are global by name)
+    declared: std::collections::HashSet<String>,
+    /// every element tag used, with its position (checked against views + built-ins)
+    tag_refs: Vec<(String, usize)>,
 }
+
+/// Elements the runtime provides (web/foar-runtime.js mountNode/mountElement).
+const BUILTIN_ELEMENTS: &[&str] = &["Text", "Button", "Input", "TextArea", "Checkbox", "RichText", "Image", "Spinner", "Row", "Column", "List", "If"];
 
 impl<'s> Parser<'s> {
     pub fn new(src: &'s str) -> PResult<Self> {
         let toks = lex(src).map_err(|at| err_at(src, at, "Unexpected character".to_string()))?;
-        Ok(Self { src, toks, pos: 0, hoisted: Hoisted::default(), cur_view: None, cls_counter: 0, style_uses: Default::default() })
+        Ok(Self { src, toks, pos: 0, hoisted: Hoisted::default(), cur_view: None, cls_counter: 0, style_uses: Default::default(), declared: Default::default(), tag_refs: Vec::new() })
     }
 
     // ---- token helpers ----------------------------------------------------
@@ -138,23 +154,35 @@ impl<'s> Parser<'s> {
     pub fn parse_program(mut self) -> PResult<Program> {
         let mut data_decls = Vec::new();
         let mut views = Vec::new();
+        // CSS is emitted by kind, not in file order, so splitting a program into
+        // files never changes the cascade: theme, named styles, keyframes,
+        // `css { }` blocks, then view/element styles (which use doubled classes).
+        let mut chunks: Vec<(u8, std::ops::Range<usize>)> = Vec::new();
         while !self.at_end() {
-            if self.is("data") {
-                data_decls.push(self.parse_data()?);
-            } else if self.is("view") {
-                views.push(self.parse_view()?);
-            } else if self.is("theme") {
-                self.parse_theme()?;
-            } else if self.is("style") && self.peek_at(1).kind == Kind::Ident && self.is_at(2, "{") {
-                self.parse_named_style()?;
-            } else if self.is("css") && self.is_at(1, "{") {
-                self.parse_raw_css()?;
-            } else if self.is("@keyframes") {
-                self.advance();
-                self.parse_keyframes_body()?;
-            } else {
-                return self.err(format!("Unexpected top-level token '{}'", self.describe()));
+            let first = self.hoisted.rules.len();
+            let kind = match self.text(self.peek()) {
+                "theme" => 0,
+                "style" => 1,
+                "@keyframes" => 2,
+                "css" => 3,
+                _ => 4,
+            };
+            self.parse_top_level(&mut data_decls, &mut views)?;
+            chunks.push((kind, first..self.hoisted.rules.len()));
+        }
+        let mut css_rules = Vec::with_capacity(self.hoisted.rules.len());
+        for k in 0..=4 {
+            for (_, r) in chunks.iter().filter(|(c, _)| *c == k) {
+                css_rules.extend_from_slice(&self.hoisted.rules[r.clone()]);
             }
+        }
+        self.hoisted.rules = css_rules;
+        // A tag that is neither a built-in element nor a declared view: usually a
+        // missing import or a renamed view.
+        let view_names: std::collections::HashSet<&str> = views.iter().map(|v| v.name.as_str()).collect();
+        if let Some((tag, at)) = self.tag_refs.iter().find(|(t, _)| !view_names.contains(t.as_str()) && !BUILTIN_ELEMENTS.contains(&t.as_str())) {
+            let hint = if tag.starts_with(|c: char| c.is_ascii_uppercase()) { " (is the file that declares it imported?)" } else { "" };
+            return Err(err_at(self.src, *at, format!("Unknown view or element '{}'{}", tag, hint)));
         }
         // `style A { @use B; }` then `.style(A)`: the element needs B's class too.
         // Done after parsing because named styles may be declared after their use.
@@ -172,6 +200,34 @@ impl<'s> Parser<'s> {
         Ok(Program { kind: "Program", data_decls, views, css: self.hoisted.css() })
     }
 
+    fn parse_top_level(&mut self, data_decls: &mut Vec<DataDecl>, views: &mut Vec<ViewDecl>) -> PResult<()> {
+        {
+            if self.is("import") && self.peek_at(1).kind == Kind::Str {
+                // `import "./components/Row.foar"`: resolved by crate::project
+                // before parsing; the imported files are part of this source.
+                self.advance();
+                self.advance();
+                self.eat(";");
+            } else if self.is("data") {
+                data_decls.push(self.parse_data()?);
+            } else if self.is("view") {
+                views.push(self.parse_view()?);
+            } else if self.is("theme") {
+                self.parse_theme()?;
+            } else if self.is("style") && self.peek_at(1).kind == Kind::Ident && self.is_at(2, "{") {
+                self.parse_named_style()?;
+            } else if self.is("css") && self.is_at(1, "{") {
+                self.parse_raw_css()?;
+            } else if self.is("@keyframes") {
+                self.advance();
+                self.parse_keyframes_body()?;
+            } else {
+                return self.err(format!("Unexpected top-level token '{}'", self.describe()));
+            }
+        }
+        Ok(())
+    }
+
     fn parse_type(&mut self) -> PResult<String> {
         let base = self.expect_ident()?;
         if self.eat("<") {
@@ -182,9 +238,19 @@ impl<'s> Parser<'s> {
         Ok(base)
     }
 
+    /// A top-level name (view or data type); each may be declared once per program.
+    fn declare(&mut self, what: &str) -> PResult<String> {
+        let at = self.peek().start;
+        let name = self.expect_ident()?;
+        if !self.declared.insert(format!("{}:{}", what, name)) {
+            return Err(err_at(self.src, at, format!("{} '{}' is already declared (views and data types are shared by every file of a program)", what, name)));
+        }
+        Ok(name)
+    }
+
     fn parse_data(&mut self) -> PResult<DataDecl> {
         self.expect("data")?;
-        let name = self.expect_ident()?;
+        let name = self.declare("Data type")?;
         self.expect("{")?;
         let mut fields = Vec::new();
         while !self.at_end() && !self.is("}") {
@@ -201,7 +267,7 @@ impl<'s> Parser<'s> {
     // ---- views ------------------------------------------------------------
     fn parse_view(&mut self) -> PResult<ViewDecl> {
         self.expect("view")?;
-        let name = self.expect_ident()?;
+        let name = self.declare("View")?;
         self.cur_view = Some(name.clone());
         self.cls_counter = 0;
         let mut params = Vec::new();
@@ -309,7 +375,9 @@ impl<'s> Parser<'s> {
     }
 
     fn parse_element(&mut self) -> PResult<UiElement> {
+        let at = self.peek().start;
         let tag = self.expect_ident()?;
+        self.tag_refs.push((tag.clone(), at));
         let mut el = UiElement {
             kind: "UIElement",
             tag: tag.clone(),

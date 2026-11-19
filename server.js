@@ -30,7 +30,8 @@ function compileNative(req, res) {
       res.end(JSON.stringify({ error: { message: 'Rust compiler not built: run `cargo build --release`', line: 0, col: 0 } }));
       return;
     }
-    const child = spawn(FOAR_BIN, ['build', '-']);
+    const project = String(req.headers['content-type'] || '').startsWith('application/json');
+    const child = spawn(FOAR_BIN, ['build', '-', ...(project ? ['--project'] : [])]);
     let out = '';
     child.stdout.on('data', (d) => (out += d));
     child.on('close', () => {

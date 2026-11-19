@@ -12,12 +12,8 @@ pub extern "C" fn f4_free(ptr: *mut u8, len: usize) {
     unsafe { dealloc(ptr, Layout::from_size_align_unchecked(len.max(1), 1)) }
 }
 
-/// Compiles UTF-8 source at (ptr,len). Returns a buffer `[u32 len LE][json]`
-/// that the caller releases with `f4_free(ptr, len + 4)`.
-#[no_mangle]
-pub extern "C" fn f4_compile(ptr: *const u8, len: usize) -> *mut u8 {
-    let src = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) };
-    let json = crate::compile_to_json(src, false).into_bytes();
+fn into_buffer(json: String) -> *mut u8 {
+    let json = json.into_bytes();
     let n = json.len();
     let out = f4_alloc(n + 4);
     unsafe {
@@ -25,4 +21,20 @@ pub extern "C" fn f4_compile(ptr: *const u8, len: usize) -> *mut u8 {
         std::ptr::copy_nonoverlapping(json.as_ptr(), out.add(4), n);
     }
     out
+}
+
+/// Compiles UTF-8 source at (ptr,len). Returns a buffer `[u32 len LE][json]`
+/// that the caller releases with `f4_free(ptr, len + 4)`.
+#[no_mangle]
+pub extern "C" fn f4_compile(ptr: *const u8, len: usize) -> *mut u8 {
+    let src = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) };
+    into_buffer(crate::compile_to_json(src, false))
+}
+
+/// Compiles a multi-file project given as JSON `{"entry", "files": {path: source}}`
+/// (see crate::project). Same buffer protocol as `f4_compile`.
+#[no_mangle]
+pub extern "C" fn f4_compile_project(ptr: *const u8, len: usize) -> *mut u8 {
+    let input = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) };
+    into_buffer(crate::project::compile_project_json(input))
 }

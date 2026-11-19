@@ -1,10 +1,9 @@
-import { compileFoar, extractStateMachines, generateReadableJS, compilerBackend } from './foar-compiler.js';
+import { compileFoarProject, extractStateMachines, generateReadableJS, compilerBackend } from './foar-compiler.js';
+import { createWorkspace, localBackend, remoteBackend } from './workspace.js';
 import { createFoarRuntime } from './foar-runtime.js';
 
 const exampleSelect = document.getElementById('example-select');
-const currentFilename = document.getElementById('current-filename');
-const codeEditor = document.getElementById('code-editor');
-const lineNumbers = document.getElementById('line-numbers');
+const projectTitle = document.getElementById('project-title');
 const compilerStatus = document.getElementById('compiler-status');
 const errorBanner = document.getElementById('error-banner');
 const foarMount = document.getElementById('f4-mount');
@@ -28,16 +27,6 @@ const params = new URLSearchParams(location.search);
 const remoteSrc = params.get('src');
 const previewUrl = remoteSrc ? params.get('app') || new URL(remoteSrc, location.href).origin + '/' : null;
 
-function updateLineNumbers() {
-  const count = codeEditor.value.split('\n').length;
-  const nums = [];
-  for (let i = 1; i <= count; i++) nums.push(i);
-  lineNumbers.textContent = nums.join('\n');
-}
-
-codeEditor.addEventListener('scroll', () => {
-  lineNumbers.scrollTop = codeEditor.scrollTop;
-});
 
 // Data (store values, effect args, payloads) is escaped before it goes into
 // innerHTML: with ?src= it comes from a real app and may contain HTML.
@@ -89,9 +78,10 @@ function renderStateMachinesAndStores(snapshot) {
     const header = document.createElement('div');
       header.className = 'machine-card-header';
     header.innerHTML = `
-      <span class="machine-view-name">view ${machine.viewName}</span>
+      <button type="button" class="machine-view-name" title="Open the file that declares ${esc(machine.viewName)}">view ${esc(machine.viewName)}</button>
       <span style="font-size:11px;color:#8b949e;">${matchingInstances.length} mounted instance${matchingInstances.length === 1 ? '' : 's'}</span>
     `;
+    header.querySelector('.machine-view-name').addEventListener('click', () => ws.revealDeclaration(machine.viewName));
     card.appendChild(header);
 
     const statesRow = document.createElement('div');
@@ -200,16 +190,18 @@ const inspectorCallbacks = {
 };
 
 let compileSeq = 0;
-async function compileAndMount(source) {
+async function compileAndMount(project) {
   const seq = ++compileSeq;
   const t0 = performance.now();
   try {
-    const ast = await compileFoar(source);
+    const ast = await compileFoarProject(project);
     if (seq !== compileSeq) return; // a newer edit superseded this compile
     const elapsed = (performance.now() - t0).toFixed(2);
     const backend = compilerBackend === 'wasm' ? 'Rust→WASM' : 'Rust native';
     compilerStatus.className = 'status-pill status-ok';
     errorBanner.classList.add('hidden');
+    ws.setCompileResult({ files: ast.files, error: null });
+    const fileCount = ast.files?.length ?? 1;
 
     currentMachines = extractStateMachines(ast);
     compiledJsOutput.textContent = generateReadableJS(ast);
@@ -230,7 +222,8 @@ async function compileAndMount(source) {
         foarMount.appendChild(frame);
         foarMount.classList.add('remote');
       }
-      compilerStatus.textContent = `● ${backend} ${elapsed}ms · ${ast.views.length} views · preview: ${previewUrl}`;
+      compilerStatus.textContent = `● ${backend} ${elapsed}ms · ${fileCount} files · ${ast.views.length} views`;
+      compilerStatus.title = `Preview: ${previewUrl}`;
       renderStateMachinesAndStores(lastRemoteSnapshot);
       return;
     }
@@ -238,30 +231,122 @@ async function compileAndMount(source) {
     const tMount = performance.now();
     currentRuntime = createFoarRuntime(ast, foarMount, { badges: true, ...inspectorCallbacks });
     const mountMs = (performance.now() - tMount).toFixed(2);
-    compilerStatus.textContent = `● ${backend} ${elapsed}ms · mounted ${mountMs}ms`;
+    compilerStatus.textContent = `● ${backend} ${elapsed}ms · ${fileCount} file${fileCount === 1 ? '' : 's'} · mounted ${mountMs}ms`;
   } catch (err) {
     if (seq !== compileSeq) return;
-    compilerStatus.textContent = '✖ Syntax Error';
+    compilerStatus.textContent = '✖ Compile error';
     compilerStatus.className = 'status-pill status-err';
-    errorBanner.textContent = err.message;
+    const where = err.file ? { file: err.file, line: err.line, col: err.col, message: err.reason ?? err.message } : err.line ? { file: ws.entry, line: err.line, col: err.col, message: err.reason ?? err.message } : null;
+    ws.setCompileResult({ error: where });
+    errorBanner.textContent = '';
+    if (where) {
+      const link = document.createElement('button');
+      link.type = 'button';
+      link.className = 'error-link';
+      link.textContent = `${where.file}:${where.line}:${where.col}`;
+      link.title = 'Go to the error';
+      link.addEventListener('click', () => ws.openFile(where.file, { line: where.line, col: where.col }));
+      errorBanner.append(link, ` ${where.message}`);
+    } else errorBanner.textContent = err.message;
     errorBanner.classList.remove('hidden');
   }
 }
 
-async function loadExample(filename) {
+// ---- projects ---------------------------------------------------------------------------
+// A scratch project to try multiple files without a dev server (kept in this browser).
+const SCRATCH = {
+  entry: 'app.foar',
+  files: {
+    'app.foar': `// Scratch project — kept in this browser.
+// The entry file's first view is the root view; other files are imported.
+// Ctrl+click a name to jump to its file. New files: the + buttons in Files.
+import "components/Greeting"
+
+view App {
+    store count: i32 = 0;
+
+    state Ready {
+        render {
+            Column {
+                Greeting(label: "Hello from another file!")
+                Button("Clicked {count} times") -> on_click(Bump)
+            }.style({ gap: 12px; padding: 24px; })
+        }
+        effect Bump() { count += 1; }
+    }
+}
+`,
+    'components/Greeting.foar': `// Greeting — a component in its own file.
+
+view Greeting(label: String) {
+    state Idle {
+        render {
+            Text(label).style({
+                font-size: 22px;
+                font-weight: 700;
+                color: #4f46e5;
+            })
+        }
+    }
+}
+`,
+  },
+};
+
+const ws = createWorkspace(document.getElementById('workspace-root'), {
+  onChange(project) {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => compileAndMount(project), 180);
+  },
+});
+
+async function openProject(backend, info) {
+  eventLog.innerHTML = '';
+  projectTitle.textContent = info.name;
   try {
-    const res = await fetch(`/examples/${filename}`);
-    if (!res.ok) throw new Error(`Failed to fetch ${filename}`);
-    const source = await res.text();
-    currentFilename.textContent = `examples/${filename}`;
-    codeEditor.value = source;
-    updateLineNumbers();
-    eventLog.innerHTML = '';
-    await compileAndMount(source);
-    appendLog('info', `<span style="color:#8b949e">Loaded examples/${filename}</span>`);
+    await ws.load(backend, info);
+    appendLog('info', `<span style="color:#8b949e">Opened ${esc(info.name)} · ${esc(backend.kind === 'remote' ? `Ctrl+S saves to ${backend.label}` : 'edits are kept in this browser')}</span>`);
   } catch (err) {
-    console.error(err);
+    compilerStatus.textContent = '✖ Could not open project';
+    compilerStatus.className = 'status-pill status-err';
+    errorBanner.textContent = `Could not open ${info.name}: ${err.message}`;
+    errorBanner.classList.remove('hidden');
   }
+}
+
+function openScratch() {
+  return openProject(localBackend('scratch', SCRATCH), { name: 'Scratch', id: 'scratch', original: SCRATCH });
+}
+
+async function loadExample(filename) {
+  const res = await fetch(`/examples/${filename}`);
+  if (!res.ok) throw new Error(`Failed to fetch ${filename}`);
+  const original = { entry: filename, files: { [filename]: await res.text() } };
+  await openProject(localBackend(`example:${filename}`, original), { name: filename.replace(/\.foar$/, ''), id: `example:${filename}`, original });
+}
+
+// A running app: its dev server serves the whole project and saves edits
+// (GET /__foar/project, PUT/DELETE /__foar/files). Without that API, only the
+// one .foar file is shown, and edits stay in this browser.
+async function loadRemote(url) {
+  const base = `${new URL(url).origin}/`;
+  const remote = remoteBackend(base);
+  let p = null;
+  try {
+    p = await remote.load();
+  } catch {}
+  if (p) return openProject(remote, { name: p.name || new URL(url).host, id: `remote:${base}` });
+  const res = await fetch(url).catch(() => null);
+  if (!res?.ok) {
+    compilerStatus.textContent = '✖ Could not load source';
+    compilerStatus.className = 'status-pill status-err';
+    errorBanner.textContent = `Could not load ${url}`;
+    errorBanner.classList.remove('hidden');
+    return;
+  }
+  const name = url.split('/').pop();
+  const original = { entry: name, files: { [name]: await res.text() } };
+  await openProject(localBackend(`remote-file:${url}`, original), { name: new URL(url).host, id: `remote-file:${url}`, original });
 }
 
 // "src:<url>" options open a running app's source (remote mode); the others are
@@ -275,17 +360,12 @@ exampleSelect.addEventListener('change', () => {
   } else if (remoteSrc) {
     location.search = `?example=${encodeURIComponent(v)}`; // leave remote mode
   } else {
-    loadExample(v);
+    history.replaceState(null, '', `?example=${encodeURIComponent(v)}`);
+    if (v === 'scratch') openScratch();
+    else loadExample(v);
   }
 });
 
-codeEditor.addEventListener('input', () => {
-  updateLineNumbers();
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
-    compileAndMount(codeEditor.value);
-  }, 180);
-});
 
 toggleBadges.addEventListener('change', () => {
   foarMount.classList.toggle('show-badges', toggleBadges.checked);
@@ -293,7 +373,7 @@ toggleBadges.addEventListener('change', () => {
 
 btnReset.addEventListener('click', async () => {
   eventLog.innerHTML = '';
-  await compileAndMount(codeEditor.value);
+  await compileAndMount(ws.project());
   appendLog('info', `<span style="color:#8b949e">↺ Reset all view state machines &amp; stores</span>`);
 });
 
@@ -325,25 +405,6 @@ if (previewUrl) {
   });
 }
 
-async function loadRemote(url) {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    const source = await res.text();
-    currentFilename.textContent = url;
-    codeEditor.value = source;
-    updateLineNumbers();
-    eventLog.innerHTML = '';
-    await compileAndMount(source);
-    appendLog('info', `<span style="color:#8b949e">Loaded ${url} · live app on the right; edits here are compiled and checked, not saved</span>`);
-  } catch (err) {
-    compilerStatus.textContent = '✖ Could not load source';
-    compilerStatus.className = 'status-pill status-err';
-    errorBanner.textContent = `Could not load ${url}: ${err.message}`;
-    errorBanner.classList.remove('hidden');
-  }
-}
-
 // Initial boot
 if (remoteSrc) {
   const listed = [...exampleSelect.options].find((o) => o.value === `src:${remoteSrc}`);
@@ -359,8 +420,11 @@ if (remoteSrc) {
   loadRemote(remoteSrc);
 } else {
   const example = params.get('example');
-  const bundled = [...exampleSelect.options].filter((o) => !o.value.startsWith('src:')).map((o) => o.value);
-  if (example && bundled.includes(example)) {
+  const bundled = [...exampleSelect.options].filter((o) => o.value.endsWith('.foar') && !o.value.startsWith('src:')).map((o) => o.value);
+  if (example === 'scratch') {
+    exampleSelect.value = 'scratch';
+    openScratch();
+  } else if (example && bundled.includes(example)) {
     exampleSelect.value = example;
     loadExample(example);
   } else {

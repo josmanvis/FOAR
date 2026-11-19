@@ -13,11 +13,11 @@ async function loadWasm(url) {
   return instance.exports;
 }
 
-function compileWithWasm(x, source) {
+function compileWithWasm(x, source, fn = 'f4_compile') {
   const bytes = new TextEncoder().encode(source);
   const ptr = x.f4_alloc(bytes.length);
   new Uint8Array(x.memory.buffer, ptr, bytes.length).set(bytes);
-  const out = x.f4_compile(ptr, bytes.length);
+  const out = x[fn](ptr, bytes.length);
   x.f4_free(ptr, bytes.length);
   const len = new DataView(x.memory.buffer).getUint32(out, true);
   const json = new TextDecoder().decode(new Uint8Array(x.memory.buffer, out + 4, len));
@@ -49,6 +49,34 @@ export async function compileFoar(source, { wasmUrl = '/foar.wasm', apiUrl = '/a
     const e = new SyntaxError(`${result.error.message} (line ${result.error.line}:${result.error.col})`);
     e.line = result.error.line;
     e.col = result.error.col;
+    throw e;
+  }
+  return result;
+}
+
+/**
+ * Compiles a multi-file project `{ entry, files: { path: source } }` (imports
+ * resolved as in src/project.rs). Resolves to the program plus `files`: the
+ * files in the program and what each imports. Compile errors reject with a
+ * SyntaxError carrying `file`, `line`, `col`.
+ */
+export async function compileFoarProject(project, { wasmUrl = '/foar.wasm', apiUrl = '/api/compile' } = {}) {
+  if (!wasmPromise) wasmPromise = loadWasm(wasmUrl).catch(() => null);
+  const wasm = await wasmPromise;
+  const input = JSON.stringify({ entry: project.entry, files: project.files });
+  let result;
+  if (wasm?.f4_compile_project) {
+    compilerBackend = 'wasm';
+    result = compileWithWasm(wasm, input, 'f4_compile_project');
+  } else {
+    compilerBackend = 'native';
+    const res = await fetch(apiUrl, { method: 'POST', body: input, headers: { 'Content-Type': 'application/json' } });
+    result = await res.json();
+  }
+  if (result.error) {
+    const { message, file, line, col } = result.error;
+    const e = new SyntaxError(file ? `${file}:${line}:${col}: ${message}` : `${message} (line ${line}:${col})`);
+    Object.assign(e, { file, line, col, reason: message });
     throw e;
   }
   return result;
