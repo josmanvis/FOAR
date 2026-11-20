@@ -4,6 +4,16 @@ All notable changes to FOAR are documented in this file.
 
 ## Unreleased
 
+## [0.3.1] — 2026-11-19
+
+### Language & Runtime
+- **Custom `data-*` attributes**: every element, `List` container, and sub-view call accepts `data: { test_id: "save", row_index: i }` (`snake_case` keys become `data-kebab-case`; `null` or `false` removes the attribute) as well as direct `data_<name>: value` shorthands (`data_testid: "save-btn"` → `data-testid="save-btn"`), on both client DOM and zero-DOM SSR (`renderToString`).
+- **Node handle primitive (`Host`) & media/graphics elements**: built-in `Host(name: "chart") { … }` with `callbacks.onMount(el, info)`, `callbacks.onUnmount(el, info)`, and `app.getHost(name)` (firing `onMount` only after `el` is connected in the live DOM), plus native `Video`, `Canvas`, and `Svg` elements.
+- **Ahead-of-time CSP-safe JS modules (`foar build --format js`)**: precompiles all render expressions, initializers, effects, and pure `fn` declarations into static module functions (`attachPrecompiled`) so production builds execute with zero `new Function()` calls under `Content-Security-Policy: script-src 'self'`.
+- **Dirty-subtree skipping & `List` `moveBefore()`**: caches expression dependency sets (`depsCache`) and sub-view prop evaluators (`subViewPropCache`), skips unchanged sibling subtrees and unchanged `List` rows/sub-views in $O(1)$, and uses `el.moveBefore()` where available when reordering connected list rows.
+- **External store pushes (`app.setContext`)**: `app.setContext(name, patchOrUpdaterFn)` atomically updates writable context stores, recomputes derived `let`s across contexts, batches DOM updates, and returns the updated context snapshot.
+- **Installer resilience (`install.sh` / `install.ps1`)**: 3-tier latest-release tag lookup (HTTP redirect → GitHub Releases API → embedded release fallback) plus Apple Silicon ad-hoc codesign refresh on macOS.
+
 ## [0.3.0] — 2026-11-19
 
 ### Install & CLI

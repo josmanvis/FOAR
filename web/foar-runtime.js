@@ -1643,21 +1643,29 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const childDecl = viewMap.get(node.tag);
     const vn = inst.meta.varNames;
     let propFns;
+    let hostAttrFns;
     const cached = subViewPropCache.get(node);
     const localKey = localNames.join(',');
     if (cached && cached.localKey === localKey) {
       propFns = cached.propFns;
+      hostAttrFns = cached.hostAttrFns;
     } else {
       propFns = [];
+      hostAttrFns = [];
+      const paramSet = new Set(childDecl.params.map((p) => p.name));
       node.args.forEach((expr, i) => {
         const p = childDecl.params[i];
         if (p) propFns.push({ name: p.name, fn: compile(expr, vn, localNames), expr, deps: exprDeps(expr) });
       });
       for (const [name, expr] of Object.entries(node.namedArgs)) {
         if (name === 'slot') continue;
+        if (!paramSet.has(name) && (name === 'data' || name.startsWith('data_'))) {
+          hostAttrFns.push({ name, fn: compile(expr, vn, localNames), expr, deps: exprDeps(expr) });
+          continue;
+        }
         propFns.push({ name, fn: compile(expr, vn, localNames), expr, deps: exprDeps(expr) });
       }
-      subViewPropCache.set(node, { localKey, propFns });
+      subViewPropCache.set(node, { localKey, propFns, hostAttrFns });
     }
     const props = {};
     for (let i = 0; i < propFns.length; i++) {
@@ -1674,10 +1682,28 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       : null;
     const child = createInstance(`${inst.key}/${path}`, childDecl, props, emitter, inst, slotCtx);
     const el = mountInstance(child);
+    let prevHostDataKeys = [];
+    const applyHostAttrs = (changes) => {
+      for (let i = 0; i < hostAttrFns.length; i++) {
+        const h = hostAttrFns[i];
+        if (changes && !needsUpdate(h.deps, changes)) continue;
+        const v = safeEval(h.fn, inst.vars, locals, h.expr);
+        if (h.name === 'data') {
+          const keys = v && typeof v === 'object' ? Object.keys(v) : [];
+          for (const k of prevHostDataKeys) if (!keys.includes(k)) el.removeAttribute(`data-${k.replace(/_/g, '-')}`);
+          for (const k of keys) setAttr(el, `data-${k.replace(/_/g, '-')}`, v[k]);
+          prevHostDataKeys = keys;
+        } else {
+          setAttr(el, `data-${h.name.slice(5).replace(/_/g, '-')}`, v);
+        }
+      }
+    };
+    if (hostAttrFns.length) applyHostAttrs(null);
 
     return {
       el,
       update(changes) {
+        if (hostAttrFns.length) applyHostAttrs(changes);
         const forceObjectProps = Boolean(changes && (changes === STAR_SET || changes.has('*')));
         for (let i = 0; i < propFns.length; i++) {
           const p = propFns[i];
@@ -2671,7 +2697,7 @@ export function renderToString(ast, options = {}) {
     return parts.length ? parts.join(';') : null;
   }
 
-  function renderView(key, decl, props, slotCtx = null) {
+  function renderView(key, decl, props, slotCtx = null, hostAttrs = []) {
     const propNames = decl.params.map((p) => p.name);
     const storeNames = decl.stores.map((s) => s.name);
     const derivedNames = (decl.derived || []).map((d) => d.name);
@@ -2695,7 +2721,7 @@ export function renderToString(ast, options = {}) {
     const inner = firstState
       ? firstState.render.map((n, i) => renderNode(n, key, decl.name, varNames, vars, viewExterns, externs, String(i), slotCtx)).join('')
       : '';
-    return `<div${attrsStr([['class', cls], ['data-view-name', decl.name], ['data-key', key], ['data-state-name', stateName], ['style', st]])}>${inner}</div>`;
+    return `<div${attrsStr([['class', cls], ['data-view-name', decl.name], ['data-key', key], ['data-state-name', stateName], ['style', st], ...hostAttrs])}>${inner}</div>`;
   }
 
   function ssrChildSlotName(ch, vn, vars, ln, locals) {
@@ -2708,19 +2734,30 @@ export function renderToString(ast, options = {}) {
   function renderNode(node, instKey, viewName, vn, vars, ln, locals, path, slotCtx) {
     if (viewMap.has(node.tag)) {
       const childDecl = viewMap.get(node.tag);
+      const paramSet = new Set(childDecl.params.map((p) => p.name));
       const props = {};
+      const hostAttrs = [];
       node.args.forEach((expr, i) => {
         const p = childDecl.params[i];
         if (p) props[p.name] = evalSafe(expr, vn, vars, ln, locals);
       });
       for (const [name, expr] of Object.entries(node.namedArgs)) {
         if (name === 'slot') continue;
+        if (!paramSet.has(name) && name === 'data') {
+          const obj = evalSafe(expr, vn, vars, ln, locals) || {};
+          for (const [k, v] of Object.entries(obj)) hostAttrs.push([`data-${k.replace(/_/g, '-')}`, v]);
+          continue;
+        }
+        if (!paramSet.has(name) && name.startsWith('data_') && name.length > 5) {
+          hostAttrs.push([`data-${name.slice(5).replace(/_/g, '-')}`, evalSafe(expr, vn, vars, ln, locals)]);
+          continue;
+        }
         props[name] = evalSafe(expr, vn, vars, ln, locals);
       }
       const nextSlot = node.children && node.children.length
         ? { nodes: node.children, instKey, viewName, vn, vars, ln, locals, path, slotCtx }
         : null;
-      return renderView(`${instKey}/${path}`, childDecl, props, nextSlot);
+      return renderView(`${instKey}/${path}`, childDecl, props, nextSlot, hostAttrs);
     }
     if (node.tag === 'Slot') {
       const nameExpr = node.namedArgs.name !== undefined ? node.namedArgs.name : node.args[0];

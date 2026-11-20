@@ -1748,7 +1748,7 @@ view App {
   app.destroy();
 });
 
-test('data-* attributes: data: { ... } object map and data_<name>: shorthand on elements and List (client + SSR)', async () => {
+test('data-* attributes: data: { ... } object map and data_<name>: shorthand on elements, List, and sub-views (client + SSR)', async () => {
   const src = `
 data Item { id: String, label: String }
 
@@ -1760,6 +1760,7 @@ view App {
     render {
       Column(data: { section_name: "main", step: step, active: active ? "yes" : null }, data_testid: "app-col") {
         Button("Next", data_action_id: "btn-{step}", data: { track_click: true }) -> on_click(Next)
+        Badge(text: "Step {step}", data: { badge_step: step }, data_testid: "step-badge")
         List(items, data: { list_kind: "primary" }, data_testid: "items-list") { item =>
           Text(item.label, data_row_id: item.id)
         }
@@ -1769,6 +1770,12 @@ view App {
       step = step + 1;
       active = false;
     }
+  }
+}
+
+view Badge(text: String) {
+  state S {
+    render { Text(text) }
   }
 }
 `;
@@ -1782,6 +1789,8 @@ view App {
   assert.ok(ssr.html.includes('data-testid="app-col"'), ssr.html);
   assert.ok(ssr.html.includes('data-action-id="btn-1"'), ssr.html);
   assert.ok(ssr.html.includes('data-track-click="true"'), ssr.html);
+  assert.ok(ssr.html.includes('data-badge-step="1"'), ssr.html);
+  assert.ok(ssr.html.includes('data-testid="step-badge"'), ssr.html);
   assert.ok(ssr.html.includes('data-list-kind="primary"'), ssr.html);
   assert.ok(ssr.html.includes('data-testid="items-list"'), ssr.html);
   assert.ok(ssr.html.includes('data-row-id="r1"'), ssr.html);
@@ -1791,6 +1800,7 @@ view App {
   const app = createFoarRuntime(ast, container, {});
   const col = container.querySelector('.f4-column');
   const btn = container.querySelector('button');
+  const badge = container.querySelector('.f4-view-Badge');
   const list = container.querySelector('.f4-list');
   const rowText = list.querySelector('.f4-text');
 
@@ -1800,6 +1810,8 @@ view App {
   assert.equal(col.getAttribute('data-testid'), 'app-col');
   assert.equal(btn.getAttribute('data-action-id'), 'btn-1');
   assert.equal(btn.getAttribute('data-track-click'), 'true');
+  assert.equal(badge.getAttribute('data-badge-step'), '1');
+  assert.equal(badge.getAttribute('data-testid'), 'step-badge');
   assert.equal(list.getAttribute('data-list-kind'), 'primary');
   assert.equal(list.getAttribute('data-testid'), 'items-list');
   assert.equal(rowText.getAttribute('data-row-id'), 'r1');
@@ -1809,6 +1821,7 @@ view App {
   assert.equal(col.getAttribute('data-step'), '2');
   assert.equal(col.hasAttribute('data-active'), false, 'null value removes data-* attribute');
   assert.equal(btn.getAttribute('data-action-id'), 'btn-2');
+  assert.equal(badge.getAttribute('data-badge-step'), '2');
   app.destroy();
 });
 

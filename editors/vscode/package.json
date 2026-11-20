@@ -2,7 +2,7 @@
   "name": "foar-language",
   "displayName": "FOAR Language Support",
   "description": "Syntax highlighting, diagnostics, completions, hover docs, and go-to-definition for the FOAR UI language via `foar lsp`.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "foar-lang",
   "license": "MIT",
   "engines": {
