@@ -21,7 +21,7 @@ set -u
 
 REPO_URL="https://github.com/josmanvis/FOAR"
 DOCS_URL="https://josmanvis.github.io/FOAR/docs/guide.html"
-DEFAULT_TAG="v0.3.3"
+DEFAULT_TAG="v0.3.4"
 
 # ---- output ------------------------------------------------------------------------
 

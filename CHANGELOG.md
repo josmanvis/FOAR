@@ -4,6 +4,16 @@ All notable changes to FOAR are documented in this file.
 
 ## Unreleased
 
+## [0.3.4] — 2026-11-19
+
+### Performance (DOM Runtime)
+- **Per-AST-node execution plans, static literal fast-paths, lazy effect helpers & Set-free `List` reconciliation (11–15% faster over v0.3.3, 28–47% faster over v0.3.1)**:
+  - `nodePlanCache` (`WeakMap`) precomputes static style classification (`sc`, `scCls`), attribute presence (`hasCommonAttrs`, `dataAttrs`), event presence (`hasEvents`), and `hasAutofocus` once per AST node, allowing elements without optional attributes or events to bypass attribute/event setup in a single check.
+  - `staticStringLiteral` detects compile-time string literals on `Text` and `Button` (`"Edit"`, `"Delete"`) and writes `el.textContent` directly on mount without reactive binding, expression compilation, or `safeEval`, while static leaf elements return a shared `{ el, deps: EMPTY_SET, update: NOOP, dispose: NOOP }` descriptor without per-node closure allocations.
+  - `inst.helpers` (`[__transition, __emit, __asyncTransition]`) is now allocated lazily inside `runEffect` only when an effect executes on an instance, eliminating 6,000 closure allocations on a 2,000-row mount.
+  - `mountList` replaces its per-reconcile `seen` `Set` and `rows` `Map` deletion scan with an integer generation stamp (`listGen` / `row.seen === gen`) and skips the DOM cursor walk entirely on pure filter/delete updates (`!mountedNewRow && !survivingReordered`).
+  - `runEffect` skips redundant pre-effect `computeDerived(inst)` calls when no local or context stores are dirty (`!inst.dirtyVars && pendingGlobalChanges.size === 0`), cutting derived evaluations in half per interaction.
+
 ## [0.3.3] — 2026-11-19
 
 ### Performance (DOM Runtime & Type Checker)

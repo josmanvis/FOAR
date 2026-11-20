@@ -211,7 +211,7 @@ test('install.sh: verifies SHA-256 checksum, installs binary, and uninstalls cle
     const triple = process.platform === 'darwin' ? `${arch}-apple-darwin` : `${arch}-unknown-linux-musl`;
     const pkgName = `foar-${triple}`;
     const pkgDir = path.join(tmp, 'pkg', pkgName);
-    const dlDir = path.join(tmp, 'releases', 'download', 'v0.3.3');
+    const dlDir = path.join(tmp, 'releases', 'download', 'v0.3.4');
     fs.mkdirSync(pkgDir, { recursive: true });
     fs.mkdirSync(dlDir, { recursive: true });
     fs.copyFileSync(BIN, path.join(pkgDir, 'foar'));
@@ -222,11 +222,11 @@ test('install.sh: verifies SHA-256 checksum, installs binary, and uninstalls cle
 
     const instRoot = path.join(tmp, 'home-foar');
     const script = path.join(ROOT, 'web/install.sh');
-    const out = cp.execFileSync('sh', [script, '--version', '0.3.3', '--dir', instRoot, '--no-modify-path'], {
+    const out = cp.execFileSync('sh', [script, '--version', '0.3.4', '--dir', instRoot, '--no-modify-path'], {
       env: { ...process.env, FOAR_DOWNLOAD_URL: `file://${path.join(tmp, 'releases')}`, NO_COLOR: '1' },
       encoding: 'utf8',
     });
-    assert.ok(out.includes('foar 0.3.3'), out);
+    assert.ok(out.includes('foar 0.3.4'), out);
     assert.ok(fs.existsSync(path.join(instRoot, 'bin', 'foar')));
 
     const uninst = cp.execFileSync('sh', [script, '--uninstall', '--dir', instRoot], {

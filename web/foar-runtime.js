@@ -68,7 +68,7 @@ const UNSET = Symbol('unset');
 const BASE_CSS = [
   '.f4-row{display:flex;flex-direction:row;gap:10px;align-items:center}',
   '.f4-column{display:flex;flex-direction:column;gap:10px;align-items:stretch}',
-  '.f4-text[data-clickable]{cursor:pointer}',
+  '.f4-text[data-clickable],.f4-text.f4-clickable{cursor:pointer}',
 ].join('\n');
 
 let runtimeCounter = 0;
@@ -108,9 +108,25 @@ const EMPTY_SET = Object.freeze(new Set());
 const EMPTY_ARRAY = Object.freeze([]);
 const STAR_SET = Object.freeze(new Set(['*']));
 const ROUTE_SET = Object.freeze(new Set(['route']));
+const NOOP = () => {};
 const IDX_STR = Array.from({ length: 64 }, (_, i) => String(i));
 const idxStr = (i) => (i < 64 ? IDX_STR[i] : String(i));
 const depsCache = new Map();
+const staticStrCache = new Map();
+
+function staticStringLiteral(expr) {
+  if (!expr || expr.length < 2 || expr.charCodeAt(0) !== 34 || expr.charCodeAt(expr.length - 1) !== 34) return null;
+  let s = staticStrCache.get(expr);
+  if (s !== undefined) return s;
+  try {
+    s = JSON.parse(expr);
+    if (typeof s !== 'string') s = null;
+  } catch {
+    s = null;
+  }
+  staticStrCache.set(expr, s);
+  return s;
+}
 
 // The compiler already emits JavaScript expressions. For invalidation we only
 // need a conservative dependency set: extra names cause an inexpensive update;
@@ -444,6 +460,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   let emitDepth = 0;
   const subViewPropCache = new WeakMap();
   const nodeOwnDepsCache = new WeakMap();
+  const nodePlanCache = new WeakMap();
 
   function flushHostMounts() {
     if (deferHostMounts || !pendingHostMounts.length) return;
@@ -745,7 +762,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       storeInits: decl.stores.map((st) => ({ name: st.name, expr: st.initExpr, fn: compileViewExpr(st.initExpr) })),
       derivedNames,
       // `let` values, in order (a later one may use an earlier one)
-      derived: (decl.derived || []).map((d) => ({ name: d.name, expr: d.expr, fn: compileViewExpr(d.expr) })),
+      derived: (decl.derived || []).map((d) => ({ name: d.name, expr: d.expr, fn: compileViewExpr(d.expr), deps: exprDeps(d.expr) })),
       varNames,
       // host functions visible in this view: its own props/stores win on a name clash
       externNames: viewExterns,
@@ -766,9 +783,13 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     return d ? safeEval(d.fn, {}, externs, d.expr) : undefined;
   }
 
-  // `let` values: recomputed before every update and every effect.
+  // `let` values: recomputed before every update and when an effect follows a dirty store write.
   function computeDerived(inst) {
-    for (const d of inst.meta.derived) inst.vars[d.name] = safeEval(d.fn, inst.vars, externs, d.expr);
+    const derived = inst.meta.derived;
+    for (let i = 0; i < derived.length; i++) {
+      const d = derived[i];
+      inst.vars[d.name] = safeEval(d.fn, inst.vars, externs, d.expr);
+    }
   }
 
   // ---- evaluation helpers --------------------------------------------------
@@ -816,14 +837,13 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       slotCtx,
       host: null,
       badgeState: null,
-      hostBindings: [],
-      blocks: [],
+      hostBindings: EMPTY_ARRAY,
+      blocks: EMPTY_ARRAY,
       dirtyVars: null,
       subtreeDirty: false,
       disposed: false,
       helpers: null,
     };
-    inst.helpers = makeHelpers(inst);
     const savedInst = hydrating && initialInstances && initialInstances[key];
     if (savedInst && savedInst.state && meta.states.has(savedInst.state)) {
       inst.state = savedInst.state;
@@ -922,7 +942,10 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
 
   function runEffect(inst, eff, args) {
     const { storeNames, propNames, derivedNames } = inst.meta;
-    if (derivedNames.length) computeDerived(inst);
+    if (derivedNames.length && (inst.dirtyVars || pendingGlobalChanges.size > 0)) {
+      computeDerived(inst);
+    }
+    const helpers = inst.helpers || (inst.helpers = makeHelpers(inst));
     // derived values are read-only inputs, like props
     const c = compileEffectWithPrecompiled(eff, storeNames, derivedNames.length ? [...propNames, ...derivedNames] : propNames, externNames, effectCache, staticProgram);
     const { fn, names, paramNames } = c;
@@ -932,11 +955,11 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       const pi = paramNames.indexOf(n);
       vals.push(pi !== -1 ? args[pi] : inst.vars[n]);
     }
-    vals.push(inst.helpers[0], inst.helpers[1], inst.helpers[2]);
+    vals.push(helpers[0], helpers[1], helpers[2]);
     for (const n of c.externs) vals.push(externs[n]);
     try {
       const out = c.staticFn
-        ? c.staticFn(inst.vars, args, inst.helpers, externs)
+        ? c.staticFn(inst.vars, args, helpers, externs)
         : fn.apply(null, vals);
       if (out) {
         let changed = 0;
@@ -994,7 +1017,6 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const { el: host, claimed } = claim('div');
     if (!claimed) {
       host.className = meta.hostClassName;
-      host.setAttribute('data-view-name', inst.viewName);
       host.setAttribute('data-key', inst.key); // which instance this is (host code, devtools)
     }
 
@@ -1084,7 +1106,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     }
     inst.dirtyVars = null;
     if (inst.meta.derived.length && (changes || inst.mountedState !== inst.state)) {
-      for (const d of inst.meta.derived) {
+      for (let i = 0; i < inst.meta.derived.length; i++) {
+        const d = inst.meta.derived[i];
         const next = safeEval(d.fn, inst.vars, externs, d.expr);
         if (next !== inst.vars[d.name]) {
           inst.vars[d.name] = next;
@@ -1220,7 +1243,18 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       }
     }
     // Clickable non-controls are reachable and operable from the keyboard.
-    if (map?.click && !/^(BUTTON|INPUT|TEXTAREA|SELECT|A)$/.test(el.tagName) && !el.isContentEditable) {
+    const tag = node.tag;
+    if (
+      map?.click &&
+      tag !== 'Button' &&
+      tag !== 'Input' &&
+      tag !== 'TextArea' &&
+      tag !== 'Select' &&
+      tag !== 'Link' &&
+      tag !== 'Checkbox' &&
+      tag !== 'Slider' &&
+      tag !== 'RichText'
+    ) {
       if (!el.hasAttribute('tabindex')) el.tabIndex = 0;
       if (!el.hasAttribute('role')) el.setAttribute('role', 'button');
       if (!map.keydown) {
@@ -1234,11 +1268,54 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     if (map) el[HANDLERS] = map;
   }
 
+  function getNodePlan(node) {
+    let plan = nodePlanCache.get(node);
+    if (plan) return plan;
+    const sc = compileStyle(node.style);
+    const na = node.namedArgs;
+    let dataAttrs = null;
+    for (const argName in na) {
+      if (argName.startsWith('data_') && argName.length > 5) {
+        if (!dataAttrs) dataAttrs = [];
+        dataAttrs.push([`data-${argName.slice(5).replace(/_/g, '-')}`, na[argName]]);
+      }
+    }
+    const hasCommonAttrs = Boolean(
+      na.title !== undefined ||
+      na.label !== undefined ||
+      na.role !== undefined ||
+      na.tab_index !== undefined ||
+      na.id !== undefined ||
+      na.disabled !== undefined ||
+      na.class !== undefined ||
+      na.aria !== undefined ||
+      na.data !== undefined ||
+      na.drag !== undefined ||
+      dataAttrs !== null,
+    );
+    let hasEvents = false;
+    for (const _ in node.events) {
+      hasEvents = true;
+      break;
+    }
+    plan = {
+      sc,
+      scCls: sc.cls,
+      hasCommonAttrs,
+      dataAttrs,
+      hasEvents,
+      hasAutofocus: na.autofocus !== undefined,
+    };
+    nodePlanCache.set(node, plan);
+    return plan;
+  }
+
   function mountElement(node, inst, localNames, locals, path) {
     const vn = inst.meta.varNames;
     const isDefaultScope = localNames === inst.meta.externNames;
-    const sc = compileStyle(node.style);
-    const scCls = sc.cls;
+    const plan = getNodePlan(node);
+    const sc = plan.sc;
+    const scCls = plan.scCls;
     const withCls = (base) => (scCls ? `${base} ${scCls}` : base);
     const bindings = [];
     const bind = (expr, apply, live = false) =>
@@ -1256,11 +1333,18 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'Text': {
         const c = claim('div');
         el = c.el;
-        if (!c.claimed) el.className = withCls('f4-text');
-        if (node.args[0]) bind(node.args[0], (v) => { const s = v ?? ''; if (el.textContent !== String(s)) el.textContent = s; });
-        if (node.events.on_click || node.events.on_double_click) {
-          el.setAttribute('data-clickable', '');
-          if (node.events.on_double_click) el.title = 'Double-click to trigger ' + node.events.on_double_click;
+        const clickable = Boolean(node.events.on_click || node.events.on_double_click);
+        if (!c.claimed) el.className = withCls(clickable ? 'f4-text f4-clickable' : 'f4-text');
+        const arg0 = node.args[0];
+        if (arg0) {
+          const lit = staticStringLiteral(arg0);
+          if (lit !== null) {
+            if (!c.claimed) el.textContent = lit;
+          } else if (c.claimed) {
+            bind(arg0, (v) => { const s = v ?? ''; if (el.textContent !== String(s)) el.textContent = s; });
+          } else {
+            bind(arg0, (v) => { el.textContent = v ?? ''; });
+          }
         }
         break;
       }
@@ -1271,8 +1355,19 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
           el.className = withCls('f4-button');
           el.type = 'button';
         }
-        if (node.args[0]) bind(node.args[0], (v) => { const s = v ?? ''; if (el.textContent !== String(s)) el.textContent = s; });
-        else if (!c.claimed) el.textContent = 'Button';
+        const arg0 = node.args[0];
+        if (arg0) {
+          const lit = staticStringLiteral(arg0);
+          if (lit !== null) {
+            if (!c.claimed) el.textContent = lit;
+          } else if (c.claimed) {
+            bind(arg0, (v) => { const s = v ?? ''; if (el.textContent !== String(s)) el.textContent = s; });
+          } else {
+            bind(arg0, (v) => { el.textContent = v ?? ''; });
+          }
+        } else if (!c.claimed) {
+          el.textContent = 'Button';
+        }
         break;
       }
       case 'Link': {
@@ -1605,56 +1700,67 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       };
     }
     const na = node.namedArgs;
-    if (na.title !== undefined && node.tag !== 'Image') {
-      // An icon button's tooltip is also its accessible name unless `label:` says otherwise.
-      const nameFromTitle = node.tag === 'Button' && na.label === undefined;
-      bind(na.title, (v) => {
-        if (v) el.title = v;
-        else el.removeAttribute('title');
-        if (nameFromTitle) setAttr(el, 'aria-label', v);
-      });
-    }
-    if (na.label !== undefined) bind(na.label, (v) => setAttr(el, 'aria-label', v));
-    if (na.role !== undefined) bind(na.role, (v) => setAttr(el, 'role', v));
-    if (na.tab_index !== undefined) bind(na.tab_index, (v) => setAttr(el, 'tabindex', v == null ? v : String(v)));
-    if (na.id !== undefined) bind(na.id, (v) => setAttr(el, 'id', v));
-    if (na.disabled !== undefined) {
-      bind(na.disabled, (v) => {
-        const dis = Boolean(v);
-        if ('disabled' in el) el.disabled = dis;
-        setAttr(el, 'aria-disabled', dis ? 'true' : null);
-      });
-    }
-    if (na.class !== undefined) {
-      let prevExtra = [];
-      bind(na.class, (v) => {
-        for (const cls of prevExtra) el.classList.remove(cls);
-        prevExtra = v ? String(v).split(/\s+/).filter(Boolean) : [];
-        for (const cls of prevExtra) el.classList.add(cls);
-      });
-    }
-    if (na.aria !== undefined) {
-      let prev = [];
-      bind(na.aria, (obj) => {
-        const keys = obj ? Object.keys(obj) : [];
-        for (const k of prev) if (!keys.includes(k)) el.removeAttribute(`aria-${k.replace(/_/g, '-')}`);
-        for (const k of keys) setAttr(el, `aria-${k.replace(/_/g, '-')}`, obj[k]);
-        prev = keys;
-      });
-    }
-    if (na.data !== undefined) {
-      let prev = [];
-      bind(na.data, (obj) => {
-        const keys = obj && typeof obj === 'object' ? Object.keys(obj) : [];
-        for (const k of prev) if (!keys.includes(k)) el.removeAttribute(`data-${k.replace(/_/g, '-')}`);
-        for (const k of keys) setAttr(el, `data-${k.replace(/_/g, '-')}`, obj[k]);
-        prev = keys;
-      });
-    }
-    for (const argName in na) {
-      if (argName.startsWith('data_') && argName.length > 5) {
-        const attrName = `data-${argName.slice(5).replace(/_/g, '-')}`;
-        bind(na[argName], (v) => setAttr(el, attrName, v));
+    if (plan.hasCommonAttrs) {
+      if (na.title !== undefined && node.tag !== 'Image') {
+        // An icon button's tooltip is also its accessible name unless `label:` says otherwise.
+        const nameFromTitle = node.tag === 'Button' && na.label === undefined;
+        bind(na.title, (v) => {
+          if (v) el.title = v;
+          else el.removeAttribute('title');
+          if (nameFromTitle) setAttr(el, 'aria-label', v);
+        });
+      }
+      if (na.label !== undefined) bind(na.label, (v) => setAttr(el, 'aria-label', v));
+      if (na.role !== undefined) bind(na.role, (v) => setAttr(el, 'role', v));
+      if (na.tab_index !== undefined) bind(na.tab_index, (v) => setAttr(el, 'tabindex', v == null ? v : String(v)));
+      if (na.id !== undefined) bind(na.id, (v) => setAttr(el, 'id', v));
+      if (na.disabled !== undefined) {
+        bind(na.disabled, (v) => {
+          const dis = Boolean(v);
+          if ('disabled' in el) el.disabled = dis;
+          setAttr(el, 'aria-disabled', dis ? 'true' : null);
+        });
+      }
+      if (na.class !== undefined) {
+        let prevExtra = [];
+        bind(na.class, (v) => {
+          for (const cls of prevExtra) el.classList.remove(cls);
+          prevExtra = v ? String(v).split(/\s+/).filter(Boolean) : [];
+          for (const cls of prevExtra) el.classList.add(cls);
+        });
+      }
+      if (na.aria !== undefined) {
+        let prev = [];
+        bind(na.aria, (obj) => {
+          const keys = obj ? Object.keys(obj) : [];
+          for (const k of prev) if (!keys.includes(k)) el.removeAttribute(`aria-${k.replace(/_/g, '-')}`);
+          for (const k of keys) setAttr(el, `aria-${k.replace(/_/g, '-')}`, obj[k]);
+          prev = keys;
+        });
+      }
+      if (na.data !== undefined) {
+        let prev = [];
+        bind(na.data, (obj) => {
+          const keys = obj && typeof obj === 'object' ? Object.keys(obj) : [];
+          for (const k of prev) if (!keys.includes(k)) el.removeAttribute(`data-${k.replace(/_/g, '-')}`);
+          for (const k of keys) setAttr(el, `data-${k.replace(/_/g, '-')}`, obj[k]);
+          prev = keys;
+        });
+      }
+      if (plan.dataAttrs) {
+        for (let i = 0; i < plan.dataAttrs.length; i++) {
+          const [attrName, argExpr] = plan.dataAttrs[i];
+          bind(argExpr, (v) => setAttr(el, attrName, v));
+        }
+      }
+      if (na.drag !== undefined) {
+        const dragFn = compile(na.drag, vn, localNames);
+        const textFn = na.drag_text !== undefined ? compile(na.drag_text, vn, localNames) : null;
+        el.setAttribute('draggable', 'true');
+        dragSources.set(el, () => ({
+          payload: safeEval(dragFn, inst.vars, locals, na.drag),
+          text: textFn ? safeEval(textFn, inst.vars, locals, na.drag_text) : '',
+        }));
       }
     }
     let hostName = null;
@@ -1671,27 +1777,24 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         });
       }
     }
-    if (na.drag !== undefined) {
-      const dragFn = compile(na.drag, vn, localNames);
-      const textFn = na.drag_text !== undefined ? compile(na.drag_text, vn, localNames) : null;
-      el.setAttribute('draggable', 'true');
-      dragSources.set(el, () => ({
-        payload: safeEval(dragFn, inst.vars, locals, na.drag),
-        text: textFn ? safeEval(textFn, inst.vars, locals, na.drag_text) : '',
-      }));
+    if (plan.hasEvents && node.tag !== 'Link') registerEvents(el, node, inst);
+    if (bindings.length > 0) {
+      runBindings(bindings, inst.vars, locals);
+      if (flushStyle) flushStyle();
     }
-    if (node.tag !== 'Link') registerEvents(el, node, inst);
-    runBindings(bindings, inst.vars, locals);
-    if (flushStyle) flushStyle();
-    if (node.namedArgs.autofocus !== undefined) {
-      const af = compile(node.namedArgs.autofocus, vn, localNames);
-      if (safeEval(af, inst.vars, locals, node.namedArgs.autofocus)) {
+    if (plan.hasAutofocus) {
+      const af = compile(na.autofocus, vn, localNames);
+      if (safeEval(af, inst.vars, locals, na.autofocus)) {
         queueMicrotask(() => {
           if (!el.isConnected) return;
           el.focus();
           if (node.tag === 'Input' && el.value) el.select(); // rename-style: select existing text
         });
       }
+    }
+
+    if (!children && bindings.length === 0 && node.tag !== 'Host') {
+      return { el, deps: EMPTY_SET, update: NOOP, dispose: NOOP };
     }
 
     let ownDeps = nodeOwnDepsCache.get(node);
@@ -2220,11 +2323,11 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const binding = node.listBinding;
     const bindingSet = binding ? Object.freeze(new Set([binding])) : null;
     const childLocalNames = binding ? dedupe([...localNames, binding]) : localNames;
-    const rows = new Map(); // key -> { locals, blocks, item, index }
+    const rows = new Map(); // key -> { key, locals, blocks, item, index, seen }
     let prevRows = [];
     let rowOuterDeps = null;
     let emptyEl = null;
-    const seen = new Set();
+    let listGen = 0;
     // role / label / aria / data / data_* on the list container (e.g. role: "listbox")
     const attrFns = [];
     for (const [arg, attr] of [['role', 'role'], ['label', 'aria-label']]) {
@@ -2330,7 +2433,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
               const key = itemKey(item, i);
               const rl = Object.create(locals);
               if (binding) rl[binding] = item;
-              const row = { locals: rl, blocks: null, item, index: i };
+              const row = { key, locals: rl, blocks: null, item, index: i, seen: listGen };
               row.blocks = node.children.map((c, ci) => mountNode(c, inst, childLocalNames, rl, `${path}/${key}/${ci}`));
               for (let j = 0; j < row.blocks.length; j++) el.appendChild(row.blocks[j].el);
               rows.set(key, row);
@@ -2341,21 +2444,25 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         }
       }
 
-      seen.clear();
+      const gen = ++listGen;
       const nextRows = new Array(items.length);
       const isInitialEmptyMount = rows.size === 0 && !hydrating;
-      let orderChanged = !isInitialEmptyMount && rows.size !== items.length;
+      let mountedNewRow = false;
+      let survivingReordered = false;
+      let lastReusedIndex = -1;
       let reusedCount = 0;
       const rNodes = node.children;
       const rLen = rNodes.length;
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         let key = itemKey(item, i);
-        if (seen.has(key)) key = `${key}#${i}`;
-        seen.add(key);
         let row = isInitialEmptyMount ? undefined : rows.get(key);
+        if (row && row.seen === gen) {
+          key = `${key}#${i}`;
+          row = rows.get(key);
+        }
         if (!row) {
-          if (!isInitialEmptyMount) orderChanged = true;
+          if (!isInitialEmptyMount) mountedNewRow = true;
           const rl = Object.create(locals);
           if (binding) rl[binding] = item;
           const blocks = new Array(rLen);
@@ -2364,7 +2471,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
             blocks[ci] = b;
             if (isInitialEmptyMount) el.appendChild(b.el);
           }
-          row = { locals: rl, blocks, item, index: i };
+          row = { key, locals: rl, blocks, item, index: i, seen: gen };
           if (!rowOuterDeps) {
             const rawDeps = mergeDeps(...blocks.map((b) => b.deps || b.propDeps || STAR_SET));
             if (rawDeps === STAR_SET || rawDeps.has('*') || !binding) {
@@ -2377,11 +2484,11 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
           }
           rows.set(key, row);
         } else {
+          row.seen = gen;
           reusedCount++;
-          if (row.index !== i) {
-            orderChanged = true;
-            row.index = i;
-          }
+          if (row.index < lastReusedIndex) survivingReordered = true;
+          lastReusedIndex = row.index;
+          row.index = i;
           if (row.item !== item) {
             row.item = item;
             if (binding) row.locals[binding] = item;
@@ -2396,15 +2503,15 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         nextRows[i] = row;
       }
 
-      if (reusedCount !== rows.size) {
-        for (const [key, row] of rows) {
-          if (!seen.has(key)) {
-            orderChanged = true;
-            for (const b of row.blocks) {
-              b.dispose();
-              b.el.remove();
+      if (reusedCount !== prevRows.length) {
+        for (let i = 0; i < prevRows.length; i++) {
+          const r = prevRows[i];
+          if (r.seen !== gen) {
+            for (let j = 0; j < r.blocks.length; j++) {
+              r.blocks[j].dispose();
+              r.blocks[j].el.remove();
             }
-            rows.delete(key);
+            rows.delete(r.key);
           }
         }
       }
@@ -2414,7 +2521,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         if (!emptyEl.parentNode) el.appendChild(emptyEl);
         return;
       }
-      if (!orderChanged) return;
+      if (!mountedNewRow && !survivingReordered && !hydrating) return;
       // Single forward pass: place each desired element at the cursor.
       // Use moveBefore() where available for already-connected row nodes so the
       // browser preserves focus, animations, media playback, and iframe state.
