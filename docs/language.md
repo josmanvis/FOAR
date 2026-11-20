@@ -128,6 +128,7 @@ Every element also takes:
 | `label: text` | `aria-label` |
 | `role: text` | ARIA role (`"listbox"`, `"option"`, `"menu"`, …) |
 | `aria: { expanded: open, current: sel ? "page" : null }` | `aria-*` attributes; `null` removes one; `snake_case` becomes `kebab-case` |
+| `data: { test_id: "save", row_index: i }` / `data_testid: "save"` | `data-*` attributes; `null` or `false` removes one; `snake_case` becomes `data-kebab-case` |
 | `tab_index: n` | `tabindex` (e.g. a roving tabindex: `selected ? 0 : -1`) |
 | `drag: payload`, `drag_text: text` | draggable; the payload goes to the drop target's `on_drop` |
 | `autofocus: cond` | focus when it appears |

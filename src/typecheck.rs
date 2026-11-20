@@ -127,7 +127,7 @@ struct Env<'a> {
 }
 
 const BUILTIN_ATTR_PROPS: &[&str] = &[
-    "key", "label", "role", "aria", "title", "tab_index", "drag", "drag_text",
+    "key", "label", "role", "aria", "data", "title", "tab_index", "drag", "drag_text",
     "class", "id", "slot", "disabled", "min", "max", "step", "client",
 ];
 
@@ -495,8 +495,10 @@ pub fn check_program(
                 }
 
                 for (pname, toks, arg_at) in named_args {
-                    // the view's own props win over the built-in attributes (label, title, …)
-                    if BUILTIN_ATTR_PROPS.contains(&pname.as_str()) && !target_params.iter().any(|(n, _)| n == pname) {
+                    // the view's own props win over the built-in attributes (label, title, data, data_*, …)
+                    if (BUILTIN_ATTR_PROPS.contains(&pname.as_str()) || pname.starts_with("data_"))
+                        && !target_params.iter().any(|(n, _)| n == pname)
+                    {
                         tc.check_expr(toks, None)?;
                         continue;
                     }

@@ -264,7 +264,7 @@ export function createLanguageService() {
       if (call && atArgStart) {
         const v = index.views.get(call.callee);
         if (v) for (const p of v.params) items.push({ label: `${p.name}:`, kind: 'arg', detail: p.default != null ? `${p.type} = ${p.default}` : p.type, insert: `${p.name}: $0`, filter: p.name, sort: p.default != null ? '1' : '0' });
-        else if (ELEMENTS[call.callee]) for (const n of ELEMENTS[call.callee].named) items.push({ label: `${n}:`, kind: 'arg', doc: argDoc(n), insert: n === 'aria' ? 'aria: { $1 }' : `${n}: $0`, filter: n, sort: '0' });
+        else if (ELEMENTS[call.callee]) for (const n of ELEMENTS[call.callee].named) items.push({ label: `${n}:`, kind: 'arg', doc: argDoc(n), insert: n === 'aria' || n === 'data' ? `${n}: { $1 }` : `${n}: $0`, filter: n, sort: '0' });
       }
       items.push(...expressionItems(f, r, offset, view));
       return { ...word(), items };

@@ -21,6 +21,7 @@ set -u
 
 REPO_URL="https://github.com/josmanvis/FOAR"
 DOCS_URL="https://josmanvis.github.io/FOAR/docs/guide.html"
+DEFAULT_TAG="v0.3.0"
 
 # ---- output ------------------------------------------------------------------------
 
@@ -129,14 +130,34 @@ fetch() {
   fi
 }
 
-# the newest release tag (v1.2.3), or empty when it can't be found
+# the newest release tag (v1.2.3), with 3 fallback tiers:
+# 1. HTTP redirect from /releases/latest -> /releases/tag/vX.Y.Z
+# 2. GitHub Releases API (/repos/josmanvis/FOAR/releases/latest)
+# 3. Embedded DEFAULT_TAG when proxied/rate-limited
 latest_tag() {
+  url=""
   if [ "$DL" = curl ]; then
-    url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$BASE/latest" 2>/dev/null) || return 0
+    url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$BASE/latest" 2>/dev/null) || url=""
   else
     url=$(wget -q -S --spider "$BASE/latest" 2>&1 | awk '/^  Location: /{ l = $2 } END { print l }')
   fi
-  case "$url" in */tag/*) printf '%s' "${url##*/tag/}" | tr -d '\r' ;; esac
+  case "$url" in
+    */tag/*)
+      printf '%s' "${url##*/tag/}" | tr -d '\r\n '
+      return 0
+      ;;
+  esac
+  api_url="https://api.github.com/repos/josmanvis/FOAR/releases/latest"
+  if [ "$DL" = curl ]; then
+    tag=$(curl -fsSL "$api_url" 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+  else
+    tag=$(wget -q -O - "$api_url" 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+  fi
+  if [ -n "$tag" ]; then
+    printf '%s' "$tag" | tr -d '\r\n '
+    return 0
+  fi
+  printf '%s' "$DEFAULT_TAG"
 }
 
 sha256_of() {
@@ -262,7 +283,10 @@ install() {
   # copy then rename: replacing a running foar (foar upgrade) is safe
   cp "$TMP/foar-$TARGET/foar" "$BIN_DIR/.foar-new" && chmod 755 "$BIN_DIR/.foar-new" && mv -f "$BIN_DIR/.foar-new" "$BIN_DIR/foar" \
     || fail "Couldn't write $BIN_DIR/foar."
-  if [ "$(uname -s)" = Darwin ]; then xattr -d com.apple.quarantine "$BIN_DIR/foar" 2>/dev/null || true; fi
+  if [ "$(uname -s)" = Darwin ]; then
+    xattr -d com.apple.quarantine "$BIN_DIR/foar" 2>/dev/null || true
+    codesign --force --sign - "$BIN_DIR/foar" 2>/dev/null || true
+  fi
   INSTALLED=$("$BIN_DIR/foar" --version 2>/dev/null) || fail "The installed foar doesn't run on this machine." "$BIN_DIR/foar"
   row "Installed" "$(tilde "$BIN_DIR/foar")" "$(done_mark)"
 

@@ -58,7 +58,7 @@ export const TYPES = {
   CatchError: 'Error info `{ message, view }` passed to `Catch { … } Fallback { err => … }`.',
 };
 
-const COMMON = ['label', 'title', 'role', 'aria', 'tab_index', 'drag', 'drag_text', 'autofocus', 'slot', 'disabled', 'class', 'id'];
+const COMMON = ['label', 'title', 'role', 'aria', 'data', 'tab_index', 'drag', 'drag_text', 'autofocus', 'slot', 'disabled', 'class', 'id'];
 const ARG_DOCS = {
   slot: 'Assigns this child to a named `Slot(name: "...")` outlet in a parent view.',
   disabled: 'Disables interactive controls when truthy (and sets `aria-disabled`).',
@@ -72,6 +72,7 @@ const ARG_DOCS = {
   title: 'Tooltip; for an icon Button without `label`, also its accessible name.',
   role: 'ARIA role.',
   aria: 'ARIA attributes: `aria: { expanded: open, current: selected }` (snake_case → kebab-case, null removes).',
+  data: 'Custom data-* attributes: `data: { test_id: "save", index: i }` (snake_case → data-kebab-case, null/false removes) or `data_testid: "save"`.',
   tab_index: '`tabindex`.',
   drag: 'Makes the element draggable; the value is the payload `on_drop` receives.',
   drag_text: 'text/plain data for drops into other apps.',
@@ -111,7 +112,7 @@ export const ELEMENTS = {
   Spinner: { sig: 'Spinner(text)', doc: 'A busy indicator with optional text.', named: [...COMMON], events: [], snippet: 'Spinner("${1:Loading…}")' },
   Row: { sig: 'Row { … }', doc: 'Lays children out horizontally (flex row, centred).', named: [...COMMON], events: ['on_click', 'on_double_click', 'on_context_menu', 'on_drop', 'on_drag_start', 'on_drag_end'], snippet: 'Row {\n    $0\n}' },
   Column: { sig: 'Column { … }', doc: 'Lays children out vertically (flex column).', named: [...COMMON], events: ['on_click', 'on_double_click', 'on_context_menu', 'on_drop', 'on_drag_start', 'on_drag_end'], snippet: 'Column {\n    $0\n}' },
-  List: { sig: 'List(items, empty: element) { item => … }', doc: 'Renders one block per item, keyed by `item.id` (rows are reused, not rebuilt).', named: ['empty', 'role', 'label', 'aria'], events: ['on_context_menu', 'on_drop'], snippet: 'List(${1:items}) { ${2:item} =>\n    $0\n}' },
+  List: { sig: 'List(items, empty: element) { item => … }', doc: 'Renders one block per item, keyed by `item.id` (rows are reused, not rebuilt).', named: ['empty', 'role', 'label', 'aria', 'data'], events: ['on_context_menu', 'on_drop'], snippet: 'List(${1:items}) { ${2:item} =>\n    $0\n}' },
   If: { sig: 'If(condition) { … } Else { … }', doc: 'Shows its children while the condition is true; `Else { … }` / `Else If(…) { … }` otherwise.', named: [], events: [], snippet: 'If(${1:condition}) {\n    $0\n}' },
   Match: { sig: 'Match(value) { pattern => element, … }', doc: 'Shows the first arm whose pattern matches; the compiler checks every case is handled. The arm stays mounted (and updates) until another arm wins.', named: [], events: [], snippet: 'Match(${1:value}) {\n    ${2:pattern} => $0,\n    _ => Text(""),\n}' },
   Router: { sig: 'Router { Route("/path") { … } }', doc: 'Declarative URL router. Mounts the first matching `Route` child and updates params in place without remounting.', named: [], events: [], snippet: 'Router {\n    Route("/") { $0 }\n    Route("*") { Text("Not found") }\n}' },

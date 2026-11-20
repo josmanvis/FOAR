@@ -1748,3 +1748,68 @@ view App {
   app.destroy();
 });
 
+test('data-* attributes: data: { ... } object map and data_<name>: shorthand on elements and List (client + SSR)', async () => {
+  const src = `
+data Item { id: String, label: String }
+
+view App {
+  store active: bool = true;
+  store step: i32 = 1;
+  store items: Vec<Item> = [{ id: "r1", label: "First" }];
+  state Ready {
+    render {
+      Column(data: { section_name: "main", step: step, active: active ? "yes" : null }, data_testid: "app-col") {
+        Button("Next", data_action_id: "btn-{step}", data: { track_click: true }) -> on_click(Next)
+        List(items, data: { list_kind: "primary" }, data_testid: "items-list") { item =>
+          Text(item.label, data_row_id: item.id)
+        }
+      }
+    }
+    effect Next() {
+      step = step + 1;
+      active = false;
+    }
+  }
+}
+`;
+  const ast = parseFoar(src);
+
+  // 1. SSR emits data-* from both `data: { ... }` and `data_*:`
+  const ssr = renderToString(ast);
+  assert.ok(ssr.html.includes('data-section-name="main"'), ssr.html);
+  assert.ok(ssr.html.includes('data-step="1"'), ssr.html);
+  assert.ok(ssr.html.includes('data-active="yes"'), ssr.html);
+  assert.ok(ssr.html.includes('data-testid="app-col"'), ssr.html);
+  assert.ok(ssr.html.includes('data-action-id="btn-1"'), ssr.html);
+  assert.ok(ssr.html.includes('data-track-click="true"'), ssr.html);
+  assert.ok(ssr.html.includes('data-list-kind="primary"'), ssr.html);
+  assert.ok(ssr.html.includes('data-testid="items-list"'), ssr.html);
+  assert.ok(ssr.html.includes('data-row-id="r1"'), ssr.html);
+
+  // 2. Client DOM mount and reactive update / attribute removal
+  const { container } = makeDom();
+  const app = createFoarRuntime(ast, container, {});
+  const col = container.querySelector('.f4-column');
+  const btn = container.querySelector('button');
+  const list = container.querySelector('.f4-list');
+  const rowText = list.querySelector('.f4-text');
+
+  assert.equal(col.getAttribute('data-section-name'), 'main');
+  assert.equal(col.getAttribute('data-step'), '1');
+  assert.equal(col.getAttribute('data-active'), 'yes');
+  assert.equal(col.getAttribute('data-testid'), 'app-col');
+  assert.equal(btn.getAttribute('data-action-id'), 'btn-1');
+  assert.equal(btn.getAttribute('data-track-click'), 'true');
+  assert.equal(list.getAttribute('data-list-kind'), 'primary');
+  assert.equal(list.getAttribute('data-testid'), 'items-list');
+  assert.equal(rowText.getAttribute('data-row-id'), 'r1');
+
+  btn.click();
+  await tick();
+  assert.equal(col.getAttribute('data-step'), '2');
+  assert.equal(col.hasAttribute('data-active'), false, 'null value removes data-* attribute');
+  assert.equal(btn.getAttribute('data-action-id'), 'btn-2');
+  app.destroy();
+});
+
+

@@ -77,15 +77,26 @@ function Install-Foar {
     Row 'Platform' "Windows $archName"
 
     # version
+    $DefaultTag = 'v0.3.0'
     if ($Version -eq 'latest') {
-        # .../releases/latest redirects to .../releases/tag/vX.Y.Z: follow it and read where we ended up
-        try { $r = Invoke-WebRequest -Uri "$Base/latest" -Method Head -UseBasicParsing }
-        catch { Fail "Couldn't reach $Base/latest" @($_.Exception.Message) }
-        $location = ''
-        if ($r.BaseResponse.ResponseUri) { $location = [string]$r.BaseResponse.ResponseUri }             # Windows PowerShell 5.1
-        elseif ($r.BaseResponse.RequestMessage) { $location = [string]$r.BaseResponse.RequestMessage.RequestUri }  # PowerShell 7
-        if ($location -notmatch '/tag/(v[^/]+)$') { Fail "Couldn't find the latest release." @("See $Repo/releases") }
-        $Tag = $Matches[1]
+        $Tag = ''
+        # 1. .../releases/latest redirects to .../releases/tag/vX.Y.Z
+        try {
+            $r = Invoke-WebRequest -Uri "$Base/latest" -Method Head -UseBasicParsing
+            $location = ''
+            if ($r.BaseResponse.ResponseUri) { $location = [string]$r.BaseResponse.ResponseUri }             # Windows PowerShell 5.1
+            elseif ($r.BaseResponse.RequestMessage) { $location = [string]$r.BaseResponse.RequestMessage.RequestUri }  # PowerShell 7
+            if ($location -match '/tag/(v[^/]+)$') { $Tag = $Matches[1] }
+        } catch {}
+        # 2. GitHub Releases API fallback
+        if (-not $Tag) {
+            try {
+                $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/josmanvis/FOAR/releases/latest' -UseBasicParsing
+                if ($rel.tag_name) { $Tag = [string]$rel.tag_name }
+            } catch {}
+        }
+        # 3. Embedded release tag fallback
+        if (-not $Tag) { $Tag = $DefaultTag }
     } elseif ($Version.StartsWith('v')) { $Tag = $Version } else { $Tag = "v$Version" }
     Row 'Version' $Tag.Substring(1)
 

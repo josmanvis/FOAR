@@ -1563,6 +1563,21 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         prev = keys;
       });
     }
+    if (na.data !== undefined) {
+      let prev = [];
+      bind(na.data, (obj) => {
+        const keys = obj && typeof obj === 'object' ? Object.keys(obj) : [];
+        for (const k of prev) if (!keys.includes(k)) el.removeAttribute(`data-${k.replace(/_/g, '-')}`);
+        for (const k of keys) setAttr(el, `data-${k.replace(/_/g, '-')}`, obj[k]);
+        prev = keys;
+      });
+    }
+    for (const [argName, argExpr] of Object.entries(na)) {
+      if (argName.startsWith('data_') && argName.length > 5) {
+        const attrName = `data-${argName.slice(5).replace(/_/g, '-')}`;
+        bind(argExpr, (v) => setAttr(el, attrName, v));
+      }
+    }
     let hostName = null;
     if (node.tag === 'Host') {
       const hostExpr = na.name !== undefined ? na.name : na.ref !== undefined ? na.ref : na.id;
@@ -2089,19 +2104,32 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const rows = new Map(); // key -> { locals, blocks, item }
     let emptyEl = null;
     const seen = new Set();
-    // role / label / aria on the list container (e.g. role: "listbox")
+    // role / label / aria / data / data_* on the list container (e.g. role: "listbox")
     const attrFns = [];
     for (const [arg, attr] of [['role', 'role'], ['label', 'aria-label']]) {
       const ex = node.namedArgs?.[arg];
       if (ex !== undefined) attrFns.push({ attr, ex, fn: compile(ex, inst.meta.varNames, localNames) });
     }
+    for (const [argName, argExpr] of Object.entries(node.namedArgs || {})) {
+      if (argName.startsWith('data_') && argName.length > 5) {
+        attrFns.push({
+          attr: `data-${argName.slice(5).replace(/_/g, '-')}`,
+          ex: argExpr,
+          fn: compile(argExpr, inst.meta.varNames, localNames),
+        });
+      }
+    }
     const ariaEx = node.namedArgs?.aria;
     const ariaFn = ariaEx !== undefined ? compile(ariaEx, inst.meta.varNames, localNames) : null;
+    const dataEx = node.namedArgs?.data;
+    const dataFn = dataEx !== undefined ? compile(dataEx, inst.meta.varNames, localNames) : null;
+    let prevListDataKeys = [];
     const ownDeps = mergeDeps(
       exprDeps(node.listExpr),
       emptyExpr !== undefined ? exprDeps(emptyExpr) : null,
       ...attrFns.map((a) => exprDeps(a.ex)),
       ariaEx !== undefined ? exprDeps(ariaEx) : null,
+      dataEx !== undefined ? exprDeps(dataEx) : null,
     );
     // A list container can take events too (e.g. on_context_menu on its background).
     if (node.events && Object.keys(node.events).length) registerEvents(el, node, inst);
@@ -2117,6 +2145,13 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       if (ariaFn) {
         const obj = safeEval(ariaFn, inst.vars, locals, ariaEx) || {};
         for (const k of Object.keys(obj)) setAttr(el, `aria-${k.replace(/_/g, '-')}`, obj[k]);
+      }
+      if (dataFn) {
+        const obj = safeEval(dataFn, inst.vars, locals, dataEx);
+        const keys = obj && typeof obj === 'object' ? Object.keys(obj) : [];
+        for (const k of prevListDataKeys) if (!keys.includes(k)) el.removeAttribute(`data-${k.replace(/_/g, '-')}`);
+        for (const k of keys) setAttr(el, `data-${k.replace(/_/g, '-')}`, obj[k]);
+        prevListDataKeys = keys;
       }
       let items = safeEval(itemsFn, inst.vars, locals, node.listExpr);
       if (!Array.isArray(items)) items = items == null ? [] : Array.from(items);
@@ -2798,6 +2833,19 @@ export function renderToString(ast, options = {}) {
       const attrs = [['class', cls]];
       if (node.namedArgs?.role !== undefined) attrs.push(['role', evalSafe(node.namedArgs.role, vn, vars, ln, locals)]);
       if (node.namedArgs?.label !== undefined) attrs.push(['aria-label', evalSafe(node.namedArgs.label, vn, vars, ln, locals)]);
+      if (node.namedArgs?.aria !== undefined) {
+        const obj = evalSafe(node.namedArgs.aria, vn, vars, ln, locals) || {};
+        for (const [k, v] of Object.entries(obj)) attrs.push([`aria-${k.replace(/_/g, '-')}`, v]);
+      }
+      if (node.namedArgs?.data !== undefined) {
+        const obj = evalSafe(node.namedArgs.data, vn, vars, ln, locals) || {};
+        for (const [k, v] of Object.entries(obj)) attrs.push([`data-${k.replace(/_/g, '-')}`, v]);
+      }
+      for (const [argName, argExpr] of Object.entries(node.namedArgs || {})) {
+        if (argName.startsWith('data_') && argName.length > 5) {
+          attrs.push([`data-${argName.slice(5).replace(/_/g, '-')}`, evalSafe(argExpr, vn, vars, ln, locals)]);
+        }
+      }
       if (items.length === 0) {
         const msg = node.namedArgs?.empty !== undefined ? evalSafe(node.namedArgs.empty, vn, vars, ln, locals) : 'No matching items.';
         const emptyHtml = msg == null || msg === '' ? `<div class="f4-list-empty" hidden></div>` : `<div class="f4-list-empty">${escapeHtml(msg)}</div>`;
@@ -2837,6 +2885,15 @@ export function renderToString(ast, options = {}) {
       if (na.aria !== undefined) {
         const obj = evalSafe(na.aria, vn, vars, ln, locals) || {};
         for (const [k, v] of Object.entries(obj)) out.push([`aria-${k.replace(/_/g, '-')}`, v]);
+      }
+      if (na.data !== undefined) {
+        const obj = evalSafe(na.data, vn, vars, ln, locals) || {};
+        for (const [k, v] of Object.entries(obj)) out.push([`data-${k.replace(/_/g, '-')}`, v]);
+      }
+      for (const [argName, argExpr] of Object.entries(na)) {
+        if (argName.startsWith('data_') && argName.length > 5) {
+          out.push([`data-${argName.slice(5).replace(/_/g, '-')}`, evalSafe(argExpr, vn, vars, ln, locals)]);
+        }
       }
       return attrsStr(out);
     };
