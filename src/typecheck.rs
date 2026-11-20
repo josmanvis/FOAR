@@ -451,7 +451,16 @@ pub fn check_program(
         }
     }
 
+    let mut view_defaults: HashMap<String, HashSet<String>> = HashMap::new();
+    for v in views {
+        view_defaults.insert(
+            v.name.clone(),
+            v.params.iter().filter(|p| p.default.is_some()).map(|p| p.name.clone()).collect(),
+        );
+    }
+
     // Pass 2: Effects, ViewCalls, and Render expressions
+    let mut cached_render_tc: Option<(&str, &[(String, Option<String>)], Checker<'_>)> = None;
     for item in items {
         match item {
             CheckItem::EffectBody { view, params, tokens } => {
@@ -472,8 +481,14 @@ pub fn check_program(
             }
             CheckItem::ViewCall { view, locals, target, pos_args, named_args, at } => {
                 let Some(target_params) = env.views.get(target) else { continue };
-                let scope = scope_with_locals(&env, view, locals);
-                let mut tc = Checker::new(&env, view, scope);
+                let tc = match &mut cached_render_tc {
+                    Some((cv, cl, checker)) if *cv == view.as_str() && *cl == locals.as_slice() => checker,
+                    slot => {
+                        let scope = scope_with_locals(&env, view, locals);
+                        *slot = Some((view.as_str(), locals.as_slice(), Checker::new(&env, view, scope)));
+                        &mut slot.as_mut().unwrap().2
+                    }
+                };
 
                 for (i, (toks, arg_at)) in pos_args.iter().enumerate() {
                     if let Some((pname, pty)) = target_params.get(i) {
@@ -523,10 +538,11 @@ pub fn check_program(
                     }
                 }
                 // every prop must be given, except Option<…> ones and ones with a default
-                let defaults = views.iter().find(|v| &v.name == target).map(|v| v.params.iter().filter(|p| p.default.is_some()).map(|p| p.name.clone()).collect::<HashSet<_>>()).unwrap_or_default();
+                let defaults = view_defaults.get(target);
                 for (i, (pname, pty)) in target_params.iter().enumerate() {
                     let given = i < pos_args.len() || named_args.iter().any(|(n, _, _)| n == pname);
-                    if !given && !defaults.contains(pname) && !matches!(pty, Ty::Option(_) | Ty::Any) {
+                    let has_default = defaults.map(|d| d.contains(pname)).unwrap_or(false);
+                    if !given && !has_default && !matches!(pty, Ty::Option(_) | Ty::Any) {
                         return Err(err_at(src, *at, format!("{} needs the prop '{}' ({})", target, pname, pty)));
                     }
                 }
@@ -538,8 +554,14 @@ pub fn check_program(
                 {
                     continue;
                 }
-                let scope = scope_with_locals(&env, view, locals);
-                let mut tc = Checker::new(&env, view, scope);
+                let tc = match &mut cached_render_tc {
+                    Some((cv, cl, checker)) if *cv == view.as_str() && *cl == locals.as_slice() => checker,
+                    slot => {
+                        let scope = scope_with_locals(&env, view, locals);
+                        *slot = Some((view.as_str(), locals.as_slice(), Checker::new(&env, view, scope)));
+                        &mut slot.as_mut().unwrap().2
+                    }
+                };
                 tc.check_expr(tokens, None)?;
             }
             _ => {}

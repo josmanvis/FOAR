@@ -108,6 +108,8 @@ const EMPTY_SET = Object.freeze(new Set());
 const EMPTY_ARRAY = Object.freeze([]);
 const STAR_SET = Object.freeze(new Set(['*']));
 const ROUTE_SET = Object.freeze(new Set(['route']));
+const IDX_STR = Array.from({ length: 64 }, (_, i) => String(i));
+const idxStr = (i) => (i < 64 ? IDX_STR[i] : String(i));
 const depsCache = new Map();
 
 // The compiler already emits JavaScript expressions. For invalidation we only
@@ -1034,9 +1036,20 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     inst.mountedState = inst.state;
     inst.host.setAttribute('data-state-name', inst.state);
     if (inst.badgeState) inst.badgeState.textContent = inst.state;
-    inst.blocks = st ? st.decl.render.map((node, i) => mountNode(node, inst, inst.meta.externNames, externs, String(i))) : [];
-    for (const b of inst.blocks) {
-      if (b.el.parentNode !== inst.host) inst.host.appendChild(b.el);
+    if (st) {
+      const render = st.decl.render;
+      const len = render.length;
+      const blocks = new Array(len);
+      const extNames = inst.meta.externNames;
+      const host = inst.host;
+      for (let i = 0; i < len; i++) {
+        const b = mountNode(render[i], inst, extNames, externs, idxStr(i));
+        blocks[i] = b;
+        if (!hydrating || b.el.parentNode !== host) host.appendChild(b.el);
+      }
+      inst.blocks = blocks;
+    } else {
+      inst.blocks = EMPTY_ARRAY;
     }
     if (st && st.decl.onEnter) {
       const prevState = inst.state;
@@ -1224,6 +1237,9 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   function mountElement(node, inst, localNames, locals, path) {
     const vn = inst.meta.varNames;
     const isDefaultScope = localNames === inst.meta.externNames;
+    const sc = compileStyle(node.style);
+    const scCls = sc.cls;
+    const withCls = (base) => (scCls ? `${base} ${scCls}` : base);
     const bindings = [];
     const bind = (expr, apply, live = false) =>
       bindings.push({
@@ -1240,7 +1256,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'Text': {
         const c = claim('div');
         el = c.el;
-        if (!c.claimed) el.className = 'f4-text';
+        if (!c.claimed) el.className = withCls('f4-text');
         if (node.args[0]) bind(node.args[0], (v) => { const s = v ?? ''; if (el.textContent !== String(s)) el.textContent = s; });
         if (node.events.on_click || node.events.on_double_click) {
           el.setAttribute('data-clickable', '');
@@ -1252,7 +1268,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         const c = claim('button');
         el = c.el;
         if (!c.claimed) {
-          el.className = 'f4-button';
+          el.className = withCls('f4-button');
           el.type = 'button';
         }
         if (node.args[0]) bind(node.args[0], (v) => { const s = v ?? ''; if (el.textContent !== String(s)) el.textContent = s; });
@@ -1262,7 +1278,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'Link': {
         const c = claim('a');
         el = c.el;
-        if (!c.claimed) el.className = 'f4-link';
+        if (!c.claimed) el.className = withCls('f4-link');
         const hrefExpr = node.namedArgs.to !== undefined ? node.namedArgs.to : node.namedArgs.href !== undefined ? node.namedArgs.href : node.args[0];
         const replaceNav = node.namedArgs.replace !== undefined;
         let currentHref = '/';
@@ -1277,7 +1293,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         }
         if (node.children.length > 0) {
           enterHydrate(el, c.claimed);
-          children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/${i}`));
+          children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/${idxStr(i)}`));
           for (const ch of children) if (ch.el.parentNode !== el) el.appendChild(ch.el);
           leaveHydrate();
         } else if (node.args[1] !== undefined) {
@@ -1299,7 +1315,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         const c = claim('input');
         el = c.el;
         if (!c.claimed) {
-          el.className = 'f4-input';
+          el.className = withCls('f4-input');
           el.type = node.namedArgs.secure !== undefined ? 'password' : 'text';
         }
         const valueExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
@@ -1317,7 +1333,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'TextArea': {
         const c = claim('textarea');
         el = c.el;
-        if (!c.claimed) el.className = 'f4-textarea';
+        if (!c.claimed) el.className = withCls('f4-textarea');
         const valueExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
         if (valueExpr !== undefined) {
           bind(valueExpr, (v) => {
@@ -1334,7 +1350,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         const c = claim('input');
         el = c.el;
         if (!c.claimed) {
-          el.className = 'f4-checkbox';
+          el.className = withCls('f4-checkbox');
           el.type = 'checkbox';
         }
         if (node.namedArgs.checked !== undefined) {
@@ -1349,7 +1365,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         const c = claim('div');
         el = c.el;
         if (!c.claimed) {
-          el.className = 'f4-richtext';
+          el.className = withCls('f4-richtext');
           el.contentEditable = 'true';
           el.setAttribute('role', 'textbox');
           el.setAttribute('aria-multiline', 'true');
@@ -1377,7 +1393,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         const c = claim('img');
         el = c.el;
         if (!c.claimed) {
-          el.className = 'f4-image';
+          el.className = withCls('f4-image');
           el.decoding = 'async';
           el.loading = 'lazy';
         }
@@ -1401,7 +1417,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         el = c.el;
         let txt;
         if (!c.claimed) {
-          el.className = 'f4-spinner-wrap';
+          el.className = withCls('f4-spinner-wrap');
           const ring = doc.createElement('div');
           ring.className = 'f4-spinner-ring';
           txt = doc.createElement('span');
@@ -1416,9 +1432,9 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'Host': {
         const c = claim('div');
         el = c.el;
-        if (!c.claimed) el.className = 'f4-host';
+        if (!c.claimed) el.className = withCls('f4-host');
         enterHydrate(el, c.claimed);
-        children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/${i}`));
+        children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/${idxStr(i)}`));
         for (const ch of children) if (ch.el.parentNode !== el) el.appendChild(ch.el);
         leaveHydrate();
         break;
@@ -1426,7 +1442,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'Video': {
         const c = claim('video');
         el = c.el;
-        if (!c.claimed) el.className = 'f4-video';
+        if (!c.claimed) el.className = withCls('f4-video');
         const srcExpr = node.namedArgs.src !== undefined ? node.namedArgs.src : node.args[0];
         if (srcExpr !== undefined) bind(srcExpr, (v) => setAttr(el, 'src', v));
         if (node.namedArgs.poster !== undefined) bind(node.namedArgs.poster, (v) => setAttr(el, 'poster', v));
@@ -1444,7 +1460,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'Canvas': {
         const c = claim('canvas');
         el = c.el;
-        if (!c.claimed) el.className = 'f4-canvas';
+        if (!c.claimed) el.className = withCls('f4-canvas');
         for (const name of ['width', 'height']) {
           if (node.namedArgs[name] !== undefined) bind(node.namedArgs[name], (v) => {
             const n = Number(v);
@@ -1460,7 +1476,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         const c = claim('svg', 'http://www.w3.org/2000/svg');
         el = c.el;
         if (!c.claimed) {
-          el.setAttribute('class', 'f4-svg');
+          el.setAttribute('class', withCls('f4-svg'));
           el.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
         }
         for (const [name, attr] of [['view_box', 'viewBox'], ['width', 'width'], ['height', 'height'], ['preserve_aspect_ratio', 'preserveAspectRatio']]) {
@@ -1471,9 +1487,9 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'Form': {
         const c = claim('form');
         el = c.el;
-        if (!c.claimed) el.className = 'f4-form';
+        if (!c.claimed) el.className = withCls('f4-form');
         enterHydrate(el, c.claimed);
-        children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/${i}`));
+        children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/${idxStr(i)}`));
         for (const ch of children) if (ch.el.parentNode !== el) el.appendChild(ch.el);
         leaveHydrate();
         break;
@@ -1481,9 +1497,9 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'Select': {
         const c = claim('select');
         el = c.el;
-        if (!c.claimed) el.className = 'f4-select';
+        if (!c.claimed) el.className = withCls('f4-select');
         enterHydrate(el, c.claimed);
-        children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/${i}`));
+        children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/${idxStr(i)}`));
         for (const ch of children) if (ch.el.parentNode !== el) el.appendChild(ch.el);
         leaveHydrate();
         const valueExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
@@ -1498,7 +1514,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'Option': {
         const c = claim('option');
         el = c.el;
-        if (!c.claimed) el.className = 'f4-option';
+        if (!c.claimed) el.className = withCls('f4-option');
         const valExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
         const lblExpr = node.namedArgs.value !== undefined ? (node.args[0] ?? valExpr) : (node.args[1] ?? node.args[0]);
         if (valExpr !== undefined) bind(valExpr, (v) => { el.value = v == null ? '' : String(v); });
@@ -1509,7 +1525,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         const c = claim('input');
         el = c.el;
         if (!c.claimed) {
-          el.className = 'f4-slider';
+          el.className = withCls('f4-slider');
           el.type = 'range';
         }
         if (node.namedArgs.min !== undefined) bind(node.namedArgs.min, (v) => setAttr(el, 'min', v == null ? null : String(v)));
@@ -1527,7 +1543,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'Progress': {
         const c = claim('progress');
         el = c.el;
-        if (!c.claimed) el.className = 'f4-progress';
+        if (!c.claimed) el.className = withCls('f4-progress');
         if (node.namedArgs.max !== undefined) bind(node.namedArgs.max, (v) => setAttr(el, 'max', v == null ? null : String(v)));
         const valueExpr = node.namedArgs.value !== undefined ? node.namedArgs.value : node.args[0];
         if (valueExpr !== undefined) bind(valueExpr, (v) => { el.value = Number(v ?? 0); });
@@ -1537,10 +1553,16 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       case 'Column': {
         const c = claim('div');
         el = c.el;
-        if (!c.claimed) el.className = node.tag === 'Row' ? 'f4-row' : 'f4-column';
+        if (!c.claimed) el.className = withCls(node.tag === 'Row' ? 'f4-row' : 'f4-column');
         enterHydrate(el, c.claimed);
-        children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/${i}`));
-        for (const ch of children) if (ch.el.parentNode !== el) el.appendChild(ch.el);
+        const rawChildren = node.children;
+        const cLen = rawChildren.length;
+        children = new Array(cLen);
+        for (let i = 0; i < cLen; i++) {
+          const ch = mountNode(rawChildren[i], inst, localNames, locals, `${path}/${idxStr(i)}`);
+          children[i] = ch;
+          if (!hydrating || ch.el.parentNode !== el) el.appendChild(ch.el);
+        }
         leaveHydrate();
         break;
       }
@@ -1551,15 +1573,36 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       }
     }
 
-    const sc = compileStyle(node.style);
-    if (sc.cls) {
-      if (hydrating) addClasses(el, sc.cls);
-      else if (node.tag === 'Svg') el.setAttribute('class', `f4-svg ${sc.cls}`);
-      else el.className = el.className ? `${el.className} ${sc.cls}` : sc.cls;
-    }
-    for (let i = 0; i < sc.dynamic.length; i++) {
-      const d = sc.dynamic[i];
-      bind(d.expr, (v) => applyInlineStyle(el, d.key, v));
+    if (hydrating && scCls) addClasses(el, scCls);
+    let flushStyle = null;
+    if (sc.dynamic.length === 1) {
+      const d = sc.dynamic[0];
+      bind(d.expr, (v) => {
+        const css = inlineStyleToCss(d.key, v);
+        if (css) el.setAttribute('style', css);
+        else el.removeAttribute('style');
+      });
+    } else if (sc.dynamic.length > 1) {
+      const parts = new Array(sc.dynamic.length).fill('');
+      let styleDirty = false;
+      for (let i = 0; i < sc.dynamic.length; i++) {
+        const d = sc.dynamic[i];
+        const idx = i;
+        bind(d.expr, (v) => {
+          parts[idx] = inlineStyleToCss(d.key, v);
+          styleDirty = true;
+        });
+      }
+      flushStyle = () => {
+        if (!styleDirty) return;
+        styleDirty = false;
+        let css = '';
+        for (let i = 0; i < parts.length; i++) {
+          if (parts[i]) css = css ? `${css};${parts[i]}` : parts[i];
+        }
+        if (css) el.setAttribute('style', css);
+        else el.removeAttribute('style');
+      };
     }
     const na = node.namedArgs;
     if (na.title !== undefined && node.tag !== 'Image') {
@@ -1639,6 +1682,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     }
     if (node.tag !== 'Link') registerEvents(el, node, inst);
     runBindings(bindings, inst.vars, locals);
+    if (flushStyle) flushStyle();
     if (node.namedArgs.autofocus !== undefined) {
       const af = compile(node.namedArgs.autofocus, vn, localNames);
       if (safeEval(af, inst.vars, locals, node.namedArgs.autofocus)) {
@@ -1669,7 +1713,10 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       deps,
       update(changes) {
         if (changes && !needsUpdate(deps, changes)) return;
-        if (!changes || needsUpdate(ownDeps, changes)) runBindings(bindings, inst.vars, locals);
+        if (!changes || needsUpdate(ownDeps, changes)) {
+          runBindings(bindings, inst.vars, locals);
+          if (flushStyle) flushStyle();
+        }
         if (children) for (const c of children) c.update(changes);
       },
       dispose() {
@@ -2296,22 +2343,30 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
 
       seen.clear();
       const nextRows = new Array(items.length);
-      let orderChanged = rows.size !== items.length;
+      const isInitialEmptyMount = rows.size === 0 && !hydrating;
+      let orderChanged = !isInitialEmptyMount && rows.size !== items.length;
       let reusedCount = 0;
+      const rNodes = node.children;
+      const rLen = rNodes.length;
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         let key = itemKey(item, i);
         if (seen.has(key)) key = `${key}#${i}`;
         seen.add(key);
-        let row = rows.get(key);
+        let row = isInitialEmptyMount ? undefined : rows.get(key);
         if (!row) {
-          orderChanged = true;
+          if (!isInitialEmptyMount) orderChanged = true;
           const rl = Object.create(locals);
           if (binding) rl[binding] = item;
-          row = { locals: rl, blocks: null, item, index: i };
-          row.blocks = node.children.map((c, ci) => mountNode(c, inst, childLocalNames, rl, `${path}/${key}/${ci}`));
+          const blocks = new Array(rLen);
+          for (let ci = 0; ci < rLen; ci++) {
+            const b = mountNode(rNodes[ci], inst, childLocalNames, rl, `${path}/${key}/${idxStr(ci)}`);
+            blocks[ci] = b;
+            if (isInitialEmptyMount) el.appendChild(b.el);
+          }
+          row = { locals: rl, blocks, item, index: i };
           if (!rowOuterDeps) {
-            const rawDeps = mergeDeps(...row.blocks.map((b) => b.deps || b.propDeps || STAR_SET));
+            const rawDeps = mergeDeps(...blocks.map((b) => b.deps || b.propDeps || STAR_SET));
             if (rawDeps === STAR_SET || rawDeps.has('*') || !binding) {
               rowOuterDeps = rawDeps;
             } else {

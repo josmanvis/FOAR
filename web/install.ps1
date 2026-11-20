@@ -77,7 +77,7 @@ function Install-Foar {
     Row 'Platform' "Windows $archName"
 
     # version
-    $DefaultTag = 'v0.3.2'
+    $DefaultTag = 'v0.3.3'
     if ($Version -eq 'latest') {
         $Tag = ''
         # 1. .../releases/latest redirects to .../releases/tag/vX.Y.Z

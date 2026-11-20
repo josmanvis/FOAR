@@ -4,6 +4,16 @@ All notable changes to FOAR are documented in this file.
 
 ## Unreleased
 
+## [0.3.3] — 2026-11-19
+
+### Performance (DOM Runtime & Type Checker)
+- **Single-pass `class` & batched dynamic `style` attribute writes (15–46% faster mounts & filters)**:
+  - `mountElement` now combines base element classes and static style classes (`withCls`) into a single `el.className` assignment on creation instead of mutating `className` twice per element (eliminating 8,000 duplicate `setAttribute("class")` calls on a 2,000-row list).
+  - Elements with dynamic styles (`sc.dynamic`) now batch multi-property style evaluations (`flushStyle`) into a single serialized `setAttribute("style", cssText)` write per update, avoiding intermediate `CSSStyleDeclaration` parses and cutting dynamic-style mount costs by **7×**.
+  - `mountList` appends initial unhydrated rows directly on creation (skipping the 2,000-node `insertBefore(n, null)` reconciliation pass on initial mount), and `mountState` / `Row` / `Column` use preallocated arrays and cached index strings (`IDX_STR`).
+- **Type-checker scope reuse & import prescan (`src/typecheck.rs`, `src/project.rs`)**:
+  - Pass 2 of `typecheck::check` reuses the active `Checker` and variable scope across consecutive `RenderExpr` and `ViewCall` items within the same `(view, locals)` scope and precomputes `view_defaults`, and `imports_in` skips lexing files without `"import"`.
+
 ## [0.3.2] — 2026-11-19
 
 ### Performance (Compiler & DOM Runtime)

@@ -309,6 +309,9 @@ pub struct SourceFile {
 
 /// `import "<spec>"` statements at the top level of `src`: (spec, byte offset of the string).
 pub fn imports_in(src: &str) -> Vec<(String, usize)> {
+    if !src.contains("import") {
+        return Vec::new();
+    }
     let Ok(toks) = lex(src) else { return Vec::new() };
     let mut out = Vec::new();
     let mut depth = 0i32;
