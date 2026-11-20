@@ -828,10 +828,22 @@ impl<'s> Parser<'s> {
             } else {
                 while !self.at_end() && !self.is(")") {
                     if self.peek().kind == Kind::Ident && self.is_at(1, ":") {
+                        let name_at = self.peek().start;
                         let name = self.expect_ident()?;
                         self.expect(":")?;
                         let arg_at = self.peek().start;
                         let toks = self.collect_arg_tokens();
+                        if toks.is_empty() {
+                            return Err(err_at(self.src, arg_at, format!("Expected a value after `{}:`", name)));
+                        }
+                        // `danger: hint: true`: a value went missing between two labels
+                        if toks.len() >= 2 && toks[0].kind == Kind::Ident && self.tok_is(&toks[1], ":") {
+                            let next = self.text(&toks[0]).to_string();
+                            return Err(err_at(self.src, arg_at, format!("Two labels in a row: `{}:` has no value before `{}:`", name, next)));
+                        }
+                        if el.named_args.contains_key(&name) {
+                            return Err(err_at(self.src, name_at, format!("`{}:` is given twice in {}(…)", name, tag)));
+                        }
                         el.named_args.insert(name.clone(), J::String(self.join_js(&toks)));
                         raw_named_args.push((name, toks, arg_at));
                     } else {

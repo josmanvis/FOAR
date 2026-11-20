@@ -116,6 +116,12 @@ export function createLanguageFeatures({ ws, palette, notify }) {
     filterSuggest();
   }
 
+  /** What's been typed since the suggestion list opened. */
+  function suggestPrefix() {
+    const ae = active();
+    return sug && ae ? ae.ta.value.slice(sug.from, ae.ta.selectionStart) : '';
+  }
+
   function filterSuggest() {
     const ae = active();
     if (!sug || !ae || ae.path !== sug.path) return closeSuggest();
@@ -386,11 +392,18 @@ export function createLanguageFeatures({ ws, palette, notify }) {
         e.stopPropagation();
       };
       if (sug) {
-        if (e.key === 'ArrowDown') return stop(), (sug.index = (sug.index + 1) % sug.shown.length), highlightSuggest();
-        if (e.key === 'ArrowUp') return stop(), (sug.index = (sug.index - 1 + sug.shown.length) % sug.shown.length), highlightSuggest();
-        if (e.key === 'PageDown') return stop(), (sug.index = Math.min(sug.shown.length - 1, sug.index + 8)), highlightSuggest();
-        if (e.key === 'PageUp') return stop(), (sug.index = Math.max(0, sug.index - 8)), highlightSuggest();
-        if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && !e.ctrlKey && !e.altKey) return stop(), accept();
+        if (e.key === 'ArrowDown') return stop(), (sug.chosen = true), (sug.index = (sug.index + 1) % sug.shown.length), highlightSuggest();
+        if (e.key === 'ArrowUp') return stop(), (sug.chosen = true), (sug.index = (sug.index - 1 + sug.shown.length) % sug.shown.length), highlightSuggest();
+        if (e.key === 'PageDown') return stop(), (sug.chosen = true), (sug.index = Math.min(sug.shown.length - 1, sug.index + 8)), highlightSuggest();
+        if (e.key === 'PageUp') return stop(), (sug.chosen = true), (sug.index = Math.max(0, sug.index - 8)), highlightSuggest();
+        if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey) return stop(), accept();
+        if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+          // Enter takes a suggestion only when you were after one: you typed part
+          // of a word, moved through the list, or pressed Ctrl+Space. A list that
+          // popped up by itself (after `,` or `:`) must not eat the newline.
+          if (sug.explicit || sug.chosen || suggestPrefix().length > 0) return stop(), accept();
+          closeSuggest();
+        }
         if (e.key === 'Escape') return stop(), closeSuggest();
       }
       if ((e.ctrlKey || e.metaKey) && e.code === 'Space') return stop(), openSuggest({ explicit: true });
@@ -434,6 +447,8 @@ export function createLanguageFeatures({ ws, palette, notify }) {
         const okQuote = e.key !== '"' || (!/[\w"]/.test(prev) && !inString);
         if (okNext && okQuote && !inComment && (e.key === '"' || !inString)) {
           stop();
+          // an opening quote starts a string: no member/keyword suggestions in there
+          if (e.key === '"' && sug) closeSuggest();
           edit(ae, s, en, e.key + PAIRS[e.key], s + 1);
           if (e.key === '(') setTimeout(showSignature, 0);
           if (e.key === '"' && /import\s+$/.test(lineBefore)) setTimeout(() => openSuggest(), 0);
@@ -462,7 +477,11 @@ export function createLanguageFeatures({ ws, palette, notify }) {
     if (e.inputType === 'insertText' && e.data) {
       const ch = e.data.slice(-1);
       const before = ae.ta.value.slice(Math.max(0, ae.ta.selectionStart - 12), ae.ta.selectionStart);
-      if (/[\w@.]/.test(ch) || (ch === '-' && /--$|->$/.test(before)) || (ch === '>' && /->$/.test(before)) || (ch === ' ' && /(?:->|transition|@use|@state|:)\s$/.test(before)) || (ch === '(' && /(?:style|on_\w+)\($/.test(before)) || ch === ',' || ch === ':') {
+      const lineBefore = ae.ta.value.slice(ae.ta.value.lastIndexOf('\n', ae.ta.selectionStart - 1) + 1, ae.ta.selectionStart);
+      const inString = (lineBefore.replace(/\\./g, '').match(/"/g) || []).length % 2 === 1;
+      if (inString && !/(?:^\s*import\s+|\bt\()"[^"]*$/.test(lineBefore)) {
+        if (sug) closeSuggest();
+      } else if (/[\w@.]/.test(ch) || (ch === '-' && /--$|->$/.test(before)) || (ch === '>' && /->$/.test(before)) || (ch === ' ' && /(?:->|transition|@use|@state|:)\s$/.test(before)) || (ch === '(' && /(?:style|on_\w+)\($/.test(before)) || ch === ',' || ch === ':') {
         openSuggest();
       }
     }

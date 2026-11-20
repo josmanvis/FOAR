@@ -4,6 +4,13 @@ All notable changes to FOAR are documented in this file.
 
 ## Unreleased
 
+### Playground
+- Typing no longer makes the caret jump: Enter only takes a suggestion you asked for (typed part of a word, moved through the list, or pressed Ctrl+Space). A list that opened by itself after `,` or `:` used to swallow Enter and insert e.g. `label:` where you wanted a new line. No suggestions pop up inside strings (except import paths and `t("…")` keys).
+- Saving while still typing no longer loses the newest keystrokes when the dev server reloads the project from disk.
+
+### Language
+- New errors for mangled arguments: `danger: hint: true` ("Two labels in a row"), the same prop given twice, and `name:` with no value.
+
 ## [0.3.5] — 2026-11-20
 
 ### Security

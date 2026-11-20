@@ -1242,8 +1242,12 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
     try {
       // Writes first, then deletes: an import never points at a missing file on disk.
       for (const p of paths.filter((p) => files[p] != null)) {
-        await backend.write(p, files[p]);
-        saved[p] = files[p];
+        // what goes to disk, not what's in the buffer once the write returns:
+        // keystrokes typed meanwhile are still unsaved, so the dev server's
+        // reload (refreshFromDisk) must not replace them with the older copy
+        const text = files[p];
+        await backend.write(p, text);
+        saved[p] = text;
       }
       for (const p of paths.filter((p) => files[p] == null)) {
         await backend.remove(p);

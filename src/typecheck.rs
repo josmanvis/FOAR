@@ -2141,4 +2141,15 @@ mod tests {
         assert!(compile(r#"view V { store n: i32 = 0; state S { render { Button("b") -> on_click(Go) } effect Go(by: i32) { let k = by; k = k + 1; n = k; for i in 0..3 { n += i; } } } }"#).is_ok());
         assert!(compile(&format!("{}context B {{ let twice: i32 = A.n * 2; effect Go() {{ A.Inc(2); }} }}\nview V {{ use A; use B; state S {{ render {{ Text(B.twice) Button(\"b\") -> on_click(B.Go) }} }} }}", a)).is_ok());
     }
+
+    #[test]
+    fn named_arguments_are_well_formed() {
+        let m = "view M(label: String, danger: bool = false, hint: String = \"\") { state S { render { Text(label) } } }\n";
+        let call = |args: &str| compile(&format!("{}view A {{ store ok: bool = true; state S {{ render {{ M(label: \"x\", {}) }} }} }}", m, args));
+        assert!(call("danger: hint: true").unwrap_err().message.contains("Two labels in a row: `danger:` has no value before `hint:`"));
+        assert!(call("danger: true, label: \"y\"").unwrap_err().message.contains("`label:` is given twice in M(…)"));
+        assert!(call("danger: ,").unwrap_err().message.contains("Expected a value after `danger:`"));
+        assert!(call("hint: ok ? \"a\" : \"b\"").is_ok(), "a ternary is a value");
+        assert!(compile("view A { state S { render { Text(\"x\", label: \"a\", label: \"b\") } } }").unwrap_err().message.contains("`label:` is given twice in Text(…)"));
+    }
 }

@@ -116,7 +116,10 @@ export async function launch({ port = Number(process.env.CDP_PORT || 9333), prof
       await page.sleep(40);
     },
     async key(key, { code, mods = 0, text } = {}) {
-      const vk = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, Home: 36, End: 35, ' ': 32, F10: 121, F2: 113, ContextMenu: 93, "/": 191, "}": 221, S: 83 }[key] ?? key.toUpperCase().charCodeAt(0);
+      const vk = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, Home: 36, End: 35, ' ': 32, F10: 121, F2: 113, ContextMenu: 93, "/": 191, "}": 221, S: 83 }[key] ??
+        // letters and digits share their char code with the key code; other characters
+        // must not ('(' is 40 = ArrowDown, '"' is 34 = PageDown): send 0 and let `text` type them
+        (/^[a-z0-9]$/i.test(key) ? key.toUpperCase().charCodeAt(0) : 0);
       const base = { key, code: code ?? (key.length === 1 ? `Key${key.toUpperCase()}` : key), windowsVirtualKeyCode: vk, modifiers: mods };
       const t = text ?? (key === 'Enter' && !mods ? '\r' : undefined);
       await send('Input.dispatchKeyEvent', { type: 'keyDown', ...base, ...(t ? { text: t } : {}) });

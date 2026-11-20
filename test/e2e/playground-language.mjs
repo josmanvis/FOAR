@@ -300,6 +300,31 @@ try {
     ok(s?.[0] === 'Ellipsis', JSON.stringify(s?.slice(0, 5)));
     return s.slice(0, 4).join(', ');
   });
+  await step('typing key by key: the caret never jumps; `,` + Enter makes a new line, not a suggestion', async () => {
+    await page.eval(`(() => { for (const d of ['components', 'components/sidebar']) { const r = document.querySelector('[data-dir="' + d + '"][aria-expanded="false"]'); if (r) r.click(); } })()`);
+    await page.sleep(100);
+    await openTab('components/sidebar/FolderRow.foar');
+    await caretAfter('danger: true');
+    const start = await page.eval(`${TA}.selectionStart`);
+    const before = await val();
+    // real key events (keydown handlers run), as a person types a fix
+    const keys = [',', 'Enter', ...'hint: "Delete (and its notes)"'];
+    const jumps = [];
+    for (const k of keys) {
+      const c0 = await page.eval(`${TA}.selectionStart`);
+      await page.key(k, k === 'Enter' ? {} : { text: k });
+      const c1 = await page.eval(`${TA}.selectionStart`);
+      if (k !== 'Enter' && c1 !== c0 + 1) jumps.push(`${JSON.stringify(k)}: ${c0} → ${c1}`);
+    }
+    const after = await val();
+    const typed = after.slice(start, start + after.length - before.length);
+    ok(!jumps.length, `caret jumped: ${jumps.join(', ')}`);
+    ok(/^,\n\s+hint: "Delete \(and its notes\)"$/.test(typed), JSON.stringify(typed));
+    ok(after.slice(start + typed.length) === before.slice(start), 'text after the caret changed');
+    // undo the edit so later steps and the "files untouched" check see the original
+    await page.eval(`(() => { const t = ${TA}; t.focus(); t.setSelectionRange(${start}, ${start} + ${JSON.stringify(typed)}.length); document.execCommand('insertText', false, ''); t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    return JSON.stringify(typed);
+  });
   await page.screenshot(`${OUT}/pg6-notes.png`);
 } catch (e) {
   fail++;
