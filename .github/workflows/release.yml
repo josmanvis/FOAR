@@ -52,6 +52,7 @@ jobs:
           for f in examples/*/app.foar; do "$bin" check "$f"; done
           tmp=$(mktemp -d)
           cd "$tmp" && "$bin" init demo && cd demo && "$bin" build && test -s dist/foar-runtime.js
+          head -c 40 dist/foar-runtime.js | grep -q 'FOAR runtime'   # the minified build
       - name: Package
         shell: bash
         run: |

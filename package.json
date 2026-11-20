@@ -9,10 +9,11 @@
     "dev": "cargo build --release && node server.js",
     "build": "cargo build --release",
     "build:wasm": "cargo build --release --lib --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/foar.wasm web/foar.wasm",
-    "test": "cargo test --release && cargo build --release && node --test test/runtime.test.js test/tooling.test.js",
+    "test": "cargo test --release && cargo build --release && node scripts/build-runtime.mjs --check && node --test test/runtime.test.js test/tooling.test.js && FOAR_RUNTIME=web/foar-runtime.min.js node --test test/runtime.test.js",
     "bench": "cargo build --release && node bench/bench.js",
     "build:site": "node scripts/site.mjs _site",
-    "test:e2e": "node test/e2e/run.mjs"
+    "test:e2e": "node test/e2e/run.mjs",
+    "build:runtime": "node scripts/build-runtime.mjs"
   },
   "keywords": [],
   "author": "Jose Viscasillas",
@@ -21,7 +22,8 @@
   "devDependencies": {
     "axe-core": "^4.14.1",
     "happy-dom": "^15.11.7",
-    "marked": "15.0.12"
+    "marked": "15.0.12",
+    "terser": "^5.51.3"
   },
   "repository": {
     "type": "git",

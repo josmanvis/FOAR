@@ -213,6 +213,8 @@ export async function buildSite(out) {
   fs.mkdirSync(out, { recursive: true });
   const web = path.join(ROOT, 'web');
   fs.cpSync(web, out, { recursive: true, filter: (src) => !src.includes(`${path.sep}docs${path.sep}`) });
+  // the site serves the minified runtime under the usual name (imports stay the same)
+  fs.copyFileSync(path.join(web, 'foar-runtime.min.js'), path.join(out, 'foar-runtime.js'));
   if (!fs.existsSync(path.join(out, 'foar.wasm'))) throw new Error('web/foar.wasm is missing: run `pnpm build:wasm` first');
   fs.mkdirSync(path.join(out, 'docs'), { recursive: true });
   for (const p of PAGES) fs.writeFileSync(path.join(out, 'docs', `${p.name}.html`), renderDoc(p.name));

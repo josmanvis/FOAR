@@ -8,8 +8,11 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, UNIX_EPOCH};
 
-/// web/foar-runtime.js, the same file the playground runs.
-pub const RUNTIME: &str = include_str!("../web/foar-runtime.js");
+/// The minified runtime (web/foar-runtime.min.js, built by scripts/build-runtime.mjs):
+/// what `foar build` writes next to your app.
+pub const RUNTIME: &str = include_str!("../web/foar-runtime.min.js");
+/// The readable runtime, served by `foar dev` so stack traces stay readable.
+pub const RUNTIME_DEV: &str = include_str!("../web/foar-runtime.js");
 
 pub const INSTALL_SH: &str = "https://josmanvis.github.io/FOAR/install.sh";
 pub const INSTALL_PS1: &str = "https://josmanvis.github.io/FOAR/install.ps1";
@@ -270,7 +273,7 @@ impl Dev {
         match path.as_str() {
             "/__foar/stamp" => respond(&mut stream, "200 OK", "text/plain", stamp(&self.dir).to_string().as_bytes()),
             "/app.js" => respond(&mut stream, "200 OK", mime("x.js"), self.app_js().as_bytes()),
-            "/foar-runtime.js" if !self.dir.join("foar-runtime.js").is_file() => respond(&mut stream, "200 OK", mime("x.js"), RUNTIME.as_bytes()),
+            "/foar-runtime.js" if !self.dir.join("foar-runtime.js").is_file() => respond(&mut stream, "200 OK", mime("x.js"), RUNTIME_DEV.as_bytes()),
             _ => self.serve_file(&mut stream, &path),
         }
     }

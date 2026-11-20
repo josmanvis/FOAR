@@ -39,7 +39,8 @@ execFileSync(bin, ['check', path.join(notesDir, 'app.foar')]);
 const nativeMs = performance.now() - t0;
 
 const rows = [
-  ['runtime, gzipped', kb(gz('web/foar-runtime.js')), 'web/foar-runtime.js'],
+  ['runtime, gzipped (as served)', kb(gz('web/foar-runtime.min.js')), 'web/foar-runtime.min.js'],
+  ['runtime source, gzipped', kb(gz('web/foar-runtime.js')), 'web/foar-runtime.js (readable)'],
   ['compiler as WebAssembly, gzipped', kb(gz('web/foar.wasm')), 'web/foar.wasm'],
   ['CLI binary', kb(fs.statSync(bin).size), 'target/release/foar (this platform)'],
   ['Notes example', `${notesFiles.length} files, ${lines.toLocaleString('en')} lines`, 'examples/notes-on-foar/**/*.foar'],

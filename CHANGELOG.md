@@ -4,6 +4,16 @@ All notable changes to FOAR are documented in this file.
 
 ## Unreleased
 
+## [0.4.1] — 2026-11-20
+
+### Performance
+- **The runtime is served minified: 23 KB gzipped instead of 38.9 KB (−41%; 20 KB with brotli).** On a throttled "Fast 3G" connection in Chrome, loading the runtime drops from 353 ms to 268 ms and the todo example is interactive in 442 ms instead of 527 ms.
+- `web/foar-runtime.min.js` is generated from the readable `web/foar-runtime.js` by `pnpm build:runtime` (terser) and committed; `pnpm test` fails if it's out of date and runs the whole runtime suite against both builds.
+- The website/playground and `foar build` use the minified runtime; `foar dev` keeps the readable one so stack traces stay readable.
+
+### Docs
+- Every published size and speed figure re-measured (`node scripts/measure.mjs`): runtime 23 KB, WebAssembly compiler 278 KB, CLI 1.4 MB, Notes compile 13 ms. The site and README still said 25 KB for a runtime that had grown to 38.9 KB.
+
 ## [0.4.0] — 2026-11-20
 
 **Upgrading:** the new accessibility rules are compile errors. Code that worked in 0.3 can stop compiling where it has an `Image` without `alt:`, a form control without `label:`, an icon-only button without `label:`/`title:`, an invalid ARIA role or attribute, or a positive `tab_index`. Each error says what to add.

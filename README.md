@@ -23,7 +23,7 @@ a built-in **router**, **streaming & async zero-DOM SSR + zero-recreation full
 & partial-islands hydration (`Island`/`hydrateIslands`)**, `foar.toml` +
 SHA-256 `foar.lock` **packages**, a **Rust LSP server**, **CLI formatter (`foar fmt`)**,
 **Vite HMR plugin**, and **VS Code extension** ship in one **Rust compiler**
-(native + WebAssembly) targeting a 25 KB retained-DOM runtime with no virtual DOM.
+(native + WebAssembly) targeting a 23 KB retained-DOM runtime with no virtual DOM.
 
 ```rust
 enum Status { Draft, Review, Published }
@@ -178,7 +178,7 @@ pnpm install && pnpm dev       # site + playground on http://localhost:3000
 
 ```
 src/                 the Rust compiler (lexer, parser, match/enums, typecheck, CSS, imports/lockfile, i18n, LSP, CLI, WASM)
-web/foar-runtime.js  the DOM + SSR + streaming + islands runtime (one module, ~25 KB gzipped, zero dependencies)
+web/foar-runtime.js  the DOM + SSR + streaming + islands runtime (one module, ~23 KB gzipped as served, zero dependencies)
 web/foar-compiler.js runs the compiler in the browser (WASM)
 integrations/        Vite plugin with state-preserving HMR (vite-plugin-foar.js)
 editors/vscode/      VS Code extension + TextMate grammar launching `foar lsp`

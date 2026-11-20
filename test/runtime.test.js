@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { makeDom, tick, fire, compile as parseFoar, loadProject } from './dom.js';
-import { createFoarRuntime, attachPrecompiled, hydrate, hydrateIslands, renderToString, renderToStringAsync, renderToStream, matchRoute, parseUrl } from '../web/foar-runtime.js';
+// FOAR_RUNTIME=web/foar-runtime.min.js runs everything against the minified build
+const RUNTIME_URL = new URL(process.env.FOAR_RUNTIME ? `../${process.env.FOAR_RUNTIME}` : '../web/foar-runtime.js', import.meta.url).href;
+const { createFoarRuntime, attachPrecompiled, hydrate, hydrateIslands, renderToString, renderToStringAsync, renderToStream, matchRoute, parseUrl } = await import(RUNTIME_URL);
 
 const BIN = new URL('../target/release/foar', import.meta.url).pathname;
 
@@ -1662,7 +1664,7 @@ view App {
   execFileSync(BIN, ['build', foarFile, '--format', 'js', '-o', jsFile]);
 
   // Point the generated module at our local foar-runtime.js
-  const runtimeUrl = new URL('../web/foar-runtime.js', import.meta.url).href;
+  const runtimeUrl = RUNTIME_URL;
   const generated = fs.readFileSync(jsFile, 'utf8').replace('./foar-runtime.js', runtimeUrl);
   fs.writeFileSync(jsFile, generated);
 

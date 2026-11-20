@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FOAR: interfaces as state machines</title>
-  <meta name="description" content="FOAR is a statically typed UI language where every component is an explicit state machine. A Rust compiler (native and WebAssembly) checks every state and case, and a 25 KB runtime updates the page in place.">
+  <meta name="description" content="FOAR is a statically typed UI language where every component is an explicit state machine. A Rust compiler (native and WebAssembly) checks every state and case, and a 23 KB runtime updates the page in place.">
   <meta property="og:title" content="FOAR: interfaces as state machines">
   <meta property="og:description" content="A UI language with explicit states, exhaustive match, and a Rust compiler that also runs in your browser.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -106,7 +106,7 @@
 
         <pre class="source" id="hero-source" aria-label="The component's source, Note.foar"></pre>
       </div>
-      <p class="panel-caption">This panel is <a href="https://github.com/josmanvis/FOAR/blob/main/web/hero/note.foar" rel="noopener">Note.foar</a>, compiled by the FOAR compiler and running on the 25 KB FOAR runtime. Edit the note: the lit route is the transition that just ran, and the lamp is the one state the component is in.</p>
+      <p class="panel-caption">This panel is <a href="https://github.com/josmanvis/FOAR/blob/main/web/hero/note.foar" rel="noopener">Note.foar</a>, compiled by the FOAR compiler and running on the 23 KB FOAR runtime. Edit the note: the lit route is the transition that just ran, and the lamp is the one state the component is in.</p>
     </div>
   </section>
 
@@ -242,10 +242,10 @@ let fee = match method {
         <table>
           <thead><tr><th>Figure</th><th>What it measures</th></tr></thead>
           <tbody>
-            <tr><td class="measure-figure">25 KB</td><td>The runtime, gzipped: one ES module with no dependencies, including the router, server rendering, hydration and i18n.</td></tr>
-            <tr><td class="measure-figure">263 KB</td><td>The whole compiler and type checker as WebAssembly, gzipped. It's what the playground downloads.</td></tr>
-            <tr><td class="measure-figure">1.3 MB</td><td>The <code>foar</code> command: compiler, type checker, runtime and dev server in one binary, with nothing else to install.</td></tr>
-            <tr><td class="measure-figure">35 ms</td><td>Compiling and type-checking the Notes app (26 files, about 2,100 lines) in WebAssembly.</td></tr>
+            <tr><td class="measure-figure">23 KB</td><td>The runtime, gzipped: one ES module with no dependencies, including the router, server rendering, hydration and i18n.</td></tr>
+            <tr><td class="measure-figure">278 KB</td><td>The whole compiler and type checker as WebAssembly, gzipped. It's what the playground downloads.</td></tr>
+            <tr><td class="measure-figure">1.4 MB</td><td>The <code>foar</code> command: compiler, type checker, runtime and dev server in one binary, with nothing else to install.</td></tr>
+            <tr><td class="measure-figure">13 ms</td><td>Compiling and type-checking the Notes app (26 files, about 2,100 lines) in WebAssembly.</td></tr>
             <tr><td class="measure-figure">0</td><td>DOM elements created while hydrating server HTML, or while typing into a filter that keeps the same 500 rows.</td></tr>
             <tr><td class="measure-figure">2.5 ms</td><td>Per keystroke or checkbox toggle in a 500-row list, measured in happy-dom.</td></tr>
           </tbody>

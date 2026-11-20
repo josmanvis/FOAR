@@ -38,9 +38,9 @@ The runtime is built into `foar`, so nothing else needs installing.
 ## The compiler
 
 The compiler is written in Rust and builds two ways from the same source: a
-native command-line tool, and a WebAssembly module (≈263 KB gzipped) that the
+native command-line tool, and a WebAssembly module (≈278 KB gzipped) that the
 playground runs in the browser. Both compile and typecheck the 26-file Notes app
-(≈2,100 lines) in about 35 ms (`node scripts/measure.mjs`).
+(≈2,100 lines) in about 13 ms (`node scripts/measure.mjs`).
 
 ```sh
 cargo build --release              # target/release/foar
@@ -119,7 +119,7 @@ run in CI.
 
 ## The runtime
 
-`web/foar-runtime.js` is one ES module (≈25 KB gzipped) with no dependencies:
+`web/foar-runtime.js` is one ES module with no dependencies (≈23 KB gzipped as served: the site and `foar build` use the minified `web/foar-runtime.min.js`, built by `pnpm build:runtime`):
 `createFoarRuntime`, `hydrate`, `hydrateIslands`, `renderToString`,
 `renderToStringAsync`, `renderToStream`, and `createI18n`. See
 the [reference](./language.md#host-functions-and-the-runtime).

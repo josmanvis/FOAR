@@ -106,7 +106,7 @@ values that changed.
   dynamic values are touched at runtime.
 - Inputs are never re-created, so focus, selection, scroll and CSS
   transitions survive every update.
-- The runtime is one dependency-free module of ≈25 KB gzipped (including the
+- The runtime is one dependency-free module of ≈23 KB gzipped (including the
   router, shared contexts, pure `fn`, Slots, Portals, Catch boundaries,
   Form/Select/Slider/Progress, state-scoped `on_key` hotkeys, streaming & async
   zero-DOM SSR, full & partial-islands hydration, i18n, and accessibility helpers).
