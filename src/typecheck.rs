@@ -471,7 +471,7 @@ pub fn check_program(
                 tc.check_statements(tokens)?;
             }
             CheckItem::ViewCall { view, locals, target, pos_args, named_args, at } => {
-                let Some(target_params) = env.views.get(target).cloned() else { continue };
+                let Some(target_params) = env.views.get(target) else { continue };
                 let scope = scope_with_locals(&env, view, locals);
                 let mut tc = Checker::new(&env, view, scope);
 
@@ -532,6 +532,12 @@ pub fn check_program(
                 }
             }
             CheckItem::RenderExpr { view, locals, tokens } => {
+                if tokens.len() == 1
+                    && (tokens[0].kind == Kind::Num
+                        || (tokens[0].kind == Kind::Str && !src[tokens[0].start..tokens[0].end].contains('{')))
+                {
+                    continue;
+                }
                 let scope = scope_with_locals(&env, view, locals);
                 let mut tc = Checker::new(&env, view, scope);
                 tc.check_expr(tokens, None)?;

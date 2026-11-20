@@ -4,6 +4,15 @@ All notable changes to FOAR are documented in this file.
 
 ## Unreleased
 
+## [0.3.2] — 2026-11-19
+
+### Performance (Compiler & DOM Runtime)
+- **Rust / WebAssembly compiler (2.9× faster)**: added fast substring guards and zero-allocation `Cow` rewrites in `rust_idioms_to_js` / `string_literal_to_js` (`src/transpile.rs`) and literal fast-paths in `src/typecheck.rs`, cutting 26-file Notes app WebAssembly compilation from **35 ms → 12 ms** (**66% faster**) and native `foar check` from **38 ms → 11 ms** (**71% faster**).
+- **Retained-DOM runtime (15–30% faster mounts & list updates)**:
+  - Per-view precompiled store initializers (`meta.storeInits`), host class strings (`meta.hostClassName`), and view-scoped expression lookup (`meta.compile`) eliminate repeated scope-key joins on hot mount paths.
+  - Per-AST-node `ownDeps` caching (`nodeOwnDepsCache` `WeakMap`), direct `setAttribute` data attribute writes on view hosts, and single-write `className` assignment on unhydrated mounts cut 500–2,000-row mount times by **15–24%**.
+  - Keyed `List` prefix-match and $O(1)$ tail-append fast paths skip `Map`/`Set`/key-allocation passes and DOM cursor walks when existing rows remain in order, improving keystroke and item-append throughput by **15–18%**.
+
 ## [0.3.1] — 2026-11-19
 
 ### Language & Runtime

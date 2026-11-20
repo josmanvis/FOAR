@@ -49,11 +49,21 @@ fn rules() -> &'static Rules {
 pub fn rust_idioms_to_js(code: &str) -> String {
     let r = rules();
     let mut out = code.to_string();
-    out = r.if_let_find.replace_all(&out, "const ${1} = ${2}.findIndex((${3}) => ${4}); if (${1} !== -1)").into_owned();
-    out = r.if_let_some.replace_all(&out, "let ${1}; if ((${1} = (${2})) != null) {").into_owned();
-    out = r
-        .for_in
-        .replace_all(&out, |c: &regex::Captures| {
+    let has_if = out.contains("if");
+    if has_if && out.contains("let") {
+        if out.contains("find_index") {
+            if let std::borrow::Cow::Owned(s) = r.if_let_find.replace_all(&out, "const ${1} = ${2}.findIndex((${3}) => ${4}); if (${1} !== -1)") {
+                out = s;
+            }
+        }
+        if out.contains("Some") {
+            if let std::borrow::Cow::Owned(s) = r.if_let_some.replace_all(&out, "let ${1}; if ((${1} = (${2})) != null) {") {
+                out = s;
+            }
+        }
+    }
+    if out.contains("for") {
+        if let std::borrow::Cow::Owned(s) = r.for_in.replace_all(&out, |c: &regex::Captures| {
             let (var, src) = (&c[1], c[2].trim());
             match src.split_once("..") {
                 Some((a, b)) if !a.is_empty() && !b.is_empty() && !a.contains('(') => {
@@ -65,33 +75,84 @@ pub fn rust_idioms_to_js(code: &str) -> String {
                 }
                 _ => format!("for (const {} of {}) {{", var, src),
             }
-        })
-        .into_owned();
-    out = r.while_no_parens.replace_all(&out, |c: &regex::Captures| format!("while ({}) {{", c[1].trim())).into_owned();
-    out = r.loop_kw.replace_all(&out, "while (true) {").into_owned();
-    out = r.retain.replace_all(&out, "${1} = ${1}.filter((${2}) => ${3})").into_owned();
-    out = r.closure.replace_all(&out, "${1}(${2}) => ").into_owned();
-    out = r.contains.replace_all(&out, ".toLowerCase().includes(String(${1}).toLowerCase())").into_owned();
-    out = r.is_empty.replace_all(&out, "(${1}.trim().length === 0)").into_owned();
-    out = r.struct_lit.replace_all(&out, "${1} {").into_owned();
-    out = r.let_mut.replace_all(&out, "let ${1} = structuredClone(${2});").into_owned();
-    out = r.async_transition.replace_all(&out, "__asyncTransition(\"${1}\", [${2}], \"${3}\");").into_owned();
-    out = r.transition.replace_all(&out, "__transition(\"${1}\");").into_owned();
-    out = r.emit.replace_all(&out, "__emit(\"${1}\", ${2});").into_owned();
-    out = r.if_no_parens.replace_all(&out, |c: &regex::Captures| format!("if ({}) {{", c[1].trim())).into_owned();
+        }) {
+            out = s;
+        }
+    }
+    if out.contains("while") {
+        if let std::borrow::Cow::Owned(s) = r.while_no_parens.replace_all(&out, |c: &regex::Captures| format!("while ({}) {{", c[1].trim())) {
+            out = s;
+        }
+    }
+    if out.contains("loop") {
+        if let std::borrow::Cow::Owned(s) = r.loop_kw.replace_all(&out, "while (true) {") {
+            out = s;
+        }
+    }
+    if out.contains("retain") {
+        if let std::borrow::Cow::Owned(s) = r.retain.replace_all(&out, "${1} = ${1}.filter((${2}) => ${3})") {
+            out = s;
+        }
+    }
+    if out.contains('|') {
+        if let std::borrow::Cow::Owned(s) = r.closure.replace_all(&out, "${1}(${2}) => ") {
+            out = s;
+        }
+    }
+    if out.contains("contains") {
+        if let std::borrow::Cow::Owned(s) = r.contains.replace_all(&out, ".toLowerCase().includes(String(${1}).toLowerCase())") {
+            out = s;
+        }
+    }
+    if out.contains("is_empty") {
+        if let std::borrow::Cow::Owned(s) = r.is_empty.replace_all(&out, "(${1}.trim().length === 0)") {
+            out = s;
+        }
+    }
+    if out.contains('{') {
+        if let std::borrow::Cow::Owned(s) = r.struct_lit.replace_all(&out, "${1} {") {
+            out = s;
+        }
+    }
+    if out.contains("let") && out.contains("mut") {
+        if let std::borrow::Cow::Owned(s) = r.let_mut.replace_all(&out, "let ${1} = structuredClone(${2});") {
+            out = s;
+        }
+    }
+    if out.contains("transition") {
+        if out.contains("->") {
+            if let std::borrow::Cow::Owned(s) = r.async_transition.replace_all(&out, "__asyncTransition(\"${1}\", [${2}], \"${3}\");") {
+                out = s;
+            }
+        }
+        if let std::borrow::Cow::Owned(s) = r.transition.replace_all(&out, "__transition(\"${1}\");") {
+            out = s;
+        }
+    }
+    if out.contains("emit") {
+        if let std::borrow::Cow::Owned(s) = r.emit.replace_all(&out, "__emit(\"${1}\", ${2});") {
+            out = s;
+        }
+    }
+    if has_if && out.contains('{') {
+        if let std::borrow::Cow::Owned(s) = r.if_no_parens.replace_all(&out, |c: &regex::Captures| format!("if ({}) {{", c[1].trim())) {
+            out = s;
+        }
+    }
     out
 }
 
 /// A string literal -> JS source. `"Count: {count}"` becomes a template literal.
 pub fn string_literal_to_js(value: &str) -> String {
-    static INTERP: OnceLock<Regex> = OnceLock::new();
-    let re = INTERP.get_or_init(|| Regex::new(r"\{([a-zA-Z0-9_.]+)\}").unwrap());
-    if re.is_match(value) {
-        let escaped = value.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
-        format!("`{}`", re.replace_all(&escaped, "$${${1}}"))
-    } else {
-        serde_json::to_string(value).unwrap()
+    if value.contains('{') {
+        static INTERP: OnceLock<Regex> = OnceLock::new();
+        let re = INTERP.get_or_init(|| Regex::new(r"\{([a-zA-Z0-9_.]+)\}").unwrap());
+        if re.is_match(value) {
+            let escaped = value.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
+            return format!("`{}`", re.replace_all(&escaped, "$${${1}}"));
+        }
     }
+    serde_json::to_string(value).unwrap()
 }
 
 #[cfg(test)]

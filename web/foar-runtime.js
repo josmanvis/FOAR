@@ -105,6 +105,7 @@ function dedupe(names) {
 }
 
 const EMPTY_SET = Object.freeze(new Set());
+const EMPTY_ARRAY = Object.freeze([]);
 const STAR_SET = Object.freeze(new Set(['*']));
 const ROUTE_SET = Object.freeze(new Set(['route']));
 const depsCache = new Map();
@@ -440,6 +441,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   let deferHostMounts = true;
   let emitDepth = 0;
   const subViewPropCache = new WeakMap();
+  const nodeOwnDepsCache = new WeakMap();
 
   function flushHostMounts() {
     if (deferHostMounts || !pendingHostMounts.length) return;
@@ -721,22 +723,36 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     for (const s of decl.states) {
       states.set(s.name, { decl: s, effects: new Map(s.effects.map((e) => [e.name, e])) });
     }
+    const hostStyle = compileStyle(decl.style);
+    const varNames = dedupe([...propNames, ...storeNames, ...derivedNames]);
+    const viewExterns = externNames.filter((n) => !propNames.includes(n) && !storeNames.includes(n) && !derivedNames.includes(n));
+    const viewExprCache = new Map();
+    const compileViewExpr = (expr) => {
+      let fn = viewExprCache.get(expr);
+      if (!fn) {
+        fn = compile(expr, varNames, viewExterns);
+        viewExprCache.set(expr, fn);
+      }
+      return fn;
+    };
     m = {
       decl,
       propNames,
       propDefaults,
       storeNames,
+      storeInits: decl.stores.map((st) => ({ name: st.name, expr: st.initExpr, fn: compileViewExpr(st.initExpr) })),
       derivedNames,
       // `let` values, in order (a later one may use an earlier one)
-      derived: null,
-      varNames: dedupe([...propNames, ...storeNames, ...derivedNames]),
+      derived: (decl.derived || []).map((d) => ({ name: d.name, expr: d.expr, fn: compileViewExpr(d.expr) })),
+      varNames,
       // host functions visible in this view: its own props/stores win on a name clash
-      externNames: externNames.filter((n) => !propNames.includes(n) && !storeNames.includes(n) && !derivedNames.includes(n)),
+      externNames: viewExterns,
+      compile: compileViewExpr,
       states,
       firstState: decl.states[0] || null,
-      hostStyle: compileStyle(decl.style),
+      hostStyle,
+      hostClassName: hostStyle.cls ? `f4-view-host f4-view-${decl.name} ${hostStyle.cls}` : `f4-view-host f4-view-${decl.name}`,
     };
-    m.derived = (decl.derived || []).map((d) => ({ name: d.name, expr: d.expr, fn: compile(d.expr, m.varNames, m.externNames) }));
     viewMeta.set(decl, m);
     return m;
   }
@@ -811,15 +827,15 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       inst.state = savedInst.state;
     }
     const initLocals = externs;
-    for (const st of decl.stores) {
+    for (let i = 0; i < meta.storeInits.length; i++) {
+      const st = meta.storeInits[i];
       if (savedInst && savedInst.stores && Object.prototype.hasOwnProperty.call(savedInst.stores, st.name)) {
         vars[st.name] = savedInst.stores[st.name];
       } else {
-        const fn = compile(st.initExpr, meta.varNames, meta.externNames);
-        vars[st.name] = safeEval(fn, vars, initLocals, st.initExpr);
+        vars[st.name] = safeEval(st.fn, vars, initLocals, st.expr);
       }
     }
-    computeDerived(inst);
+    if (meta.derived.length) computeDerived(inst);
     instances.set(key, inst);
     return inst;
   }
@@ -975,10 +991,9 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const meta = inst.meta;
     const { el: host, claimed } = claim('div');
     if (!claimed) {
-      host.className = `f4-view-host f4-view-${inst.viewName}`;
-      addClasses(host, meta.hostStyle.cls);
-      host.dataset.viewName = inst.viewName;
-      host.dataset.key = inst.key; // which instance this is (host code, devtools)
+      host.className = meta.hostClassName;
+      host.setAttribute('data-view-name', inst.viewName);
+      host.setAttribute('data-key', inst.key); // which instance this is (host code, devtools)
     }
 
     enterHydrate(host, claimed);
@@ -998,13 +1013,17 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       inst.badgeState = bState;
     }
     inst.host = host;
-    inst.hostBindings = meta.hostStyle.dynamic.map((d) => ({
-      fn: compile(d.expr, meta.varNames, inst.meta.externNames),
-      expr: d.expr,
-      last: UNSET,
-      apply: (v) => applyInlineStyle(host, d.key, v),
-    }));
-    runBindings(inst.hostBindings, inst.vars, externs);
+    if (meta.hostStyle.dynamic.length > 0) {
+      inst.hostBindings = meta.hostStyle.dynamic.map((d) => ({
+        fn: compile(d.expr, meta.varNames, inst.meta.externNames),
+        expr: d.expr,
+        last: UNSET,
+        apply: (v) => applyInlineStyle(host, d.key, v),
+      }));
+      runBindings(inst.hostBindings, inst.vars, externs);
+    } else {
+      inst.hostBindings = EMPTY_ARRAY;
+    }
     mountState(inst);
     leaveHydrate();
     return host;
@@ -1013,7 +1032,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   function mountState(inst) {
     const st = inst.meta.states.get(inst.state) || (inst.meta.firstState && inst.meta.states.get(inst.meta.firstState.name));
     inst.mountedState = inst.state;
-    inst.host.dataset.stateName = inst.state;
+    inst.host.setAttribute('data-state-name', inst.state);
     if (inst.badgeState) inst.badgeState.textContent = inst.state;
     inst.blocks = st ? st.decl.render.map((node, i) => mountNode(node, inst, inst.meta.externNames, externs, String(i))) : [];
     for (const b of inst.blocks) {
@@ -1051,7 +1070,6 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       for (const g of globalChanges) changes.add(g);
     }
     inst.dirtyVars = null;
-    inst.subtreeDirty = false;
     if (inst.meta.derived.length && (changes || inst.mountedState !== inst.state)) {
       for (const d of inst.meta.derived) {
         const next = safeEval(d.fn, inst.vars, externs, d.expr);
@@ -1063,6 +1081,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       }
     }
     if (inst.mountedState !== inst.state) {
+      inst.subtreeDirty = false;
       unmountState(inst);
       mountState(inst);
       // freshly mounted blocks already reflect current vars
@@ -1074,6 +1093,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     }
     const childChanges = changes || EMPTY_SET;
     for (const b of inst.blocks) b.update(childChanges);
+    inst.subtreeDirty = false;
   }
 
   function disposeInstance(inst) {
@@ -1125,7 +1145,9 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
 
   function registerEvents(el, node, inst) {
     let map = null;
-    for (const [evName, handlerName] of Object.entries(node.events)) {
+    const evs = node.events;
+    for (const evName in evs) {
+      const handlerName = evs[evName];
       const domType = EVENT_MAP[evName];
       if (!domType) continue;
       map = map || {};
@@ -1201,9 +1223,16 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
 
   function mountElement(node, inst, localNames, locals, path) {
     const vn = inst.meta.varNames;
+    const isDefaultScope = localNames === inst.meta.externNames;
     const bindings = [];
     const bind = (expr, apply, live = false) =>
-      bindings.push({ fn: compile(expr, vn, localNames), expr, apply, last: UNSET, live });
+      bindings.push({
+        fn: isDefaultScope ? inst.meta.compile(expr) : compile(expr, vn, localNames),
+        expr,
+        apply,
+        last: UNSET,
+        live,
+      });
     let el;
     let children = null;
 
@@ -1214,7 +1243,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         if (!c.claimed) el.className = 'f4-text';
         if (node.args[0]) bind(node.args[0], (v) => { const s = v ?? ''; if (el.textContent !== String(s)) el.textContent = s; });
         if (node.events.on_click || node.events.on_double_click) {
-          el.dataset.clickable = '';
+          el.setAttribute('data-clickable', '');
           if (node.events.on_double_click) el.title = 'Double-click to trigger ' + node.events.on_double_click;
         }
         break;
@@ -1523,8 +1552,15 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     }
 
     const sc = compileStyle(node.style);
-    addClasses(el, sc.cls);
-    for (const d of sc.dynamic) bind(d.expr, (v) => applyInlineStyle(el, d.key, v));
+    if (sc.cls) {
+      if (hydrating) addClasses(el, sc.cls);
+      else if (node.tag === 'Svg') el.setAttribute('class', `f4-svg ${sc.cls}`);
+      else el.className = el.className ? `${el.className} ${sc.cls}` : sc.cls;
+    }
+    for (let i = 0; i < sc.dynamic.length; i++) {
+      const d = sc.dynamic[i];
+      bind(d.expr, (v) => applyInlineStyle(el, d.key, v));
+    }
     const na = node.namedArgs;
     if (na.title !== undefined && node.tag !== 'Image') {
       // An icon button's tooltip is also its accessible name unless `label:` says otherwise.
@@ -1572,10 +1608,10 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         prev = keys;
       });
     }
-    for (const [argName, argExpr] of Object.entries(na)) {
+    for (const argName in na) {
       if (argName.startsWith('data_') && argName.length > 5) {
         const attrName = `data-${argName.slice(5).replace(/_/g, '-')}`;
-        bind(argExpr, (v) => setAttr(el, attrName, v));
+        bind(na[argName], (v) => setAttr(el, attrName, v));
       }
     }
     let hostName = null;
@@ -1614,12 +1650,16 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       }
     }
 
-    let ownDeps = bindings.length === 0
-      ? EMPTY_SET
-      : bindings.length === 1
-        ? exprDeps(bindings[0].expr)
-        : mergeDeps(...bindings.map((b) => exprDeps(b.expr)));
-    if (node.tag === 'Link') ownDeps = mergeDeps(ownDeps, ROUTE_SET);
+    let ownDeps = nodeOwnDepsCache.get(node);
+    if (!ownDeps) {
+      ownDeps = bindings.length === 0
+        ? EMPTY_SET
+        : bindings.length === 1
+          ? exprDeps(bindings[0].expr)
+          : mergeDeps(...bindings.map((b) => exprDeps(b.expr)));
+      if (node.tag === 'Link') ownDeps = mergeDeps(ownDeps, ROUTE_SET);
+      nodeOwnDepsCache.set(node, ownDeps);
+    }
     const deps = !children || children.length === 0
       ? ownDeps
       : mergeDeps(ownDeps, blockDeps(children));
@@ -1644,11 +1684,13 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const vn = inst.meta.varNames;
     let propFns;
     let hostAttrFns;
+    let subViewDeps;
     const cached = subViewPropCache.get(node);
     const localKey = localNames.join(',');
     if (cached && cached.localKey === localKey) {
       propFns = cached.propFns;
       hostAttrFns = cached.hostAttrFns;
+      subViewDeps = cached.subViewDeps;
     } else {
       propFns = [];
       hostAttrFns = [];
@@ -1665,7 +1707,10 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         }
         propFns.push({ name, fn: compile(expr, vn, localNames), expr, deps: exprDeps(expr) });
       }
-      subViewPropCache.set(node, { localKey, propFns, hostAttrFns });
+      subViewDeps = node.children && node.children.length
+        ? STAR_SET
+        : mergeDeps(...propFns.map((p) => p.deps), ...hostAttrFns.map((h) => h.deps));
+      subViewPropCache.set(node, { localKey, propFns, hostAttrFns, subViewDeps });
     }
     const props = {};
     for (let i = 0; i < propFns.length; i++) {
@@ -1702,6 +1747,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
 
     return {
       el,
+      propDeps: subViewDeps,
       update(changes) {
         if (hostAttrFns.length) applyHostAttrs(changes);
         const forceObjectProps = Boolean(changes && (changes === STAR_SET || changes.has('*')));
@@ -2127,7 +2173,9 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const binding = node.listBinding;
     const bindingSet = binding ? Object.freeze(new Set([binding])) : null;
     const childLocalNames = binding ? dedupe([...localNames, binding]) : localNames;
-    const rows = new Map(); // key -> { locals, blocks, item }
+    const rows = new Map(); // key -> { locals, blocks, item, index }
+    let prevRows = [];
+    let rowOuterDeps = null;
     let emptyEl = null;
     const seen = new Set();
     // role / label / aria / data / data_* on the list container (e.g. role: "listbox")
@@ -2194,15 +2242,67 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         emptyEl.remove();
       }
 
+      const hasGlobals = Boolean(pendingGlobalForFlush && pendingGlobalForFlush.size > 0);
+      const updateUnchangedRows = !changes || !rowOuterDeps || needsUpdate(rowOuterDeps, changes) || inst.subtreeDirty || hasGlobals;
+
+      if (items.length > 0 && items.length >= prevRows.length && prevRows.length > 0) {
+        let prefixMatches = true;
+        for (let i = 0; i < prevRows.length; i++) {
+          if (prevRows[i].item !== items[i]) {
+            prefixMatches = false;
+            break;
+          }
+        }
+        if (prefixMatches) {
+          if (items.length === prevRows.length) {
+            if (updateUnchangedRows) {
+              for (let i = 0; i < prevRows.length; i++) {
+                const blocks = prevRows[i].blocks;
+                for (let j = 0; j < blocks.length; j++) blocks[j].update(changes);
+              }
+            }
+            return;
+          }
+          // Pure append candidate: verify new tail keys do not collide with existing rows
+          let canPureAppend = !hydrating;
+          for (let i = prevRows.length; i < items.length; i++) {
+            if (rows.has(itemKey(items[i], i))) {
+              canPureAppend = false;
+              break;
+            }
+          }
+          if (canPureAppend) {
+            if (updateUnchangedRows) {
+              for (let i = 0; i < prevRows.length; i++) {
+                const blocks = prevRows[i].blocks;
+                for (let j = 0; j < blocks.length; j++) blocks[j].update(changes);
+              }
+            }
+            for (let i = prevRows.length; i < items.length; i++) {
+              const item = items[i];
+              const key = itemKey(item, i);
+              const rl = Object.create(locals);
+              if (binding) rl[binding] = item;
+              const row = { locals: rl, blocks: null, item, index: i };
+              row.blocks = node.children.map((c, ci) => mountNode(c, inst, childLocalNames, rl, `${path}/${key}/${ci}`));
+              for (let j = 0; j < row.blocks.length; j++) el.appendChild(row.blocks[j].el);
+              rows.set(key, row);
+              prevRows.push(row);
+            }
+            return;
+          }
+        }
+      }
+
       seen.clear();
-      const order = new Array(items.length);
+      const nextRows = new Array(items.length);
       let orderChanged = rows.size !== items.length;
+      let reusedCount = 0;
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         let key = itemKey(item, i);
         if (seen.has(key)) key = `${key}#${i}`;
         seen.add(key);
-        order[i] = key;
         let row = rows.get(key);
         if (!row) {
           orderChanged = true;
@@ -2210,34 +2310,50 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
           if (binding) rl[binding] = item;
           row = { locals: rl, blocks: null, item, index: i };
           row.blocks = node.children.map((c, ci) => mountNode(c, inst, childLocalNames, rl, `${path}/${key}/${ci}`));
+          if (!rowOuterDeps) {
+            const rawDeps = mergeDeps(...row.blocks.map((b) => b.deps || b.propDeps || STAR_SET));
+            if (rawDeps === STAR_SET || rawDeps.has('*') || !binding) {
+              rowOuterDeps = rawDeps;
+            } else {
+              const filtered = new Set(rawDeps);
+              filtered.delete(binding);
+              rowOuterDeps = filtered.size === 0 ? EMPTY_SET : Object.freeze(filtered);
+            }
+          }
           rows.set(key, row);
         } else {
+          reusedCount++;
           if (row.index !== i) {
             orderChanged = true;
             row.index = i;
           }
-          const sameItem = row.item === item;
-          row.item = item;
-          if (binding) row.locals[binding] = item;
-          const rowChanges = sameItem
-            ? changes
-            : changes && bindingSet
+          if (row.item !== item) {
+            row.item = item;
+            if (binding) row.locals[binding] = item;
+            const rowChanges = changes && bindingSet
               ? mergeDeps(changes, bindingSet)
               : bindingSet;
-          for (const b of row.blocks) b.update(rowChanges);
+            for (let j = 0; j < row.blocks.length; j++) row.blocks[j].update(rowChanges);
+          } else if (updateUnchangedRows) {
+            for (let j = 0; j < row.blocks.length; j++) row.blocks[j].update(changes);
+          }
         }
+        nextRows[i] = row;
       }
 
-      for (const [key, row] of rows) {
-        if (!seen.has(key)) {
-          orderChanged = true;
-          for (const b of row.blocks) {
-            b.dispose();
-            b.el.remove();
+      if (reusedCount !== rows.size) {
+        for (const [key, row] of rows) {
+          if (!seen.has(key)) {
+            orderChanged = true;
+            for (const b of row.blocks) {
+              b.dispose();
+              b.el.remove();
+            }
+            rows.delete(key);
           }
-          rows.delete(key);
         }
       }
+      prevRows = nextRows;
 
       if (items.length === 0) {
         if (!emptyEl.parentNode) el.appendChild(emptyEl);
@@ -2249,8 +2365,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       // browser preserves focus, animations, media playback, and iframe state.
       const canMove = typeof el.moveBefore === 'function';
       let cursor = el.firstChild;
-      for (let i = 0; i < order.length; i++) {
-        const blocks = rows.get(order[i]).blocks;
+      for (let i = 0; i < nextRows.length; i++) {
+        const blocks = nextRows[i].blocks;
         for (let j = 0; j < blocks.length; j++) {
           const n = blocks[j].el;
           if (n === cursor) cursor = cursor.nextSibling;
