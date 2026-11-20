@@ -96,7 +96,7 @@ pub fn rust_idioms_to_js(code: &str) -> String {
     }
     if out.contains('|') {
         if let std::borrow::Cow::Owned(s) = r.closure.replace_all(&out, "${1}(${2}) => ") {
-            out = s;
+            out = parenthesize_object_bodies(&s);
         }
     }
     if out.contains("contains") {
@@ -155,6 +155,92 @@ pub fn string_literal_to_js(value: &str) -> String {
     serde_json::to_string(value).unwrap()
 }
 
+/// `|i| { ...i, done: true }` is an object literal, but JavaScript reads
+/// `(i) => { ...i }` as a block: wrap such bodies as `(i) => ({ ... })`.
+fn parenthesize_object_bodies(src: &str) -> String {
+    parenthesize_object_bodies_utf8(src)
+}
+
+/// Walks by character, so string contents in any script are copied intact.
+fn parenthesize_object_bodies_utf8(src: &str) -> String {
+    let mut out = String::with_capacity(src.len() + 8);
+    let mut closers: Vec<usize> = Vec::new();
+    let mut i = 0;
+    while i < src.len() {
+        if src[i..].starts_with("=> {") && starts_object_literal(&src[i + 4..]) {
+            if let Some(close) = matching_brace(src, i + 3) {
+                closers.push(close);
+                out.push_str("=> ({");
+                i += 4;
+                continue;
+            }
+        }
+        let ch = src[i..].chars().next().unwrap();
+        out.push(ch);
+        if closers.last() == Some(&i) {
+            closers.pop();
+            out.push(')');
+        }
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// After `{`: `...x`, `key:`, `"key":` or `}` (an empty object).
+fn starts_object_literal(rest: &str) -> bool {
+    let t = rest.trim_start();
+    if t.starts_with("...") || t.starts_with('}') {
+        return true;
+    }
+    let key_end = if let Some(q) = t.strip_prefix('"') {
+        q.find('"').map(|n| n + 2)
+    } else {
+        let n = t.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$').count();
+        (n > 0 && !t.as_bytes()[0].is_ascii_digit()).then_some(n)
+    };
+    match key_end {
+        Some(n) => {
+            let after = t[n..].trim_start();
+            after.starts_with(':') && !after.starts_with("::")
+        }
+        None => false,
+    }
+}
+
+/// Index of the `}` matching the `{` at `open`, skipping strings.
+fn matching_brace(src: &str, open: usize) -> Option<usize> {
+    let b = src.as_bytes();
+    let mut depth = 0usize;
+    let mut quote: Option<u8> = None;
+    let mut i = open;
+    while i < b.len() {
+        let c = b[i];
+        if let Some(q) = quote {
+            if c == b'\\' {
+                i += 2;
+                continue;
+            }
+            if c == q {
+                quote = None;
+            }
+        } else {
+            match c {
+                b'"' | b'\'' | b'`' => quote = Some(c),
+                b'{' | b'(' | b'[' => depth += 1,
+                b'}' | b')' | b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return (c == b'}').then_some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,6 +257,11 @@ mod tests {
         assert_eq!(rust_idioms_to_js("a || b || c"), "a || b || c");
         assert_eq!(rust_idioms_to_js("xs.sort(|a, b| a.x || b.x)"), "xs.sort((a, b) => a.x || b.x)");
         assert_eq!(rust_idioms_to_js("let f = |n| n + 1;"), "let f = (n) => n + 1;");
+        assert_eq!(rust_idioms_to_js("items.map(|i| { ...i, done: true })"), "items.map((i) => ({ ...i, done: true }))");
+        assert_eq!(rust_idioms_to_js("xs.map(|x| { id: x.id, n: { a: 1 } })"), "xs.map((x) => ({ id: x.id, n: { a: 1 } }))");
+        assert_eq!(rust_idioms_to_js("xs.map(|x| { \"k\": \"}é\" })"), "xs.map((x) => ({ \"k\": \"}é\" }))");
+        assert_eq!(rust_idioms_to_js("xs.map(|x| { let y = x; y })"), "xs.map((x) => { let y = x; y })");
+        assert_eq!(rust_idioms_to_js("xs.map(|x| {})"), "xs.map((x) => ({}))");
         assert_eq!(rust_idioms_to_js("todos.filter(|t| t.text.contains(q))"), "todos.filter((t) => t.text.toLowerCase().includes(String(q).toLowerCase()))");
     }
     #[test]

@@ -4,6 +4,17 @@ All notable changes to FOAR are documented in this file.
 
 ## Unreleased
 
+## [0.3.5] — 2026-11-20
+
+### Security
+- Server rendering didn't check `data: { … }` and `aria: { … }` keys, so a key taken from user data (`data: attrs`) could inject HTML into the page. Keys that aren't plain attribute names are now skipped, on the server and in the browser (where `setAttribute` would have thrown).
+
+### Fixed
+- Modules from `foar build --format js` and `foar dev` failed to load ("Unexpected reserved word") when any string in the app contained `package`, `enum`, `public`, `private`, `protected`, `interface`, `implements`, `eval` or `arguments`: the precompiled module declared a `const` for each word.
+- Fine-grained updates (0.3.x) skipped views whose inputs hadn't changed, including views that call host functions, so a host function whose result changes on its own (a clock, host state) showed a stale value. Views that call an undeclared host function now re-evaluate on every update; declaring it with `extern fn` marks it pure and keeps the fast path.
+- `|x| { ...x, done: true }` and other closures returning an object literal compiled to a JavaScript block and returned `undefined`; they now return the object.
+- The release workflow fails when the installers' fallback version doesn't match the tag being released.
+
 ## [0.3.4] — 2026-11-19
 
 ### Performance (DOM Runtime)

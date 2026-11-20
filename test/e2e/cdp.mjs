@@ -24,8 +24,13 @@ export async function launch({ port = Number(process.env.CDP_PORT || 9333), prof
   // never leave a headless Chrome behind
   process.on('exit', () => proc.kill());
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(130));
-  let list;
-  for (let i = 0; i < 100; i++) {
+  // a cold CI runner can take well over 10 s to start Chrome the first time
+  let list = [];
+  let exited = null;
+  proc.on('exit', (code) => (exited = code));
+  const startTimeout = Number(process.env.CDP_START_TIMEOUT || 30_000);
+  const deadline = Date.now() + startTimeout;
+  while (Date.now() < deadline && exited === null) {
     try {
       list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
       if (list.some((t) => t.type === 'page')) break;
@@ -33,6 +38,10 @@ export async function launch({ port = Number(process.env.CDP_PORT || 9333), prof
     await new Promise((r) => setTimeout(r, 100));
   }
   const target = list.find((t) => t.type === 'page');
+  if (!target) {
+    proc.kill();
+    throw new Error(exited !== null ? `Chrome exited (code ${exited}) before opening port ${port}` : `Chrome didn't open port ${port} within ${startTimeout / 1000} s`);
+  }
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((r) => (ws.onopen = r));
   let id = 0;

@@ -39,8 +39,14 @@ pub fn compile_to_js_module(src: &str, runtime_path: &str) -> Result<String, Com
     Ok(program_to_js_module(&compile(src)?, runtime_path))
 }
 
+/// Words never declared as `const` in generated code: JavaScript keywords and
+/// strict-mode reserved words (modules are always strict, and one stray
+/// `const package` is a syntax error that stops the whole module loading),
+/// plus globals the generated code must not shadow.
 fn is_js_global(name: &str) -> bool {
     matches!(name,
+        "enum" | "implements" | "interface" | "package" | "private" | "protected" | "public" |
+        "arguments" | "eval" |
         "as" | "async" | "await" | "break" | "case" | "catch" | "class" | "const" |
         "continue" | "debugger" | "default" | "delete" | "do" | "else" | "export" |
         "extends" | "false" | "finally" | "for" | "from" | "function" | "if" |
@@ -229,4 +235,19 @@ pub fn program_to_js_module(p: &ast::Program, runtime_path: &str) -> String {
         effects,
         functions,
     )
+}
+
+#[cfg(test)]
+mod module_tests {
+    /// Strings full of reserved words must still give a module that parses.
+    #[test]
+    fn reserved_words_in_strings_are_never_declared() {
+        let words = "enum implements interface package private protected public arguments eval static yield await let";
+        let src = format!("view App {{ state S {{ render {{ Text(\"{0}\") Button(\"b\") -> on_click(Go) }} effect Go() {{ let m = \"{0}\"; }} }} }}", words);
+        let js = super::compile_to_js_module(&src, "./foar-runtime.js").unwrap();
+        for w in words.split(' ') {
+            assert!(!js.contains(&format!("const {} =", w)), "declared `{}`", w);
+            assert!(!js.contains(&format!("let {} =", w)), "declared `{}`", w);
+        }
+    }
 }

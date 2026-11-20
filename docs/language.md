@@ -412,6 +412,11 @@ Every call to a declared `extern fn` is checked for argument count and argument
 types, and its return type flows into `let` inference and downstream checks.
 Use `any` explicitly when you want a gradual escape hatch.
 
+A declared `extern fn` is also a promise that it's **pure**: the runtime
+re-calls it only when its arguments change. Leave a function undeclared if
+its result can change on its own (the time, a value the host updates), and
+views that call it re-evaluate on every update.
+
 ## Routing
 
 FOAR includes a declarative URL router in the language and runtime:
@@ -662,6 +667,12 @@ playground; use the generated module whenever a strict CSP is required.
 - Blocks record the values used by their bindings. A flush skips an entire
   subtree when none of those values changed; keyed `List` rows keep the same
   property, so unchanged rows are not revisited during a sibling update.
+- Host functions are the exception: the runtime can't see what they read. A
+  view whose render or `let`s call a host function that isn't declared with
+  `extern fn` re-evaluates all of its bindings on every update, so a clock or
+  host state never shows a stale value. Declare it (`extern fn fmt_date(t:
+  i64) -> String;`) to say it's pure, same arguments, same result: the view
+  then keeps the fine-grained updates, and the calls are type-checked.
 - A transition replaces only that view's subtree; `If`/`Match` swap DOM only
   when the branch or arm changes; `List` reconciles by key.
 - Effects in one tick are batched into one update (a microtask).

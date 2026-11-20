@@ -1826,3 +1826,70 @@ view Badge(text: String) {
 });
 
 
+
+test('host functions: undeclared ones re-evaluate on every update, `extern fn` ones are pure', async () => {
+  let clock = 0;
+  let pureCalls = 0;
+  const src = `extern fn double(n: i32) -> i32;
+view App {
+    store n: i32 = 1;
+    store other: i32 = 0;
+    state S {
+        render {
+            Button("+") -> on_click(Bump)
+            Text("d=" + double(n))
+            Child()
+        }
+        effect Bump() { other += 1; }
+    }
+}
+view Child { state S { render { Text("t=" + now()) } } }`;
+  const { window, container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(src), container, {
+    bindings: { now: () => ++clock, double: (x) => { pureCalls++; return x * 2; } },
+  });
+  const text = () => q(container, '.f4-text').map((e) => e.textContent);
+  assert.deepEqual(text(), ['d=2', 't=1']);
+  const before = pureCalls;
+  fire(window, q(container, '.f4-button')[0], 'click');
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(text()[1], 't=2', 'a child calling an undeclared host function is not skipped');
+  assert.equal(pureCalls, before, 'a declared extern with unchanged arguments is not called again');
+  rt.destroy();
+});
+
+test('closures returning object literals: |x| { ...x, k: v }', async () => {
+  const src = `view A {
+    store xs: Vec<any> = [{ n: 1 }, { n: 2 }];
+    let labels = xs.map(|x| { label: "#" + x.n });
+    state S {
+        render {
+            Button("b") -> on_click(Go)
+            List(labels) { l => Text(l.label) }
+        }
+        effect Go() { xs = xs.map(|x| { ...x, n: x.n + 1 }); }
+    }
+}`;
+  const { window, container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(src), container, {});
+  assert.deepEqual(q(container, '.f4-text').map((e) => e.textContent), ['#1', '#2']);
+  fire(window, q(container, '.f4-button')[0], 'click');
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(q(container, '.f4-text').map((e) => e.textContent), ['#2', '#3']);
+  rt.destroy();
+});
+
+test('data/aria keys from runtime data cannot inject markup (client and SSR)', async () => {
+  const src = `view App { store attrs: any = load(); state S { render { Text("hi", data: attrs, aria: attrs) } } }`;
+  const evil = 'x"><img src=x onerror=alert(1)>';
+  const bindings = { load: () => ({ [evil]: 1, user_id: 7, 'Mixed': 'm' }) };
+  const { html } = renderToString(parseFoar(src), { bindings });
+  assert.ok(!html.includes('<img'), html);
+  assert.ok(html.includes('data-user-id="7"') && html.includes('aria-user-id="7"') && html.includes('data-mixed="m"'), html);
+  const { container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(src), container, { bindings });
+  const el = q(container, '.f4-text')[0];
+  assert.equal(el.getAttribute('data-user-id'), '7');
+  assert.ok(![...el.attributes].some((a) => a.name.includes('<') || a.name.includes('"')), el.outerHTML);
+  rt.destroy();
+});

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import cp from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -211,22 +212,24 @@ test('install.sh: verifies SHA-256 checksum, installs binary, and uninstalls cle
     const triple = process.platform === 'darwin' ? `${arch}-apple-darwin` : `${arch}-unknown-linux-musl`;
     const pkgName = `foar-${triple}`;
     const pkgDir = path.join(tmp, 'pkg', pkgName);
-    const dlDir = path.join(tmp, 'releases', 'download', 'v0.3.4');
+    // the version being built, so the test doesn't need editing on every release
+    const version = /^version = "([^"]+)"/m.exec(fs.readFileSync(path.join(ROOT, 'Cargo.toml'), 'utf8'))[1];
+    const dlDir = path.join(tmp, 'releases', 'download', `v${version}`);
     fs.mkdirSync(pkgDir, { recursive: true });
     fs.mkdirSync(dlDir, { recursive: true });
     fs.copyFileSync(BIN, path.join(pkgDir, 'foar'));
     const archive = path.join(dlDir, `${pkgName}.tar.gz`);
     cp.execFileSync('tar', ['-C', path.join(tmp, 'pkg'), '-czf', archive, pkgName]);
-    const sha = cp.execFileSync('sha256sum', [archive], { encoding: 'utf8' });
-    fs.writeFileSync(`${archive}.sha256`, sha);
+    const sha = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
+    fs.writeFileSync(`${archive}.sha256`, `${sha}  ${path.basename(archive)}\n`);
 
     const instRoot = path.join(tmp, 'home-foar');
     const script = path.join(ROOT, 'web/install.sh');
-    const out = cp.execFileSync('sh', [script, '--version', '0.3.4', '--dir', instRoot, '--no-modify-path'], {
+    const out = cp.execFileSync('sh', [script, '--version', version, '--dir', instRoot, '--no-modify-path'], {
       env: { ...process.env, FOAR_DOWNLOAD_URL: `file://${path.join(tmp, 'releases')}`, NO_COLOR: '1' },
       encoding: 'utf8',
     });
-    assert.ok(out.includes('foar 0.3.4'), out);
+    assert.ok(out.includes(`foar ${version}`), out);
     assert.ok(fs.existsSync(path.join(instRoot, 'bin', 'foar')));
 
     const uninst = cp.execFileSync('sh', [script, '--uninstall', '--dir', instRoot], {

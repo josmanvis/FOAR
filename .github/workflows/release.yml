@@ -82,10 +82,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
-      - name: Tag matches Cargo.toml
+      - name: Tag matches Cargo.toml and the installers' fallback version
         run: |
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           test "v$version" = "$TAG" || { echo "::error::tag $TAG but Cargo.toml says $version"; exit 1; }
+          # the installers fall back to this tag when GitHub can't be asked for the latest one
+          grep -q "^DEFAULT_TAG=\"$TAG\"" web/install.sh || { echo "::error::web/install.sh DEFAULT_TAG isn't $TAG"; exit 1; }
+          grep -q "\$DefaultTag = '$TAG'" web/install.ps1 || { echo "::error::web/install.ps1 \$DefaultTag isn't $TAG"; exit 1; }
       - uses: actions/download-artifact@v8
         with:
           path: assets

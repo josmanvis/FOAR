@@ -132,6 +132,17 @@ function staticStringLiteral(expr) {
 // need a conservative dependency set: extra names cause an inexpensive update;
 // missing one would be incorrect. Property names and words in strings are
 // therefore intentionally retained.Cached once per unique expression string.
+/**
+ * `data: { user_id: 1 }` → "data-user-id" (and `aria: { …}` → "aria-…").
+ * Keys can come from runtime data, so anything that isn't a plain attribute
+ * name gives null and is skipped: on the server an unchecked name would let a
+ * key inject HTML, and in the browser setAttribute would throw.
+ */
+function prefixedAttr(prefix, key) {
+  const name = `${prefix}-${String(key).replace(/_/g, '-')}`.toLowerCase();
+  return /^[a-z]+-[a-z0-9][a-z0-9-]*$/.test(name) ? name : null;
+}
+
 function exprDeps(expr) {
   const key = String(expr || '');
   let cached = depsCache.get(key);
@@ -592,7 +603,11 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   }
 
   // Attribute helper: null/undefined/false-for-non-aria removes, booleans become "true"/"false".
+  function removeAttr(el, name) {
+    if (name) el.removeAttribute(name);
+  }
   function setAttr(el, name, v) {
+    if (!name) return;
     if (v === undefined || v === null || v === '') el.removeAttribute(name);
     else el.setAttribute(name, typeof v === 'boolean' ? String(v) : v);
   }
@@ -635,6 +650,12 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     externs[ctxDecl.name] = ctxObj;
   }
   const externNames = Object.keys(externs).filter((n) => /^[A-Za-z_$][\w$]*$/.test(n));
+  // Host functions the program didn't declare with `extern fn` may return
+  // something new for the same arguments (a clock, host state): a view that
+  // calls one in its render or lets re-evaluates everything on every update.
+  // Declared externs are taken to be pure and keep the fine-grained updates.
+  const declaredExterns = new Set((ast.externs || []).map((e) => e.name));
+  const impureHostFns = new Set(Object.keys(callbacks.bindings || {}).filter((n) => !declaredExterns.has(n) && !Object.prototype.hasOwnProperty.call(programFns, n)));
   const effectCache = new Map();
   let destroyed = false;
   let scheduled = false;
@@ -728,6 +749,14 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
 
   // ---- per-view metadata ---------------------------------------------------
   const viewMeta = new Map();
+  /** Does this view's render (or a `let`) call an undeclared host function? */
+  function callsImpureHost(decl) {
+    if (!impureHostFns.size) return false;
+    const text = JSON.stringify([decl.states.map((st) => st.render), decl.derived || [], decl.style || null]);
+    for (const id of text.match(/[A-Za-z_$][\w$]*/g) || []) if (impureHostFns.has(id)) return true;
+    return false;
+  }
+
   function metaFor(decl) {
     let m = viewMeta.get(decl);
     if (m) return m;
@@ -755,6 +784,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       return fn;
     };
     m = {
+      impure: callsImpureHost(decl),
       decl,
       propNames,
       propDefaults,
@@ -1096,11 +1126,12 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
 
   function updateInstance(inst, globalChanges = null) {
     const hasGlobals = Boolean(globalChanges && globalChanges.size > 0);
-    if (!inst.subtreeDirty && !inst.dirtyVars && !hasGlobals && inst.mountedState === inst.state && !inst.slotCtx) {
+    if (!inst.subtreeDirty && !inst.dirtyVars && !hasGlobals && inst.mountedState === inst.state && !inst.slotCtx && !inst.meta.impure) {
       return;
     }
-    let changes = inst.dirtyVars;
-    if (hasGlobals) {
+    // a view calling undeclared host functions re-evaluates all of its bindings
+    let changes = inst.meta.impure ? STAR_SET : inst.dirtyVars;
+    if (hasGlobals && changes !== STAR_SET) {
       changes = changes ? new Set(changes) : new Set();
       for (const g of globalChanges) changes.add(g);
     }
@@ -1111,6 +1142,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         const next = safeEval(d.fn, inst.vars, externs, d.expr);
         if (next !== inst.vars[d.name]) {
           inst.vars[d.name] = next;
+          if (changes === STAR_SET) continue;
           if (!changes) changes = new Set();
           changes.add(d.name);
         }
@@ -1277,7 +1309,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     for (const argName in na) {
       if (argName.startsWith('data_') && argName.length > 5) {
         if (!dataAttrs) dataAttrs = [];
-        dataAttrs.push([`data-${argName.slice(5).replace(/_/g, '-')}`, na[argName]]);
+        dataAttrs.push([prefixedAttr('data', argName.slice(5)), na[argName]]);
       }
     }
     const hasCommonAttrs = Boolean(
@@ -1733,8 +1765,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         let prev = [];
         bind(na.aria, (obj) => {
           const keys = obj ? Object.keys(obj) : [];
-          for (const k of prev) if (!keys.includes(k)) el.removeAttribute(`aria-${k.replace(/_/g, '-')}`);
-          for (const k of keys) setAttr(el, `aria-${k.replace(/_/g, '-')}`, obj[k]);
+          for (const k of prev) if (!keys.includes(k)) removeAttr(el, prefixedAttr('aria', k));
+          for (const k of keys) setAttr(el, prefixedAttr('aria', k), obj[k]);
           prev = keys;
         });
       }
@@ -1742,8 +1774,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         let prev = [];
         bind(na.data, (obj) => {
           const keys = obj && typeof obj === 'object' ? Object.keys(obj) : [];
-          for (const k of prev) if (!keys.includes(k)) el.removeAttribute(`data-${k.replace(/_/g, '-')}`);
-          for (const k of keys) setAttr(el, `data-${k.replace(/_/g, '-')}`, obj[k]);
+          for (const k of prev) if (!keys.includes(k)) removeAttr(el, prefixedAttr('data', k));
+          for (const k of keys) setAttr(el, prefixedAttr('data', k), obj[k]);
           prev = keys;
         });
       }
@@ -1885,11 +1917,11 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         const v = safeEval(h.fn, inst.vars, locals, h.expr);
         if (h.name === 'data') {
           const keys = v && typeof v === 'object' ? Object.keys(v) : [];
-          for (const k of prevHostDataKeys) if (!keys.includes(k)) el.removeAttribute(`data-${k.replace(/_/g, '-')}`);
-          for (const k of keys) setAttr(el, `data-${k.replace(/_/g, '-')}`, v[k]);
+          for (const k of prevHostDataKeys) if (!keys.includes(k)) removeAttr(el, prefixedAttr('data', k));
+          for (const k of keys) setAttr(el, prefixedAttr('data', k), v[k]);
           prevHostDataKeys = keys;
         } else {
-          setAttr(el, `data-${h.name.slice(5).replace(/_/g, '-')}`, v);
+          setAttr(el, prefixedAttr('data', h.name.slice(5)), v);
         }
       }
     };
@@ -1911,6 +1943,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
           }
         }
         if (
+          child.meta.impure ||
           child.subtreeDirty ||
           child.dirtyVars ||
           child.mountedState !== child.state ||
@@ -2337,7 +2370,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     for (const [argName, argExpr] of Object.entries(node.namedArgs || {})) {
       if (argName.startsWith('data_') && argName.length > 5) {
         attrFns.push({
-          attr: `data-${argName.slice(5).replace(/_/g, '-')}`,
+          attr: prefixedAttr('data', argName.slice(5)),
           ex: argExpr,
           fn: compile(argExpr, inst.meta.varNames, localNames),
         });
@@ -2368,13 +2401,13 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       for (const a of attrFns) setAttr(el, a.attr, safeEval(a.fn, inst.vars, locals, a.ex));
       if (ariaFn) {
         const obj = safeEval(ariaFn, inst.vars, locals, ariaEx) || {};
-        for (const k of Object.keys(obj)) setAttr(el, `aria-${k.replace(/_/g, '-')}`, obj[k]);
+        for (const k of Object.keys(obj)) setAttr(el, prefixedAttr('aria', k), obj[k]);
       }
       if (dataFn) {
         const obj = safeEval(dataFn, inst.vars, locals, dataEx);
         const keys = obj && typeof obj === 'object' ? Object.keys(obj) : [];
-        for (const k of prevListDataKeys) if (!keys.includes(k)) el.removeAttribute(`data-${k.replace(/_/g, '-')}`);
-        for (const k of keys) setAttr(el, `data-${k.replace(/_/g, '-')}`, obj[k]);
+        for (const k of prevListDataKeys) if (!keys.includes(k)) removeAttr(el, prefixedAttr('data', k));
+        for (const k of keys) setAttr(el, prefixedAttr('data', k), obj[k]);
         prevListDataKeys = keys;
       }
       let items = safeEval(itemsFn, inst.vars, locals, node.listExpr);
@@ -2958,7 +2991,7 @@ export function renderToString(ast, options = {}) {
   function attrsStr(pairs) {
     let s = '';
     for (const [k, v] of pairs) {
-      if (v === undefined || v === null || v === false) continue;
+      if (!k || v === undefined || v === null || v === false) continue;
       if (v === true) s += ` ${k}="true"`;
       else s += ` ${k}="${escapeHtml(v)}"`;
     }
@@ -3023,11 +3056,11 @@ export function renderToString(ast, options = {}) {
         if (name === 'slot') continue;
         if (!paramSet.has(name) && name === 'data') {
           const obj = evalSafe(expr, vn, vars, ln, locals) || {};
-          for (const [k, v] of Object.entries(obj)) hostAttrs.push([`data-${k.replace(/_/g, '-')}`, v]);
+          for (const [k, v] of Object.entries(obj)) hostAttrs.push([prefixedAttr('data', k), v]);
           continue;
         }
         if (!paramSet.has(name) && name.startsWith('data_') && name.length > 5) {
-          hostAttrs.push([`data-${name.slice(5).replace(/_/g, '-')}`, evalSafe(expr, vn, vars, ln, locals)]);
+          hostAttrs.push([prefixedAttr('data', name.slice(5)), evalSafe(expr, vn, vars, ln, locals)]);
           continue;
         }
         props[name] = evalSafe(expr, vn, vars, ln, locals);
@@ -3150,15 +3183,15 @@ export function renderToString(ast, options = {}) {
       if (node.namedArgs?.label !== undefined) attrs.push(['aria-label', evalSafe(node.namedArgs.label, vn, vars, ln, locals)]);
       if (node.namedArgs?.aria !== undefined) {
         const obj = evalSafe(node.namedArgs.aria, vn, vars, ln, locals) || {};
-        for (const [k, v] of Object.entries(obj)) attrs.push([`aria-${k.replace(/_/g, '-')}`, v]);
+        for (const [k, v] of Object.entries(obj)) attrs.push([prefixedAttr('aria', k), v]);
       }
       if (node.namedArgs?.data !== undefined) {
         const obj = evalSafe(node.namedArgs.data, vn, vars, ln, locals) || {};
-        for (const [k, v] of Object.entries(obj)) attrs.push([`data-${k.replace(/_/g, '-')}`, v]);
+        for (const [k, v] of Object.entries(obj)) attrs.push([prefixedAttr('data', k), v]);
       }
       for (const [argName, argExpr] of Object.entries(node.namedArgs || {})) {
         if (argName.startsWith('data_') && argName.length > 5) {
-          attrs.push([`data-${argName.slice(5).replace(/_/g, '-')}`, evalSafe(argExpr, vn, vars, ln, locals)]);
+          attrs.push([prefixedAttr('data', argName.slice(5)), evalSafe(argExpr, vn, vars, ln, locals)]);
         }
       }
       if (items.length === 0) {
@@ -3199,15 +3232,15 @@ export function renderToString(ast, options = {}) {
       if (na.tab_index !== undefined) out.push(['tabindex', evalSafe(na.tab_index, vn, vars, ln, locals)]);
       if (na.aria !== undefined) {
         const obj = evalSafe(na.aria, vn, vars, ln, locals) || {};
-        for (const [k, v] of Object.entries(obj)) out.push([`aria-${k.replace(/_/g, '-')}`, v]);
+        for (const [k, v] of Object.entries(obj)) out.push([prefixedAttr('aria', k), v]);
       }
       if (na.data !== undefined) {
         const obj = evalSafe(na.data, vn, vars, ln, locals) || {};
-        for (const [k, v] of Object.entries(obj)) out.push([`data-${k.replace(/_/g, '-')}`, v]);
+        for (const [k, v] of Object.entries(obj)) out.push([prefixedAttr('data', k), v]);
       }
       for (const [argName, argExpr] of Object.entries(na)) {
         if (argName.startsWith('data_') && argName.length > 5) {
-          out.push([`data-${argName.slice(5).replace(/_/g, '-')}`, evalSafe(argExpr, vn, vars, ln, locals)]);
+          out.push([prefixedAttr('data', argName.slice(5)), evalSafe(argExpr, vn, vars, ln, locals)]);
         }
       }
       return attrsStr(out);
