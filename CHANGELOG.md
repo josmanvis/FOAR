@@ -4,6 +4,9 @@ All notable changes to FOAR are documented in this file.
 
 ## Unreleased
 
+### Website
+- The new logo now shows as the browser-tab icon everywhere: the icon kept the same URL through four redesigns, so browsers' favicon caches kept showing old ones. Icon links are versioned (`favicon.svg?v=4`), and there are fallbacks rendered from the same SVG: `favicon.ico` (16/32/48) for browsers without SVG favicons and a 180 px `apple-touch-icon.png` for iOS/Safari.
+
 ## [0.4.1] — 2026-11-20
 
 ### Performance

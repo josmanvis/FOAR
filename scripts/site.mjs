@@ -112,7 +112,9 @@ export function renderDoc(name) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${esc(title)} · FOAR docs</title>
   <meta name="description" content="FOAR documentation: a UI programming language where every component is an explicit state machine.">
-  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon.ico?v=4" sizes="32x32">
+  <link rel="icon" href="../favicon.svg?v=4" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png?v=4">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Overpass:ital,wght@0,300..900;1,300..900&family=Overpass+Mono:wght@400..700&display=swap" rel="stylesheet">
@@ -130,7 +132,7 @@ export function renderDoc(name) {
 <header class="site-nav">
   <div class="site-nav-inner">
     <a class="logo" href="../" aria-label="FOAR home">
-      <img src="../favicon.svg" alt="" width="28" height="28">
+      <img src="../favicon.svg?v=4" alt="" width="28" height="28">
       <span class="logo-wordmark">FOAR</span>
     </a>
     <nav aria-label="Site">
@@ -160,7 +162,7 @@ ${pager}
 <footer class="site-footer">
   <div class="wrap footer-inner">
     <div class="footer-brand">
-      <img src="../favicon.svg" alt="" width="22" height="22">
+      <img src="../favicon.svg?v=4" alt="" width="22" height="22">
       <span>FOAR is open source under the MIT license.</span>
     </div>
     <nav class="footer-links" aria-label="Footer">
