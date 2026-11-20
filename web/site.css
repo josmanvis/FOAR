@@ -363,6 +363,13 @@ pre.code { margin: 0; background: var(--panel); color: var(--panel-ink); padding
 
 /* fixes after review */
 .commands > li { min-width: 0; }
+
+/* install: macOS/Linux or Windows */
+.os-switch { display: inline-flex; gap: 2px; margin-bottom: 10px; padding: 2px; border-radius: 7px; background: var(--rule, rgba(0,0,0,.08)); }
+.os-switch button { font: inherit; font-size: 0.85rem; padding: 5px 12px; border: 0; border-radius: 5px; background: transparent; color: var(--ink-2); cursor: pointer; }
+.os-switch button[aria-pressed="true"] { background: var(--paper); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.os-switch button:focus-visible { outline: 2px solid var(--lamp); outline-offset: 1px; }
+.install-note { margin: 8px 0 0; font-size: 0.85rem; }
 /* code shows exactly what you type: no "->" arrow ligatures */
 code, pre, kbd { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
 @media (max-width: 900px) { .hero-top .lede { margin-top: 12px; } }

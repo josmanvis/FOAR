@@ -1,11 +1,46 @@
 # Tooling
 
+## Install
+
+```sh
+curl -fsSL https://josmanvis.github.io/FOAR/install.sh | sh      # macOS, Linux
+irm https://josmanvis.github.io/FOAR/install.ps1 | iex           # Windows PowerShell
+```
+
+The installer picks the build for your machine (x64 or arm64) from the latest
+[GitHub release](https://github.com/josmanvis/FOAR/releases), checks its
+SHA-256, installs `foar` to `~/.foar/bin`, and makes it available at once: it
+links it from a directory already on your PATH (`~/.local/bin`,
+`/usr/local/bin`, …) or adds `~/.foar/bin` to your shell profile (Windows: your
+user PATH and the current session).
+
+```sh
+curl -fsSL https://josmanvis.github.io/FOAR/install.sh | sh -s -- --version 0.3.0
+curl -fsSL https://josmanvis.github.io/FOAR/install.sh | sh -s -- --dir /opt/foar --no-modify-path
+curl -fsSL https://josmanvis.github.io/FOAR/install.sh | sh -s -- --uninstall
+foar upgrade                       # the latest release, in place
+```
+
+On Windows, set `$env:FOAR_VERSION`, `$env:FOAR_INSTALL` or
+`$env:FOAR_UNINSTALL = '1'` before running the installer.
+
+## A project in three commands
+
+```sh
+foar init my-app && cd my-app      # app.foar, index.html, foar.toml, .gitignore
+foar dev                           # http://localhost:5173: reloads on save, errors show in the page
+foar build                         # dist/ for any static host: index.html, app.js, foar-runtime.js
+```
+
+The runtime is built into `foar`, so nothing else needs installing.
+`foar dev --port 3000` picks a port (the next free one if it's taken).
+
 ## The compiler
 
 The compiler is written in Rust and builds two ways from the same source: a
-native command-line tool, and a WebAssembly module (≈252 KB gzipped) that the
-playground runs in the browser. Both compile and typecheck the 21-file Notes app
-(≈2,000 lines) in about 30 ms.
+native command-line tool, and a WebAssembly module (≈263 KB gzipped) that the
+playground runs in the browser. Both compile and typecheck the 26-file Notes app
+(≈2,100 lines) in about 35 ms (`node scripts/measure.mjs`).
 
 ```sh
 cargo build --release              # target/release/foar
@@ -22,7 +57,11 @@ foar build app.foar --format js -o app.js   # ES module: { program, mount, hydra
 foar build app.foar --format js --runtime ./foar-runtime.js -o dist/app.js
 foar build - < app.foar                     # one source from stdin
 foar build - --project < project.json       # {"entry", "files": {path: source}} from stdin
-foar init [dir]                             # scaffold foar.toml + app.foar
+foar init [dir]                             # scaffold app.foar, index.html, foar.toml, .gitignore
+foar dev [dir] [--port N]                   # serve with live reload (compiler + runtime built in)
+foar build                                  # in a project: dist/ with index.html, app.js, foar-runtime.js
+foar upgrade [version]                      # reinstall the latest (or a given) release in place
+foar --version
 foar add ui --path ./packages/ui            # add a local path dependency and update foar.lock
 foar add ui --git https://...               # clone into foar_packages/ and lock SHA-256 integrity
 foar add ui --version ^1.0.0 --registry ... # add a versioned registry package
@@ -80,7 +119,7 @@ run in CI.
 
 ## The runtime
 
-`web/foar-runtime.js` is one ES module (≈24 KB gzipped) with no dependencies:
+`web/foar-runtime.js` is one ES module (≈25 KB gzipped) with no dependencies:
 `createFoarRuntime`, `hydrate`, `hydrateIslands`, `renderToString`,
 `renderToStringAsync`, `renderToStream`, and `createI18n`. See
 the [reference](./language.md#host-functions-and-the-runtime).

@@ -1,4 +1,5 @@
 //! foar CLI
+//!   foar init [dir] / foar dev [dir] / foar build (in a project) / foar upgrade
 //!   foar build <file.foar | -> [-o <out>] [--format json|js] [--pretty] [--runtime <path>]
 //!   foar build - --project      (stdin: {"entry", "files": {path: source}})
 //!   foar check <file.foar>
@@ -6,9 +7,12 @@
 use std::io::{Read, Write};
 use std::process::exit;
 
+mod dev;
+use dev::paint;
+
 fn usage() -> ! {
     eprintln!(
-        "foar {}\n\nUsage:\n  foar build <file.foar | -> [-o <out>] [--format json|js] [--pretty] [--runtime <path>]\n  foar check <file.foar>\n  foar fmt <files...> [--check]\n  foar init [dir]\n  foar add <name> --path <dir> | --git <url> | --version <ver> [--registry <url>]\n  foar install [--frozen]\n  foar pkg [--verify]\n  foar lsp\n  foar i18n <locales-dir> <source files...> [--fallback en] [--format json]\n\n  --format json   program JSON for createFoarRuntime (default)\n  --format js     ES module exporting {{ program, mount, hydrate, hydrateIslands, renderToString, renderToStringAsync, renderToStream, createI18n }}\n  --runtime       import path of foar-runtime.js in the JS module (default ./foar-runtime.js)\n  -               read source from stdin\n  --project       with -: stdin is a project {{\"entry\", \"files\": {{path: source}}}}\n\nA file is compiled together with its imports (relative paths or @package via foar.toml).",
+        "foar {}\n\nStart:\n  foar init [dir]             a new project (app.foar, index.html, foar.toml)\n  foar dev [dir] [--port N]   serve it with live reload\n  foar build                  write dist/ (index.html, app.js, foar-runtime.js)\n  foar upgrade [version]      install the latest foar (or a given one)\n\nUsage:\n  foar build <file.foar | -> [-o <out>] [--format json|js] [--pretty] [--runtime <path>]\n  foar check <file.foar>\n  foar fmt <files...> [--check]\n  foar init [dir]\n  foar add <name> --path <dir> | --git <url> | --version <ver> [--registry <url>]\n  foar install [--frozen]\n  foar pkg [--verify]\n  foar lsp\n  foar i18n <locales-dir> <source files...> [--fallback en] [--format json]\n\n  --format json   program JSON for createFoarRuntime (default)\n  --format js     ES module exporting {{ program, mount, hydrate, hydrateIslands, renderToString, renderToStringAsync, renderToStream, createI18n }}\n  --runtime       import path of foar-runtime.js in the JS module (default ./foar-runtime.js)\n  -               read source from stdin\n  --project       with -: stdin is a project {{\"entry\", \"files\": {{path: source}}}}\n\nA file is compiled together with its imports (relative paths or @package via foar.toml).",
         foar::version()
     );
     exit(2)
@@ -69,6 +73,14 @@ fn main() {
             fmt_cmd(&args[1..]);
             return;
         }
+        "dev" | "serve" => {
+            dev::dev_cmd(&args[1..]);
+            return;
+        }
+        "upgrade" | "self-update" => {
+            dev::upgrade_cmd(&args[1..]);
+            return;
+        }
         _ => {}
     }
     let mut input = None;
@@ -101,6 +113,11 @@ fn main() {
             }
         }
         i += 1;
+    }
+    // `foar build` in a project: a deployable dist/
+    if cmd == "build" && input.is_none() && (std::path::Path::new("foar.toml").is_file() || std::path::Path::new("app.foar").is_file()) {
+        dev::build_project(std::path::Path::new("."), std::path::Path::new(out.as_deref().unwrap_or("dist")));
+        return;
     }
     let input = input.unwrap_or_else(|| usage());
     if project {
@@ -159,11 +176,21 @@ fn main() {
             match result {
                 Ok(text) => match out {
                     Some(path) => {
+                        if let Some(parent) = std::path::Path::new(&path).parent().filter(|p| !p.as_os_str().is_empty()) {
+                            std::fs::create_dir_all(parent).ok();
+                        }
                         std::fs::write(&path, text).unwrap_or_else(|e| {
                             eprintln!("foar: cannot write {}: {}", path, e);
                             exit(1)
                         });
                         eprintln!("✓ wrote {}", path);
+                        // the module imports ./foar-runtime.js: put the built-in one beside it
+                        if format == "js" && runtime == "./foar-runtime.js" {
+                            let beside = std::path::Path::new(&path).with_file_name("foar-runtime.js");
+                            if !beside.exists() && std::fs::write(&beside, dev::RUNTIME).is_ok() {
+                                eprintln!("✓ wrote {}", beside.display());
+                            }
+                        }
                     }
                     None => {
                         let mut so = std::io::stdout();
@@ -294,7 +321,28 @@ fn init_cmd(args: &[String]) {
             exit(1)
         });
     }
-    println!("✓ initialized FOAR project in {}", dir.display());
+    let index_path = dir.join("index.html");
+    if !index_path.exists() {
+        std::fs::write(&index_path, dev::index_html(name)).ok();
+    }
+    let ignore_path = dir.join(".gitignore");
+    if !ignore_path.exists() {
+        std::fs::write(&ignore_path, "dist/\nfoar_packages/\n").ok();
+    }
+    println!();
+    println!("  {} {} {}", paint("38;5;214", "●"), paint("1", "New FOAR project"), paint("2", &format!("in {}", dir.display())));
+    println!();
+    for f in ["app.foar", "index.html", "foar.toml", ".gitignore"] {
+        println!("    {} {}", paint("32", "+"), f);
+    }
+    println!();
+    println!("  Next:");
+    if dir != std::path::Path::new(".") {
+        println!("    {}", paint("36", &format!("cd {}", dir.display())));
+    }
+    println!("    {}       {}", paint("36", "foar dev"), paint("2", "open it in the browser, reloads on save"));
+    println!("    {}     {}", paint("36", "foar build"), paint("2", "write dist/ for any static host"));
+    println!();
 }
 
 fn add_cmd(args: &[String]) {

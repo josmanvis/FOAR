@@ -185,3 +185,20 @@ test('CLI formatter (foar fmt / --check) formats .foar files idempotently', () =
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('language service: generic views and contexts', async () => {
+  const { createLanguageService } = await import('../web/playground/language/service.js');
+  const lib = 'context Library {\n    store notes: Vec<String> = [];\n    let count: i32 = notes.len();\n    effect Trash(id: String) { notes = notes; }\n}\n';
+  const item = 'view MenuItem<T>(label: String, value: T, check: bool = false) {\n    state S {\n        render { Button(label) -> on_click(Pick) }\n        effect Pick() { emit pick(value); }\n    }\n}\n';
+  const app = 'import "./lib"\nimport "./item"\nview A {\n    use Library;\n    state S {\n        render {\n            MenuItem(label: "x", value: 1) -> on_pick(Go)\n            Button("x") -> on_click(Library.)\n        }\n        effect Go(v: any) {}\n    }\n}\n';
+  const ls = createLanguageService();
+  ls.update({ 'lib.foar': lib, 'item.foar': item, 'app.foar': app });
+  // a generic view keeps its params and events: no "never emits 'pick'"
+  assert.deepEqual([...ls.diagnostics()], []);
+  assert.deepEqual([...ls.index.views.get('MenuItem').emits], ['pick']);
+  assert.equal(ls.hover('app.foar', app.indexOf('MenuItem(') + 2).code, 'view MenuItem<T>(label: String, value: T, check: bool = false)');
+  // Library. in a handler offers its effects; hover and go-to-definition work
+  assert.deepEqual(ls.complete('app.foar', app.indexOf('Library.)') + 8).items.map((i) => i.label), ['Trash']);
+  assert.match(ls.hover('app.foar', app.indexOf('use Library') + 6).code, /^context Library \{\n    store notes: Vec<String>;/);
+  assert.deepEqual(ls.definition('app.foar', app.indexOf('use Library') + 6), { path: 'lib.foar', offset: 8 });
+});

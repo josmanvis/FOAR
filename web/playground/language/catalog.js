@@ -81,9 +81,21 @@ const ARG_DOCS = {
   secure: 'Password field (hides the text).',
   checked: 'Whether the box is checked.',
   editable: 'Whether the rich text can be edited.',
-  src: 'Image URL.',
+  src: 'Image or Video URL.',
   alt: 'Alternative text for the image.',
   empty: 'Shown when the list is empty.',
+  name: 'Slot name (`Slot(name: "header")`) or host handle name (`Host(name: "chart")`).',
+  controls: 'Show native playback controls on `Video`.',
+  poster: 'Poster frame image URL for `Video`.',
+  autoplay: 'Start playing automatically (`Video`).',
+  loop: 'Loop playback (`Video`).',
+  muted: 'Mute audio track (`Video`).',
+  playsinline: 'Play inline on mobile (`Video`).',
+  preload: 'Preload hint (`"none"`, `"metadata"`, `"auto"`) for `Video`.',
+  width: 'Intrinsic pixel width (`Canvas` / `Svg`).',
+  height: 'Intrinsic pixel height (`Canvas` / `Svg`).',
+  view_box: 'SVG `viewBox` coordinate system (`"0 0 24 24"`).',
+  preserve_aspect_ratio: 'SVG `preserveAspectRatio` attribute.',
 };
 export const argDoc = (name) => ARG_DOCS[name] ?? '';
 
@@ -114,6 +126,10 @@ export const ELEMENTS = {
   Slider: { sig: 'Slider(value: v, min: 0, max: 100, step: 1)', doc: 'Native `<input type="range">` slider; `on_input` receives a numeric value.', named: ['value', 'min', 'max', 'step', ...COMMON], events: ['on_input', 'on_change'], snippet: 'Slider(value: ${1:val}, min: 0, max: 100, step: 1) -> on_input(${2:Set})' },
   Progress: { sig: 'Progress(value: v, max: 100)', doc: 'Native `<progress>` bar.', named: ['value', 'max', ...COMMON], events: [], snippet: 'Progress(value: ${1:val}, max: ${2:100})' },
   Island: { sig: 'Island(client: "visible" | "idle" | "load") { View() }', doc: 'Partial hydration boundary for `hydrateIslands`: leaves surrounding SSR HTML static and hydrates only this interactive island.', named: ['client'], events: [], snippet: 'Island(client: "${1:visible}") {\n    $0\n}' },
+  Host: { sig: 'Host(name: "chart") { … }', doc: 'Named DOM node handle (`div.f4-host[data-f4-host]`) exposed to JS via `callbacks.onMount(el, info)`, `callbacks.onUnmount(el, info)`, and `app.getHost(name)`.', named: ['name', 'ref', ...COMMON], events: ['on_click', 'on_double_click', 'on_context_menu', 'on_drop'], snippet: 'Host(name: "${1:chart}")' },
+  Video: { sig: 'Video(src: String, controls: bool, poster: String)', doc: 'Native `<video>` element.', named: ['src', 'poster', 'preload', 'controls', 'autoplay', 'loop', 'muted', 'playsinline', ...COMMON], events: ['on_click'], snippet: 'Video(src: ${1:url}, controls: true)' },
+  Canvas: { sig: 'Canvas(width: i32, height: i32)', doc: 'Native `<canvas>` drawing surface. Wrap or name with `Host` / `onMount` to draw with 2D or WebGL contexts.', named: ['width', 'height', ...COMMON], events: ['on_click', 'on_double_click', 'on_context_menu'], snippet: 'Canvas(width: ${1:640}, height: ${2:360})' },
+  Svg: { sig: 'Svg(view_box: "0 0 24 24", width: 24, height: 24)', doc: 'Inline `<svg>` element.', named: ['view_box', 'width', 'height', 'preserve_aspect_ratio', ...COMMON], events: ['on_click'], snippet: 'Svg(view_box: "${1:0 0 24 24}", width: ${2:24}, height: ${3:24})' },
 };
 
 export const EVENTS = {

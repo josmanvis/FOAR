@@ -1,0 +1,171 @@
+name: Release
+
+# Push a tag like v0.3.0 (matching Cargo.toml) to build `foar` for every
+# platform and publish a GitHub Release. The installers
+# (web/install.sh, web/install.ps1) download from the latest release.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)build, e.g. v0.3.0
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, run: true }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm, run: true }
+          - { target: aarch64-apple-darwin, os: macos-latest, run: true }
+          - { target: x86_64-apple-darwin, os: macos-latest, run: false }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, run: true }
+          - { target: aarch64-pc-windows-msvc, os: windows-latest, run: false }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: contains(matrix.target, 'linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build
+        run: cargo build --release --locked --bin foar --target ${{ matrix.target }}
+      - name: Smoke test
+        if: matrix.run
+        shell: bash
+        run: |
+          bin="$PWD/target/${{ matrix.target }}/release/foar"
+          "$bin" --version
+          for f in examples/*/app.foar; do "$bin" check "$f"; done
+          tmp=$(mktemp -d)
+          cd "$tmp" && "$bin" init demo && cd demo && "$bin" build && test -s dist/foar-runtime.js
+      - name: Package
+        shell: bash
+        run: |
+          name=foar-${{ matrix.target }}
+          mkdir -p "pkg/$name"
+          cp LICENSE README.md "pkg/$name/"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cp target/${{ matrix.target }}/release/foar.exe "pkg/$name/"
+            (cd pkg && 7z a -tzip "../$name.zip" "$name" >/dev/null)
+            asset=$name.zip
+          else
+            cp target/${{ matrix.target }}/release/foar "pkg/$name/"
+            tar -C pkg -czf "$name.tar.gz" "$name"
+            asset=$name.tar.gz
+          fi
+          if command -v sha256sum >/dev/null; then sha256sum "$asset" > "$asset.sha256"; else shasum -a 256 "$asset" > "$asset.sha256"; fi
+          cat "$asset.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            foar-${{ matrix.target }}.*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - name: Tag matches Cargo.toml
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          test "v$version" = "$TAG" || { echo "::error::tag $TAG but Cargo.toml says $version"; exit 1; }
+      - uses: actions/download-artifact@v8
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Checksums
+        run: cd assets && cat *.sha256 | sort -k2 > SHA256SUMS && cat SHA256SUMS
+      - name: Release notes (from CHANGELOG.md)
+        run: |
+          version=${TAG#v}
+          awk -v v="$version" '
+            /^## / { if (found) exit; if (index($0, v)) { found=1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          cat >> notes.md <<EOF
+
+          ## Install
+
+          macOS and Linux:
+          \`\`\`sh
+          curl -fsSL https://josmanvis.github.io/FOAR/install.sh | sh
+          \`\`\`
+
+          Windows (PowerShell):
+          \`\`\`powershell
+          irm https://josmanvis.github.io/FOAR/install.ps1 | iex
+          \`\`\`
+
+          Already installed: \`foar upgrade\`.
+          EOF
+          cat notes.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" assets/* --title "FOAR ${TAG#v}" --notes-file notes.md --latest
+          fi
+
+  # Install the release just published, the way users do, on each OS.
+  verify:
+    needs: release
+    name: install on ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux, os: ubuntu-latest, shell: bash }
+          - { name: linux-arm, os: ubuntu-24.04-arm, shell: bash }
+          - { name: macos, os: macos-latest, shell: bash }
+          - { name: windows-powershell, os: windows-latest, shell: powershell }
+          - { name: windows-pwsh, os: windows-latest, shell: pwsh }
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - name: Install (sh)
+        if: matrix.shell == 'bash'
+        run: |
+          curl -fsSL https://josmanvis.github.io/FOAR/install.sh | sh     # the real one-liner, latest
+          export PATH="$HOME/.foar/bin:$PATH"
+          foar --version | grep -q "${TAG#v}"
+          cd "$(mktemp -d)" && foar init demo && cd demo && foar build && test -s dist/app.js
+          sh "$GITHUB_WORKSPACE/web/install.sh" --uninstall
+          test ! -e "$HOME/.foar/bin/foar"
+      - name: Install (PowerShell)
+        if: matrix.shell != 'bash'
+        run: |
+          irm https://josmanvis.github.io/FOAR/install.ps1 | iex           # the real one-liner, latest
+          foar --version
+          if (-not ((foar --version) -match $env:TAG.Substring(1))) { throw 'wrong version' }
+          $d = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid())
+          New-Item -ItemType Directory $d | Out-Null; Set-Location $d
+          foar init demo; Set-Location demo; foar build
+          if (-not (Test-Path dist/app.js)) { throw 'no dist/app.js' }
+          $env:FOAR_UNINSTALL = '1'; & "$env:GITHUB_WORKSPACE/web/install.ps1"
+          if (Test-Path "$HOME/.foar/bin/foar.exe") { throw 'still installed' }

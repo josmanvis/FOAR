@@ -186,6 +186,19 @@ function initDocsToc() {
   for (const heading of map.keys()) observer.observe(heading);
 }
 
+// ---- install: show the command for the visitor's system --------------------------
+function initOsSwitch() {
+  const buttons = [...document.querySelectorAll('.os-switch [data-os]')];
+  if (!buttons.length) return;
+  const show = (os) => {
+    for (const b of buttons) b.setAttribute('aria-pressed', String(b.dataset.os === os));
+    for (const p of document.querySelectorAll('[data-os-panel]')) p.hidden = p.dataset.osPanel !== os;
+  };
+  for (const b of buttons) b.addEventListener('click', () => show(b.dataset.os));
+  const platform = navigator.userAgentData?.platform || navigator.platform || '';
+  show(/win/i.test(platform) ? 'windows' : 'unix');
+}
+
 // the landing page's static code samples
 async function highlightSamples() {
   const samples = document.querySelectorAll('code.foar');
@@ -200,3 +213,4 @@ initHero();
 initMatchDemo();
 initCopyButtons();
 initDocsToc();
+initOsSwitch();

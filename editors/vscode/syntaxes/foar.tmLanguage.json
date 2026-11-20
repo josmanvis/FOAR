@@ -72,7 +72,7 @@
       "patterns": [
         {
           "name": "support.class.element.foar",
-          "match": "\\b(?:Text|Button|Input|TextArea|Checkbox|RichText|Image|Spinner|Row|Column|List|If|Else|Match|Router|Route|Link|Slot|Portal|Catch|Fallback|Form|Select|Option|Slider|Progress|Island)\\b"
+          "match": "\\b(?:Text|Button|Input|TextArea|Checkbox|RichText|Image|Spinner|Row|Column|List|If|Else|Match|Router|Route|Link|Slot|Portal|Catch|Fallback|Form|Select|Option|Slider|Progress|Island|Host|Video|Canvas|Svg)\\b"
         },
         {
           "name": "support.function.builtin.foar",

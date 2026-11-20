@@ -81,6 +81,10 @@ const BUILTIN_ELEMENTS: &[(&str, &str)] = &[
     ("Slider", "Native range slider (`Slider(value: v, min: 0, max: 100, step: 1) -> on_input(Set)`)."),
     ("Progress", "Native progress bar (`Progress(value: v, max: 100)`)."),
     ("Island", "Partial hydration boundary (`Island(client: \"visible\" | \"idle\" | \"load\") { ... }`)."),
+    ("Host", "Named DOM host handle for imperative libraries (`Host(name: \"chart\") { ... }`, read via `onMount` / `app.getHost(name)`)."),
+    ("Video", "Native `<video>` element (`Video(src: url, controls: true, poster: img)`)."),
+    ("Canvas", "Native `<canvas>` surface (`Canvas(width: 640, height: 360)`)."),
+    ("Svg", "Inline `<svg>` container (`Svg(view_box: \"0 0 24 24\", width: 24, height: 24)`)."),
 ];
 
 pub fn run_stdio() {

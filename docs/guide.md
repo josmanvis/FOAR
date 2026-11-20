@@ -8,7 +8,12 @@ changed.
 
 This guide takes you from a counter to a multi-file app in about fifteen
 minutes. Everything here runs in the [playground](https://josmanvis.github.io/FOAR/playground/), so you can
-follow along without installing anything.
+follow along without installing anything. To work locally:
+
+```sh
+curl -fsSL https://josmanvis.github.io/FOAR/install.sh | sh   # Windows: irm https://josmanvis.github.io/FOAR/install.ps1 | iex
+foar init my-app && cd my-app && foar dev
+```
 
 - [Language reference](./language.md): every construct, in detail.
 - [Tooling](./tooling.md): the CLI, the playground, dev servers.

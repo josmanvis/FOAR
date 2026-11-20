@@ -4,6 +4,17 @@ All notable changes to FOAR are documented in this file.
 
 ## Unreleased
 
+## [0.3.0] — 2026-11-19
+
+### Install & CLI
+- **One-line install** with prebuilt binaries for macOS, Linux and Windows (x64 and arm64), published to GitHub Releases by `.github/workflows/release.yml`:
+  `curl -fsSL https://josmanvis.github.io/FOAR/install.sh | sh` or, in PowerShell, `irm https://josmanvis.github.io/FOAR/install.ps1 | iex`. The installers verify the SHA-256, install to `~/.foar/bin`, and make `foar` usable at once (a link from a directory already on PATH, or the shell profile / user PATH). `--version`, `--dir`, `--no-modify-path`, `--uninstall`.
+- `foar` works with nothing else installed: the runtime is built into the binary.
+  - `foar init` scaffolds `app.foar`, `index.html`, `foar.toml`, `.gitignore`.
+  - `foar dev` serves the project with live reload; compile errors show in the page and the terminal.
+  - `foar build` in a project writes `dist/` (index.html, app.js, foar-runtime.js); `foar build x.foar --format js -o out/app.js` writes the runtime beside the module and creates `out/`.
+  - `foar upgrade [version]` reinstalls in place.
+
 ### Website & identity
 - New identity built on railway interlocking (a signal box makes conflicting routes impossible to set, as FOAR does for UI states): a turnout logo, Overpass type, a green-grey panel colour, one amber lamp for "the current state", signal red only for compiler errors. No purple, no gradients.
 - The landing page's hero is now a real FOAR component (`web/hero/note.foar`), compiled at build time with the WebAssembly compiler and mounted on the runtime; a track diagram lights the current state and the transition that just ran.

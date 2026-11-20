@@ -48,7 +48,14 @@ export function createLanguageService() {
 
   const fileOf = (path) => index?.files.get(path);
   const viewAt = (f, offset) => f.views.find((v) => v.start <= offset && offset <= v.end);
-  const viewSig = (v) => `view ${v.name}${v.params.length ? `(${v.params.map((p) => `${p.name}: ${p.type}${p.default != null ? ` = ${p.default}` : ''}`).join(', ')})` : ''}`;
+  const ctxEffectSig = (c, e) => `${c.name}.${e.name}(${e.params.map((p) => `${p.name}: ${p.type}`).join(', ')})`;
+  const ctxSummary = (c) =>
+    [`context ${c.name} {`, ...c.stores.map((s) => `    store ${s.name}: ${s.type};`), ...c.lets.map((l) => `    let ${l.name}${l.type !== 'derived' ? `: ${l.type}` : ''};`), ...c.effects.map((e) => `    effect ${e.name}(${e.params.map((p) => `${p.name}: ${p.type}`).join(', ')})`), '}'].join('\n');
+  const ctxMembers = (c, effectsOnly = false) => [
+    ...c.effects.map((e) => ({ label: e.name, kind: 'effect', detail: ctxEffectSig(c, e), insert: effectsOnly ? e.name : `${e.name}($1)`, sort: '0' })),
+    ...(effectsOnly ? [] : [...c.stores.map((s) => ({ label: s.name, kind: 'variable', detail: `store ${s.name}: ${s.type}`, doc: `in context ${c.name}`, insert: s.name, sort: '1' })), ...c.lets.map((l) => ({ label: l.name, kind: 'variable', detail: `let ${l.name}${l.type !== 'derived' ? `: ${l.type}` : ''}`, doc: `derived, in context ${c.name}`, insert: l.name, sort: '1' }))]),
+  ];
+  const viewSig = (v) => `view ${v.name}${v.typeParams?.length ? `<${v.typeParams.join(", ")}>` : ""}${v.params.length ? `(${v.params.map((p) => `${p.name}: ${p.type}${p.default != null ? ` = ${p.default}` : ''}`).join(', ')})` : ''}`;
   const allEffects = (v) => v.states.flatMap((s) => s.effects.map((e) => ({ ...e, state: s.name })));
 
   // the element a "-> on_x" chain belongs to (walk back over balanced brackets)
@@ -113,7 +120,11 @@ export function createLanguageService() {
       for (const p of view.params) items.push({ label: p.name, kind: 'variable', detail: `param ${p.name}: ${p.type}`, insert: p.name });
       for (const l of view.lets ?? []) items.push({ label: l.name, kind: 'variable', detail: `let ${l.name}`, doc: 'Derived value (recomputed on every update).', insert: l.name });
     }
+    // inside a context's effect: its own stores and lets
+    const own = r?.context && index.contexts?.get(r.context);
+    if (own) for (const x of [...own.stores, ...own.lets]) items.push({ label: x.name, kind: 'variable', detail: `${own.stores.includes(x) ? 'store' : 'let'} ${x.name}: ${x.type}`, insert: x.name, sort: '0' });
     for (const en of index.enums.values()) items.push({ label: en.name, kind: 'type', detail: `enum ${en.name}`, doc: en.variants.map((v) => v.name).join(' | '), insert: `${en.name}.`, retrigger: true, sort: '7' });
+    for (const c of index.contexts?.values() ?? []) items.push({ label: c.name, kind: 'type', detail: `context ${c.name}`, doc: ctxSummary(c), insert: `${c.name}.`, retrigger: true, sort: '6' });
     for (const p of r?.params ?? []) items.push({ label: p.name, kind: 'variable', detail: `${p.name}: ${p.type}`, insert: p.name, sort: '0' });
     for (const l of localsAt(f, r, offset)) items.push({ label: l, kind: 'variable', detail: 'list item', insert: l, sort: '0' });
     items.push({ label: 't', kind: 'function', detail: 't(key, params)', doc: 'Translated string from the locale catalogs.', insert: 't("${1:key}")' });
@@ -148,6 +159,14 @@ export function createLanguageService() {
     const state = view?.states.find((s) => s.name === r?.state);
     let m;
 
+    // Library.<store | let | effect>   (only effects in `-> on_x(Library.…)`)
+    if ((m = /\b([A-Z]\w*)\.(\w*)$/.exec(before)) && index.contexts?.has(m[1])) {
+      return { ...word(), items: ctxMembers(index.contexts.get(m[1]), /->\s*on_\w+\(\s*\w+\.\w*$/.test(before)) };
+    }
+    // use <Context>;
+    if (/^\s*use\s+\w*$/.test(before.slice(before.lastIndexOf('\n') + 1))) {
+      return { ...word(), items: [...(index.contexts?.values() ?? [])].map((c) => ({ label: c.name, kind: 'type', detail: `context ${c.name}`, doc: ctxSummary(c), insert: c.name })) };
+    }
     // Layout.<variant>
     if ((m = /\b([A-Z]\w*)\.(\w*)$/.exec(before)) && index.enums.has(m[1])) {
       const en = index.enums.get(m[1]);
@@ -331,6 +350,15 @@ export function createLanguageService() {
       const v = index.enums.get(owner).variants.find((x) => x.name === word);
       if (v) return at(`${owner}.${v.name}`, `= ${v.value}`);
     }
+    if (owner && index.contexts?.has(owner)) {
+      const c = index.contexts.get(owner);
+      const e = c.effects.find((x) => x.name === word);
+      if (e) return at(`effect ${ctxEffectSig(c, e)}`, `in context ${c.name}\n${c.path}:${lineOf(index.files.get(c.path).text, e.offset)}`);
+      const x = c.stores.find((y) => y.name === word) ?? c.lets.find((y) => y.name === word);
+      if (x) return at(`${c.stores.includes(x) ? 'store' : 'let'} ${c.name}.${x.name}${x.type !== 'derived' ? `: ${x.type}` : ''}`, `in context ${c.name}`);
+    }
+    const cx = index.contexts?.get(word);
+    if (cx) return at(ctxSummary(cx), `A shared store: views \`use ${cx.name};\` and call it directly.\n${cx.path}:${lineOf(index.files.get(cx.path).text, cx.offset)}`);
     const v = index.views.get(word);
     if (v) {
       const states = v.states.map((st) => st.name).join(' · ');
@@ -394,7 +422,12 @@ export function createLanguageService() {
       const v = en.variants.find((x) => x.name === word);
       if (v) return { path: en.path, offset: v.offset };
     }
-    const g = index.views.get(word) ?? index.styles.get(word) ?? index.datas.get(word) ?? index.enums.get(word) ?? index.keyframes.get(word);
+    if (owner && index.contexts?.has(owner)) {
+      const c = index.contexts.get(owner);
+      const x = c.effects.find((y) => y.name === word) ?? c.stores.find((y) => y.name === word) ?? c.lets.find((y) => y.name === word);
+      if (x) return { path: c.path, offset: x.offset };
+    }
+    const g = index.views.get(word) ?? index.contexts?.get(word) ?? index.styles.get(word) ?? index.datas.get(word) ?? index.enums.get(word) ?? index.keyframes.get(word);
     if (g) return at(g);
     const view = viewAt(f, offset);
     if (view) {
@@ -416,6 +449,7 @@ export function createLanguageService() {
     if (index.styles.has(word)) return { name: word, kind: 'style', scope: 'project', s, e };
     if (index.datas.has(word)) return { name: word, kind: 'data', scope: 'project', s, e };
     if (index.enums.has(word)) return { name: word, kind: 'enum', scope: 'project', s, e };
+    if (index.contexts?.has(word)) return { name: word, kind: 'context', scope: 'project', s, e };
     const view = viewAt(f, offset);
     if (!view) return null;
     const scope = { path, s: view.start, e: view.end };

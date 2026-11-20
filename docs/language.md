@@ -110,6 +110,10 @@ Row {
 | `RichText(value:, placeholder:, editable:)` | contenteditable; the value is HTML | `on_input(html)`, `on_blur`, `on_context_menu`, `on_drop` |
 | `Image(src:, alt:)` | hidden while `src` is empty | `on_click`, `on_drop` |
 | `Spinner(text)` | | |
+| `Host(name: "map") { … }` | stable `<div>` handle for an imperative integration | normal container events |
+| `Video(src:, controls:, poster:, autoplay:, loop:, muted:)` | native `<video>` | normal container events |
+| `Canvas(width:, height:)` | native `<canvas>` | normal container events |
+| `Svg(view_box:, width:, height:)` | native `<svg>` for an imperative SVG renderer | normal container events |
 | `Row { … }`, `Column { … }` | flex row / column | `on_click`, `on_double_click`, `on_context_menu`, `on_drop`, drag events |
 | `List(items, empty: …) { item => … }` | one block per item, keyed | `on_context_menu`, `on_drop` |
 | `If(cond) { … } Else If(c) { … } Else { … }` | shows one branch | |
@@ -504,6 +508,52 @@ app.getContext('Library').notes;          // read its stores and lets
 Context stores are serialized during server rendering and restored by
 `hydrate()`.
 
+### External context updates
+
+External subscriptions should push new values through `setContext`, instead of
+mutating the object returned by `getContext` (that method returns a snapshot).
+The patch is applied atomically, derived `let`s are recomputed, and rendering
+is batched with other changes in the current microtask.
+
+```js
+const stop = externalStore.subscribe((notes) => {
+  app.setContext('Library', { notes });
+});
+
+// A functional patch is useful when the host needs the latest store value.
+app.setContext('Browse', ({ selected_id }) => ({ selected_id: null }));
+```
+
+Only `store` fields can be written this way; context `let`s remain derived and
+read-only.
+
+### Imperative DOM handles
+
+Use `Host` when a browser library needs a stable node owned by the FOAR view.
+`getHost` returns it while mounted, and the optional callbacks make setup and
+cleanup explicit. `Canvas`, `Video`, and `Svg` create their native elements
+directly, so a `Host` can contain layout around them or they can be selected by
+an ordinary `id:`.
+
+```foar
+Host(name: "chart", class: "chart-shell") {
+    Canvas(id: "sales-canvas", width: 800, height: 320)
+}
+```
+
+```js
+const app = createFoarRuntime(program, mount, {
+  onMount(el, { name }) {
+    if (name === 'chart') drawChart(el.querySelector('canvas'));
+  },
+  onUnmount(el, { name }) {
+    if (name === 'chart') disposeChart(el);
+  },
+});
+
+app.getHost('chart'); // the Host element, or undefined after unmount
+```
+
 The [Notes example](../playground/?example=notes-on-foar) is built this way:
 `stores/Library.foar` (notes and folders), `Browse.foar` (what's shown and
 selected), `Prefs.foar`, `Vault.foar` (the password for locked notes) and
@@ -596,12 +646,21 @@ rt.destroy();
 `foar build app.foar --format js`, which produces an ES module exporting
 `{ program, mount, hydrate, renderToString, createI18n }`.
 
+`--format js` is the production/CSP-safe format: expressions, effects and pure
+FOAR functions are emitted as ordinary module functions at build time. It does
+not require `unsafe-eval`, so it works with `Content-Security-Policy:
+script-src 'self'`. JSON programs remain useful for the compiler API and the
+playground; use the generated module whenever a strict CSP is required.
+
 ### How updates work
 
 - Each element is compiled once into a block that owns real DOM nodes and a
   list of **bindings** (text, value, checked, attributes, dynamic styles). An
   update re-evaluates the bindings and writes only the values that changed.
   There is no virtual DOM and no diff of element trees.
+- Blocks record the values used by their bindings. A flush skips an entire
+  subtree when none of those values changed; keyed `List` rows keep the same
+  property, so unchanged rows are not revisited during a sibling update.
 - A transition replaces only that view's subtree; `If`/`Match` swap DOM only
   when the branch or arm changes; `List` reconciles by key.
 - Effects in one tick are batched into one update (a microtask).

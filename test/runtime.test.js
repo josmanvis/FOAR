@@ -1,8 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { makeDom, tick, fire, compile as parseFoar, loadProject } from './dom.js';
-import { createFoarRuntime, hydrate, hydrateIslands, renderToString, renderToStringAsync, renderToStream, matchRoute, parseUrl } from '../web/foar-runtime.js';
+import { createFoarRuntime, attachPrecompiled, hydrate, hydrateIslands, renderToString, renderToStringAsync, renderToStream, matchRoute, parseUrl } from '../web/foar-runtime.js';
+
+const BIN = new URL('../target/release/foar', import.meta.url).pathname;
 
 const todoSrc = loadProject('todo'); // multi-file project
 const counterSrc = fs.readFileSync(new URL('../examples/counter/app.foar', import.meta.url), 'utf8');
@@ -1450,3 +1455,248 @@ view Popup {
   assert.ok(html.includes('2 of 0'), html);
   assert.deepEqual(state.contexts.Items.all, ['apple', 'banana']);
 });
+
+test('Host node handles (onMount / onUnmount / getHost) and Video / Canvas / Svg elements (client + SSR)', async () => {
+  const src = `
+view App {
+  store show_chart: bool = true;
+  store width: i32 = 640;
+  store clip: String = "/demo.mp4";
+  state Ready {
+    render {
+      Column {
+        Button("Toggle") -> on_click(Toggle)
+        Button("Resize") -> on_click(Resize)
+        If(show_chart) {
+          Host(name: "chart") {
+            Canvas(width: width, height: 360)
+          }
+        }
+        Video(src: clip, controls: true, muted: true, playsinline: true, poster: "/poster.jpg", preload: "metadata")
+        Svg(view_box: "0 0 24 24", width: 24, height: 24, preserve_aspect_ratio: "xMidYMid meet")
+      }
+    }
+    effect Toggle() { show_chart = !show_chart; }
+    effect Resize() { width = 800; }
+  }
+}
+`;
+  const ast = parseFoar(src);
+
+  // 1. SSR output for Host, Canvas, Video, Svg
+  const ssr = renderToString(ast);
+  assert.ok(ssr.html.includes('class="f4-host" data-f4-host="chart"'), ssr.html);
+  assert.ok(ssr.html.includes('<canvas class="f4-canvas" width="640" height="360"></canvas>'), ssr.html);
+  assert.ok(ssr.html.includes('<video class="f4-video" src="/demo.mp4" poster="/poster.jpg" preload="metadata" controls="" muted="" playsinline=""></video>'), ssr.html);
+  assert.ok(ssr.html.includes('<svg class="f4-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" preserveAspectRatio="xMidYMid meet"></svg>'), ssr.html);
+
+  // 2. Client mount, onMount/onUnmount callbacks, getHost, and reactive updates
+  const { container } = makeDom();
+  const mounted = [];
+  const unmounted = [];
+  const app = createFoarRuntime(ast, container, {
+    onMount: (el, info) => mounted.push({ tag: el.tagName, name: info.name, viewName: info.viewName }),
+    onUnmount: (el, info) => unmounted.push({ tag: el.tagName, name: info.name, viewName: info.viewName }),
+  });
+
+  assert.equal(mounted.length, 1);
+  assert.deepEqual(mounted[0], { tag: 'DIV', name: 'chart', viewName: 'App' });
+  const hostEl = app.getHost('chart');
+  assert.ok(hostEl, 'app.getHost("chart") returns mounted host node');
+  assert.equal(hostEl.getAttribute('data-f4-host'), 'chart');
+
+  const canvas = hostEl.querySelector('canvas');
+  assert.equal(canvas.getAttribute('width'), '640');
+  assert.equal(canvas.getAttribute('height'), '360');
+
+  const video = container.querySelector('video');
+  assert.equal(video.getAttribute('src'), '/demo.mp4');
+  assert.equal(video.getAttribute('poster'), '/poster.jpg');
+  assert.equal(video.hasAttribute('controls'), true);
+  assert.equal(video.hasAttribute('muted'), true);
+
+  const svg = container.querySelector('svg');
+  assert.equal(svg.getAttribute('viewBox'), '0 0 24 24');
+  assert.equal(svg.getAttribute('width'), '24');
+
+  // Reactive update on Canvas width
+  q(container, 'button').find((b) => b.textContent === 'Resize').click();
+  await tick();
+  assert.equal(canvas.getAttribute('width'), '800');
+
+  // Unmounting If(show_chart) fires onUnmount and clears getHost("chart")
+  q(container, 'button').find((b) => b.textContent === 'Toggle').click();
+  await tick();
+  assert.equal(unmounted.length, 1);
+  assert.deepEqual(unmounted[0], { tag: 'DIV', name: 'chart', viewName: 'App' });
+  assert.equal(app.getHost('chart'), null);
+  app.destroy();
+});
+
+test('app.setContext pushes external store changes into a context and recomputes derived lets', async () => {
+  const src = `
+context Session {
+  store user: String = "guest";
+  store count: i32 = 1;
+  let badge = "{user}#{count}";
+}
+context Summary {
+  let label = "Active: " + Session.badge;
+}
+view App {
+  use Session;
+  use Summary;
+  state Ready {
+    render {
+      Text(Summary.label)
+    }
+  }
+}
+`;
+  const ast = parseFoar(src);
+  const { container } = makeDom();
+  const app = createFoarRuntime(ast, container, {});
+  assert.equal(container.querySelector('.f4-text').textContent, 'Active: guest#1');
+
+  // 1. Object patch
+  const next = app.setContext('Session', { user: 'ada', count: 4 });
+  assert.equal(next.badge, 'ada#4');
+  await tick();
+  assert.equal(container.querySelector('.f4-text').textContent, 'Active: ada#4');
+
+  // 2. Functional updater
+  app.setContext('Session', (prev) => ({ count: prev.count + 6 }));
+  await tick();
+  assert.equal(container.querySelector('.f4-text').textContent, 'Active: ada#10');
+
+  // 3. Rejects unknown context or writing to a read-only derived let
+  assert.throws(() => app.setContext('Nope', { a: 1 }), /no context Nope/);
+  assert.throws(() => app.setContext('Session', { badge: 'override' }), /not a writable context store/);
+  app.destroy();
+});
+
+test('AOT precompiled JS module (--format js) executes with zero new Function calls under strict CSP', async () => {
+  const src = `
+fn double(n: i32) -> i32 {
+  return n * 2;
+}
+
+context Counter {
+  store base: i32 = 3;
+  let doubled = double(base);
+  effect Bump(delta: i32) {
+    base = base + delta;
+  }
+}
+
+view App {
+  use Counter;
+  store local: i32 = 10;
+  let total = Counter.doubled + local;
+  state Ready {
+    render {
+      Column {
+        Text("Total: {total}")
+        Button("Add") -> on_click(Add)
+      }
+    }
+    effect Add() {
+      local = local + 5;
+      Counter.Bump(2);
+    }
+  }
+}
+`;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'foar-csp-'));
+  const foarFile = path.join(tmpDir, 'app.foar');
+  const jsFile = path.join(tmpDir, 'app.mjs');
+  fs.writeFileSync(foarFile, src);
+  execFileSync(BIN, ['build', foarFile, '--format', 'js', '-o', jsFile]);
+
+  // Point the generated module at our local foar-runtime.js
+  const runtimeUrl = new URL('../web/foar-runtime.js', import.meta.url).href;
+  const generated = fs.readFileSync(jsFile, 'utf8').replace('./foar-runtime.js', runtimeUrl);
+  fs.writeFileSync(jsFile, generated);
+
+  const mod = await import(`file://${jsFile}`);
+  assert.ok(mod.program, 'generated module exports precompiled program');
+
+  // Block dynamic Function compilation to simulate Content-Security-Policy: script-src 'self'
+  const OrigFunction = globalThis.Function;
+  globalThis.Function = function BlockedByCSP() {
+    throw new Error('CSP violation: new Function() is blocked');
+  };
+  try {
+    const ssr = renderToString(mod.program);
+    assert.ok(ssr.html.includes('Total: 16'), ssr.html);
+
+    const { container } = makeDom();
+    const app = createFoarRuntime(mod.program, container, {});
+    assert.equal(container.querySelector('.f4-text').textContent, 'Total: 16');
+
+    container.querySelector('button').click();
+    await tick();
+    // base: 3 -> 5 (doubled = 10), local: 10 -> 15 => total = 25
+    assert.equal(container.querySelector('.f4-text').textContent, 'Total: 25');
+    app.destroy();
+  } finally {
+    globalThis.Function = OrigFunction;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('Dirty-subtree skipping avoids re-evaluating bindings in unchanged subtrees and list rows', async () => {
+  const src = `
+extern fn track_left(v: String) -> String;
+extern fn track_right(v: String) -> String;
+extern fn track_row(v: String) -> String;
+
+data Item { id: String, name: String }
+
+view App {
+  store left: String = "L1";
+  store right: String = "R1";
+  store items: Vec<Item> = [
+    { id: "a", name: "Alpha" },
+    { id: "b", name: "Beta" }
+  ];
+  state Ready {
+    render {
+      Column {
+        Row { Text(track_left(left)) }
+        Row { Text(track_right(right)) }
+        List(items) { item =>
+          Row { Text(track_row(item.name)) }
+        }
+        Button("UpdateLeft") -> on_click(UpdateLeft)
+      }
+    }
+    effect UpdateLeft() { left = "L2"; }
+  }
+}
+`;
+  const ast = parseFoar(src);
+  const { container } = makeDom();
+  const counts = { left: 0, right: 0, row: 0 };
+  const app = createFoarRuntime(ast, container, {
+    bindings: {
+      track_left: (v) => { counts.left++; return v; },
+      track_right: (v) => { counts.right++; return v; },
+      track_row: (v) => { counts.row++; return v; },
+    },
+  });
+
+  assert.equal(counts.left, 1);
+  assert.equal(counts.right, 1);
+  assert.equal(counts.row, 2);
+
+  // Updating `left` must re-evaluate the left subtree, while skipping the unchanged right subtree and unchanged list rows!
+  container.querySelector('button').click();
+  await tick();
+  assert.equal(counts.left, 2, 'changed subtree re-evaluated');
+  assert.equal(counts.right, 1, 'unchanged sibling subtree skipped');
+  assert.equal(counts.row, 2, 'unchanged keyed List rows skipped');
+  assert.equal(container.querySelector('.f4-text').textContent, 'L2');
+  app.destroy();
+});
+

@@ -11,7 +11,8 @@
     "build:wasm": "cargo build --release --lib --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/foar.wasm web/foar.wasm",
     "test": "cargo test --release && cargo build --release && node --test test/runtime.test.js test/tooling.test.js",
     "bench": "cargo build --release && node bench/bench.js",
-    "build:site": "node scripts/site.mjs _site"
+    "build:site": "node scripts/site.mjs _site",
+    "test:e2e": "node test/e2e/run.mjs"
   },
   "keywords": [],
   "author": "Jose Viscasillas",

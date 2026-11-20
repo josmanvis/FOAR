@@ -23,7 +23,7 @@ a built-in **router**, **streaming & async zero-DOM SSR + zero-recreation full
 & partial-islands hydration (`Island`/`hydrateIslands`)**, `foar.toml` +
 SHA-256 `foar.lock` **packages**, a **Rust LSP server**, **CLI formatter (`foar fmt`)**,
 **Vite HMR plugin**, and **VS Code extension** ship in one **Rust compiler**
-(native + WebAssembly) targeting a 24 KB retained-DOM runtime with no virtual DOM.
+(native + WebAssembly) targeting a 25 KB retained-DOM runtime with no virtual DOM.
 
 ```rust
 enum Status { Draft, Review, Published }
@@ -110,21 +110,37 @@ article.foar:10:13: This match doesn't handle Status.Archived (add an arm for it
   and the [browser playground](https://josmanvis.github.io/FOAR/playground/)
   with full-viewport standalone app runner.
 
-## Quick start
+## Install
 
-No install: open the [playground](https://josmanvis.github.io/FOAR/playground/).
-
-Locally (Rust and Node):
+macOS and Linux:
 
 ```sh
-git clone https://github.com/josmanvis/FOAR && cd FOAR
-pnpm install
-pnpm dev                       # site + playground on http://localhost:3000
-
-cargo build --release          # the CLI: target/release/foar
-foar check app.foar
-foar build app.foar --format js -o dist/app.js
+curl -fsSL https://josmanvis.github.io/FOAR/install.sh | sh
 ```
+
+Windows (PowerShell):
+
+```powershell
+irm https://josmanvis.github.io/FOAR/install.ps1 | iex
+```
+
+One binary, nothing else needed: the compiler, the runtime and a dev server.
+Prebuilt for x64 and arm64; the installer checks the download's SHA-256 and
+puts `foar` on your PATH. `foar upgrade` updates it. Or download an archive
+from [Releases](https://github.com/josmanvis/FOAR/releases).
+
+No install at all: the [playground](https://josmanvis.github.io/FOAR/playground/).
+
+## Quick start
+
+```sh
+foar init my-app && cd my-app
+foar dev                       # http://localhost:5173, reloads on save
+foar build                     # dist/: index.html, app.js, foar-runtime.js
+```
+
+Other commands: `foar check app.foar`, `foar fmt`, `foar build app.foar --format js -o dist/app.js`
+(see [Tooling](docs/tooling.md)).
 
 ```js
 import { mount } from './dist/app.js';
@@ -144,11 +160,19 @@ mount(document.getElementById('app'), {
 | [Examples](examples/README.md) | starter, counter, todo, orders, router, notes-on-foar |
 | [Changelog](CHANGELOG.md) | release notes and recent milestones |
 
+## Build from source
+
+```sh
+git clone https://github.com/josmanvis/FOAR && cd FOAR
+cargo build --release          # target/release/foar
+pnpm install && pnpm dev       # site + playground on http://localhost:3000
+```
+
 ## Repository
 
 ```
 src/                 the Rust compiler (lexer, parser, match/enums, typecheck, CSS, imports/lockfile, i18n, LSP, CLI, WASM)
-web/foar-runtime.js  the DOM + SSR + streaming + islands runtime (one module, ~24 KB gzipped, zero dependencies)
+web/foar-runtime.js  the DOM + SSR + streaming + islands runtime (one module, ~25 KB gzipped, zero dependencies)
 web/foar-compiler.js runs the compiler in the browser (WASM)
 integrations/        Vite plugin with state-preserving HMR (vite-plugin-foar.js)
 editors/vscode/      VS Code extension + TextMate grammar launching `foar lsp`

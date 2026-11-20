@@ -80,6 +80,7 @@ const BUILTIN_ELEMENTS: &[&str] = &[
     "Text", "Button", "Input", "TextArea", "Checkbox", "RichText", "Image", "Spinner",
     "Row", "Column", "List", "If", "Match", "Router", "Route", "Link", "Slot", "Portal", "Catch",
     "Form", "Select", "Option", "Slider", "Progress", "Island",
+    "Host", "Video", "Canvas", "Svg",
 ];
 
 impl<'s> Parser<'s> {

@@ -78,6 +78,7 @@ export function analyzeFile(path, text) {
     keyframes: [],
     imports: [],
     enums: [],
+    contexts: [],
     regions: [],
     refs: { transitions: [], handlers: [], styleUses: [], varUses: [], events: [], elements: [], stateStyles: [] },
   };
@@ -193,6 +194,16 @@ export function analyzeFile(path, text) {
     if (nameTok?.k !== 'id') return i + 1;
     const view = { name: nameTok.v, offset: nameTok.s, path, params: [], stores: [], lets: [], states: [], emits: new Set(), start: toks[i].s, end: text.length };
     let j = i + 2;
+    // generic views: `view MenuItem<T>(…)`
+    if (is(j, '<')) {
+      view.typeParams = [];
+      j++;
+      while (j < toks.length && !is(j, '>') && !is(j, '(') && !is(j, '{')) {
+        if (toks[j].k === 'id') view.typeParams.push(toks[j].v);
+        j++;
+      }
+      if (is(j, '>')) j++;
+    }
     if (is(j, '(')) {
       region('params', j, { view: view.name });
       view.params = params(j);
@@ -279,10 +290,46 @@ export function analyzeFile(path, text) {
     return bodyClose + 1;
   }
 
+  // context Library { store …; let …; effect Name(params) { … } }
+  function parseContext(i) {
+    const nameTok = toks[i + 1];
+    if (nameTok?.k !== 'id' || !is(i + 2, '{')) return i + 1;
+    const close = end(i + 2);
+    const ctx = { name: nameTok.v, offset: nameTok.s, path, stores: [], lets: [], effects: [], start: toks[i].s, end: offEnd(i + 2) };
+    let k = i + 3;
+    while (k < close) {
+      const t = toks[k];
+      if ((t.v === 'store' || t.v === 'let') && toks[k + 1]?.k === 'id') {
+        const n = toks[k + 1];
+        let m = k + 2;
+        const typeToks = [];
+        if (is(m, ':')) {
+          m++;
+          while (m < close && !is(m, '=') && !is(m, ';')) typeToks.push(toks[m++].v);
+        }
+        while (m < close && !is(m, ';')) m = toks[m].k === 'p' && OPEN[toks[m].v] ? end(m) + 1 : m + 1;
+        (t.v === 'store' ? ctx.stores : ctx.lets).push({ name: n.v, type: typeToks.join('') || (t.v === 'let' ? 'derived' : 'any'), offset: n.s });
+        k = m + 1;
+      } else if (t.v === 'effect' && toks[k + 1]?.k === 'id' && is(k + 2, '(')) {
+        const ef = { name: toks[k + 1].v, offset: toks[k + 1].s, params: params(k + 2) };
+        let n = end(k + 2) + 1;
+        if (is(n, '{')) {
+          region('effect', n, { context: ctx.name, effect: ef.name, params: ef.params });
+          n = end(n) + 1;
+        }
+        ctx.effects.push(ef);
+        k = n;
+      } else k = t.k === 'p' && OPEN[t.v] ? end(k) + 1 : k + 1;
+    }
+    f.contexts.push(ctx);
+    return close + 1;
+  }
+
   let i = 0;
   while (i < toks.length) {
     const t = toks[i];
     if (t.k === 'id' && t.v === 'view') i = parseView(i);
+    else if (t.k === 'id' && t.v === 'context') i = parseContext(i);
     else if (t.k === 'id' && t.v === 'import' && toks[i + 1]?.k === 'str') {
       const s = toks[i + 1];
       f.imports.push({ spec: s.v.slice(1, s.v.endsWith('"') && s.v.length > 1 ? -1 : undefined), s: s.s + 1, e: s.e - (s.v.endsWith('"') && s.v.length > 1 ? 1 : 0) });
@@ -348,7 +395,7 @@ export function analyzeFile(path, text) {
 
 /** Index of a whole project: { files: Map<path, file>, views, styles, datas, cssVars, keyframes }. */
 export function analyzeProject(files, prev = null) {
-  const out = { files: new Map(), views: new Map(), styles: new Map(), datas: new Map(), cssVars: new Map(), keyframes: new Map(), enums: new Map() };
+  const out = { files: new Map(), views: new Map(), styles: new Map(), datas: new Map(), cssVars: new Map(), keyframes: new Map(), enums: new Map(), contexts: new Map() };
   for (const [path, text] of Object.entries(files)) {
     const old = prev?.files.get(path);
     const f = old && old.text === text ? old : analyzeFile(path, text);
@@ -357,6 +404,7 @@ export function analyzeProject(files, prev = null) {
     for (const s of f.styles) if (!out.styles.has(s.name)) out.styles.set(s.name, s);
     for (const d of f.datas) if (!out.datas.has(d.name)) out.datas.set(d.name, d);
     for (const e of f.enums) if (!out.enums.has(e.name)) out.enums.set(e.name, e);
+    for (const c of f.contexts ?? []) if (!out.contexts.has(c.name)) out.contexts.set(c.name, c);
     for (const k of f.keyframes) out.keyframes.set(k.name, k);
     for (const c of f.cssVars) {
       if (!out.cssVars.has(c.name)) out.cssVars.set(c.name, []);

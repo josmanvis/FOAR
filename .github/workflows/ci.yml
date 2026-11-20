@@ -28,3 +28,5 @@ jobs:
         run: pnpm build:wasm
       - name: Website builds
         run: pnpm build:site
+      - name: Browser end-to-end tests (headless Chrome)
+        run: pnpm test:e2e
