@@ -1495,12 +1495,18 @@ view App {
   const mounted = [];
   const unmounted = [];
   const app = createFoarRuntime(ast, container, {
-    onMount: (el, info) => mounted.push({ tag: el.tagName, name: info.name, viewName: info.viewName }),
+    onMount: (el, info) => mounted.push({
+      tag: el.tagName,
+      name: info.name,
+      viewName: info.viewName,
+      connected: el.isConnected,
+      inContainer: container.contains(el),
+    }),
     onUnmount: (el, info) => unmounted.push({ tag: el.tagName, name: info.name, viewName: info.viewName }),
   });
 
   assert.equal(mounted.length, 1);
-  assert.deepEqual(mounted[0], { tag: 'DIV', name: 'chart', viewName: 'App' });
+  assert.deepEqual(mounted[0], { tag: 'DIV', name: 'chart', viewName: 'App', connected: true, inContainer: true });
   const hostEl = app.getHost('chart');
   assert.ok(hostEl, 'app.getHost("chart") returns mounted host node');
   assert.equal(hostEl.getAttribute('data-f4-host'), 'chart');
@@ -1530,6 +1536,48 @@ view App {
   assert.equal(unmounted.length, 1);
   assert.deepEqual(unmounted[0], { tag: 'DIV', name: 'chart', viewName: 'App' });
   assert.equal(app.getHost('chart'), null);
+
+  // Remounting If(show_chart) fires onMount only after the new Host is connected in container
+  q(container, 'button').find((b) => b.textContent === 'Toggle').click();
+  await tick();
+  assert.equal(mounted.length, 2);
+  assert.deepEqual(mounted[1], { tag: 'DIV', name: 'chart', viewName: 'App', connected: true, inContainer: true });
+  app.destroy();
+});
+
+test('List uses moveBefore() when available for reordering connected rows', async () => {
+  const src = `
+data RowItem { id: String, label: String }
+view App {
+  store items: Vec<RowItem> = [
+    { id: "a", label: "A" },
+    { id: "b", label: "B" },
+    { id: "c", label: "C" }
+  ];
+  state S {
+    render {
+      Column {
+        Button("Reverse") -> on_click(Rev)
+        List(items) { it => Text(it.label) }
+      }
+    }
+    effect Rev() { items = items.slice().reverse(); }
+  }
+}
+`;
+  const { container } = makeDom();
+  const app = createFoarRuntime(parseFoar(src), container, {});
+  const listEl = container.querySelector('.f4-list');
+  let moveCalls = 0;
+  listEl.moveBefore = (node, ref) => {
+    moveCalls++;
+    listEl.insertBefore(node, ref);
+  };
+
+  container.querySelector('button').click();
+  await tick();
+  assert.ok(moveCalls > 0, 'List used moveBefore() to reorder existing connected rows');
+  assert.deepEqual(q(listEl, '.f4-text').map((e) => e.textContent), ['C', 'B', 'A']);
   app.destroy();
 });
 

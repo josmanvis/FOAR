@@ -202,3 +202,40 @@ test('language service: generic views and contexts', async () => {
   assert.match(ls.hover('app.foar', app.indexOf('use Library') + 6).code, /^context Library \{\n    store notes: Vec<String>;/);
   assert.deepEqual(ls.definition('app.foar', app.indexOf('use Library') + 6), { path: 'lib.foar', offset: 8 });
 });
+
+test('install.sh: verifies SHA-256 checksum, installs binary, and uninstalls cleanly', () => {
+  if (process.platform === 'win32') return;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'foar-installer-'));
+  try {
+    const arch = os.arch() === 'arm64' ? 'aarch64' : 'x86_64';
+    const triple = process.platform === 'darwin' ? `${arch}-apple-darwin` : `${arch}-unknown-linux-musl`;
+    const pkgName = `foar-${triple}`;
+    const pkgDir = path.join(tmp, 'pkg', pkgName);
+    const dlDir = path.join(tmp, 'releases', 'download', 'v0.3.0');
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.mkdirSync(dlDir, { recursive: true });
+    fs.copyFileSync(BIN, path.join(pkgDir, 'foar'));
+    const archive = path.join(dlDir, `${pkgName}.tar.gz`);
+    cp.execFileSync('tar', ['-C', path.join(tmp, 'pkg'), '-czf', archive, pkgName]);
+    const sha = cp.execFileSync('sha256sum', [archive], { encoding: 'utf8' });
+    fs.writeFileSync(`${archive}.sha256`, sha);
+
+    const instRoot = path.join(tmp, 'home-foar');
+    const script = path.join(ROOT, 'web/install.sh');
+    const out = cp.execFileSync('sh', [script, '--version', '0.3.0', '--dir', instRoot, '--no-modify-path'], {
+      env: { ...process.env, FOAR_DOWNLOAD_URL: `file://${path.join(tmp, 'releases')}`, NO_COLOR: '1' },
+      encoding: 'utf8',
+    });
+    assert.ok(out.includes('foar 0.3.0'), out);
+    assert.ok(fs.existsSync(path.join(instRoot, 'bin', 'foar')));
+
+    const uninst = cp.execFileSync('sh', [script, '--uninstall', '--dir', instRoot], {
+      env: { ...process.env, NO_COLOR: '1' },
+      encoding: 'utf8',
+    });
+    assert.ok(uninst.includes('uninstalled'), uninst);
+    assert.ok(!fs.existsSync(path.join(instRoot, 'bin', 'foar')));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

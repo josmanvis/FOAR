@@ -105,34 +105,54 @@ function dedupe(names) {
 }
 
 const EMPTY_SET = Object.freeze(new Set());
+const STAR_SET = Object.freeze(new Set(['*']));
+const ROUTE_SET = Object.freeze(new Set(['route']));
+const depsCache = new Map();
 
 // The compiler already emits JavaScript expressions. For invalidation we only
 // need a conservative dependency set: extra names cause an inexpensive update;
 // missing one would be incorrect. Property names and words in strings are
-// therefore intentionally retained.
+// therefore intentionally retained.Cached once per unique expression string.
 function exprDeps(expr) {
-  return new Set(String(expr || '').match(/[A-Za-z_$][\w$]*/g) || []);
+  const key = String(expr || '');
+  let cached = depsCache.get(key);
+  if (cached) return cached;
+  const matches = key.match(/[A-Za-z_$][\w$]*/g);
+  cached = matches && matches.length ? Object.freeze(new Set(matches)) : EMPTY_SET;
+  depsCache.set(key, cached);
+  return cached;
 }
 function mergeDeps(...sets) {
+  let single = null;
+  let count = 0;
+  for (const set of sets) {
+    if (!set || set.size === 0) continue;
+    if (set === STAR_SET || set.has('*')) return STAR_SET;
+    single = set;
+    count++;
+  }
+  if (count === 0) return EMPTY_SET;
+  if (count === 1) return single;
   const out = new Set();
   for (const set of sets) if (set) for (const name of set) out.add(name);
   return out;
 }
 function blockDeps(blocks) {
   if (!blocks || !blocks.length) return EMPTY_SET;
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (!b || !b.deps || b.deps === STAR_SET || b.deps.has('*')) return STAR_SET;
+  }
+  if (blocks.length === 1) return blocks[0].deps;
   const out = new Set();
-  for (const b of blocks) {
-    if (!b || !b.deps) {
-      out.add('*');
-    } else {
-      for (const name of b.deps) out.add(name);
-    }
+  for (let i = 0; i < blocks.length; i++) {
+    for (const name of blocks[i].deps) out.add(name);
   }
   return out;
 }
 function needsUpdate(deps, changes) {
-  if (!changes || changes.has('*') || (deps && deps.has('*'))) return true;
-  for (const name of deps || EMPTY_SET) if (changes.has(name)) return true;
+  if (!changes || changes === STAR_SET || changes.has('*') || !deps || deps === STAR_SET || deps.has('*')) return true;
+  for (const name of deps) if (changes.has(name)) return true;
   return false;
 }
 
@@ -416,6 +436,16 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   let dragging = null; // { payload, el }
   let dropOver = null; // element showing f4-drop-over
   const pendingGlobalChanges = new Set();
+  const pendingHostMounts = [];
+  let deferHostMounts = true;
+  let emitDepth = 0;
+  const subViewPropCache = new WeakMap();
+
+  function flushHostMounts() {
+    if (deferHostMounts || !pendingHostMounts.length) return;
+    const queue = pendingHostMounts.splice(0, pendingHostMounts.length);
+    for (let i = 0; i < queue.length; i++) queue[i]();
+  }
 
   function setHost(name, el, info) {
     if (!name) return;
@@ -425,7 +455,15 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     if (prior && prior !== el) callbacks.onUnmount?.(prior, { ...info, name: key, replaced: true });
     hosts.set(key, el);
     el.dataset.f4Host = key;
-    callbacks.onMount?.(el, { ...info, name: key });
+    if (deferHostMounts || (!el.isConnected && !container.contains(el))) {
+      pendingHostMounts.push(() => {
+        if (!destroyed && hosts.get(key) === el) {
+          callbacks.onMount?.(el, { ...info, name: key });
+        }
+      });
+    } else {
+      callbacks.onMount?.(el, { ...info, name: key });
+    }
   }
 
   function clearHost(name, el, info) {
@@ -762,6 +800,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       badgeState: null,
       hostBindings: [],
       blocks: [],
+      dirtyVars: null,
+      subtreeDirty: false,
       disposed: false,
       helpers: null,
     };
@@ -784,20 +824,40 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     return inst;
   }
 
+  function markDirty(inst, varName) {
+    if (varName) {
+      if (!inst.dirtyVars) inst.dirtyVars = new Set();
+      inst.dirtyVars.add(varName);
+    }
+    for (let p = inst; p && !p.subtreeDirty; p = p.parentInst) {
+      p.subtreeDirty = true;
+    }
+  }
+
   function makeHelpers(inst) {
     const __transition = (next) => {
       const from = inst.state;
       inst.state = next;
+      markDirty(inst, null);
       callbacks.onTransition?.({ instanceKey: inst.key, viewName: inst.viewName, from, to: next });
       invalidate();
     };
     const __emit = (event, payload) => {
+      markDirty(inst, '*');
       callbacks.onEmit?.({ instanceKey: inst.key, viewName: inst.viewName, event, payload });
-      if (inst.parentEmitter) inst.parentEmitter(event, payload);
+      if (inst.parentEmitter) {
+        emitDepth++;
+        try {
+          inst.parentEmitter(event, payload);
+        } finally {
+          emitDepth--;
+        }
+      }
     };
     const __asyncTransition = (apiName, apiArgs, next) => {
       const from = inst.state;
       inst.state = next;
+      markDirty(inst, null);
       callbacks.onTransition?.({
         instanceKey: inst.key,
         viewName: inst.viewName,
@@ -860,7 +920,27 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       const out = c.staticFn
         ? c.staticFn(inst.vars, args, inst.helpers, externs)
         : fn.apply(null, vals);
-      if (out) for (let i = 0; i < storeNames.length; i++) inst.vars[storeNames[i]] = out[i];
+      if (out) {
+        let changed = 0;
+        for (let i = 0; i < storeNames.length; i++) {
+          const name = storeNames[i];
+          if (inst.vars[name] !== out[i]) {
+            inst.vars[name] = out[i];
+            markDirty(inst, name);
+            changed++;
+          }
+        }
+        if (changed === 0 && storeNames.length > 0) {
+          if (emitDepth > 0) {
+            for (let i = 0; i < storeNames.length; i++) {
+              const v = inst.vars[storeNames[i]];
+              if (v !== null && typeof v === 'object') markDirty(inst, storeNames[i]);
+            }
+          } else {
+            markDirty(inst, '*');
+          }
+        }
+      }
     } catch (err) {
       console.error(`FOAR: error in effect ${inst.viewName}.${inst.state}.${eff.name || 'on_exit'}:`, err);
     }
@@ -939,7 +1019,6 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     for (const b of inst.blocks) {
       if (b.el.parentNode !== inst.host) inst.host.appendChild(b.el);
     }
-    inst.lastVars = { ...inst.vars };
     if (st && st.decl.onEnter) {
       const prevState = inst.state;
       const prevStores = inst.meta.storeNames.map((n) => inst.vars[n]);
@@ -962,15 +1041,27 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   }
 
   function updateInstance(inst, globalChanges = null) {
-    const changes = new Set(globalChanges || []);
-    const last = inst.lastVars || {};
-    for (const n of inst.meta.propNames) if (inst.vars[n] !== last[n]) changes.add(n);
-    for (const n of inst.meta.storeNames) if (inst.vars[n] !== last[n]) changes.add(n);
-    if (inst.meta.derived.length) {
-      computeDerived(inst);
-      for (const n of inst.meta.derivedNames) if (inst.vars[n] !== last[n]) changes.add(n);
+    const hasGlobals = Boolean(globalChanges && globalChanges.size > 0);
+    if (!inst.subtreeDirty && !inst.dirtyVars && !hasGlobals && inst.mountedState === inst.state && !inst.slotCtx) {
+      return;
     }
-    inst.lastVars = { ...inst.vars };
+    let changes = inst.dirtyVars;
+    if (hasGlobals) {
+      changes = changes ? new Set(changes) : new Set();
+      for (const g of globalChanges) changes.add(g);
+    }
+    inst.dirtyVars = null;
+    inst.subtreeDirty = false;
+    if (inst.meta.derived.length && (changes || inst.mountedState !== inst.state)) {
+      for (const d of inst.meta.derived) {
+        const next = safeEval(d.fn, inst.vars, externs, d.expr);
+        if (next !== inst.vars[d.name]) {
+          inst.vars[d.name] = next;
+          if (!changes) changes = new Set();
+          changes.add(d.name);
+        }
+      }
+    }
     if (inst.mountedState !== inst.state) {
       unmountState(inst);
       mountState(inst);
@@ -978,8 +1069,11 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       runBindings(inst.hostBindings, inst.vars, externs);
       return;
     }
-    runBindings(inst.hostBindings, inst.vars, externs);
-    for (const b of inst.blocks) b.update(changes);
+    if (changes && changes.size > 0 && inst.hostBindings.length > 0) {
+      runBindings(inst.hostBindings, inst.vars, externs);
+    }
+    const childChanges = changes || EMPTY_SET;
+    for (const b of inst.blocks) b.update(childChanges);
   }
 
   function disposeInstance(inst) {
@@ -1505,11 +1599,15 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       }
     }
 
-    const ownDeps = mergeDeps(
-      ...bindings.map((b) => exprDeps(b.expr)),
-      bindings.some((b) => b.live) ? new Set(['*']) : null,
-    );
-    const deps = mergeDeps(ownDeps, blockDeps(children));
+    let ownDeps = bindings.length === 0
+      ? EMPTY_SET
+      : bindings.length === 1
+        ? exprDeps(bindings[0].expr)
+        : mergeDeps(...bindings.map((b) => exprDeps(b.expr)));
+    if (node.tag === 'Link') ownDeps = mergeDeps(ownDeps, ROUTE_SET);
+    const deps = !children || children.length === 0
+      ? ownDeps
+      : mergeDeps(ownDeps, blockDeps(children));
 
     return {
       el,
@@ -1529,17 +1627,28 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   function mountSubView(node, inst, localNames, locals, path) {
     const childDecl = viewMap.get(node.tag);
     const vn = inst.meta.varNames;
-    const propFns = [];
-    node.args.forEach((expr, i) => {
-      const p = childDecl.params[i];
-      if (p) propFns.push({ name: p.name, fn: compile(expr, vn, localNames), expr, deps: exprDeps(expr) });
-    });
-    for (const [name, expr] of Object.entries(node.namedArgs)) {
-      if (name === 'slot') continue;
-      propFns.push({ name, fn: compile(expr, vn, localNames), expr, deps: exprDeps(expr) });
+    let propFns;
+    const cached = subViewPropCache.get(node);
+    const localKey = localNames.join(',');
+    if (cached && cached.localKey === localKey) {
+      propFns = cached.propFns;
+    } else {
+      propFns = [];
+      node.args.forEach((expr, i) => {
+        const p = childDecl.params[i];
+        if (p) propFns.push({ name: p.name, fn: compile(expr, vn, localNames), expr, deps: exprDeps(expr) });
+      });
+      for (const [name, expr] of Object.entries(node.namedArgs)) {
+        if (name === 'slot') continue;
+        propFns.push({ name, fn: compile(expr, vn, localNames), expr, deps: exprDeps(expr) });
+      }
+      subViewPropCache.set(node, { localKey, propFns });
     }
     const props = {};
-    for (const p of propFns) props[p.name] = safeEval(p.fn, inst.vars, locals, p.expr);
+    for (let i = 0; i < propFns.length; i++) {
+      const p = propFns[i];
+      props[p.name] = safeEval(p.fn, inst.vars, locals, p.expr);
+    }
 
     const emitter = (event, payload) => {
       const handlerName = node.events[`on_${event}`];
@@ -1554,12 +1663,25 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     return {
       el,
       update(changes) {
-        for (const p of propFns) {
+        const forceObjectProps = Boolean(changes && (changes === STAR_SET || changes.has('*')));
+        for (let i = 0; i < propFns.length; i++) {
+          const p = propFns[i];
           if (changes && !needsUpdate(p.deps, changes)) continue;
           const v = propValue(child.meta, p.name, safeEval(p.fn, inst.vars, locals, p.expr));
-          if (v !== child.vars[p.name]) child.vars[p.name] = v;
+          if (v !== child.vars[p.name] || (forceObjectProps && v !== null && typeof v === 'object')) {
+            child.vars[p.name] = v;
+            markDirty(child, p.name);
+          }
         }
-        updateInstance(child, pendingGlobalForFlush);
+        if (
+          child.subtreeDirty ||
+          child.dirtyVars ||
+          child.mountedState !== child.state ||
+          (pendingGlobalForFlush && pendingGlobalForFlush.size > 0) ||
+          child.slotCtx
+        ) {
+          updateInstance(child, pendingGlobalForFlush);
+        }
       },
       dispose() {
         disposeInstance(child);
@@ -1962,6 +2084,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const emptyExpr = node.namedArgs && node.namedArgs.empty;
     const emptyFn = emptyExpr !== undefined ? compile(emptyExpr, inst.meta.varNames, localNames) : null;
     const binding = node.listBinding;
+    const bindingSet = binding ? Object.freeze(new Set([binding])) : null;
     const childLocalNames = binding ? dedupe([...localNames, binding]) : localNames;
     const rows = new Map(); // key -> { locals, blocks, item }
     let emptyEl = null;
@@ -2012,6 +2135,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
 
       seen.clear();
       const order = new Array(items.length);
+      let orderChanged = rows.size !== items.length;
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         let key = itemKey(item, i);
@@ -2020,26 +2144,32 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         order[i] = key;
         let row = rows.get(key);
         if (!row) {
+          orderChanged = true;
           const rl = Object.create(locals);
           if (binding) rl[binding] = item;
-          row = { locals: rl, blocks: null, item };
+          row = { locals: rl, blocks: null, item, index: i };
           row.blocks = node.children.map((c, ci) => mountNode(c, inst, childLocalNames, rl, `${path}/${key}/${ci}`));
           rows.set(key, row);
         } else {
+          if (row.index !== i) {
+            orderChanged = true;
+            row.index = i;
+          }
           const sameItem = row.item === item;
           row.item = item;
           if (binding) row.locals[binding] = item;
           const rowChanges = sameItem
             ? changes
-            : changes && binding
-              ? mergeDeps(changes, new Set([binding]))
-              : null;
+            : changes && bindingSet
+              ? mergeDeps(changes, bindingSet)
+              : bindingSet;
           for (const b of row.blocks) b.update(rowChanges);
         }
       }
 
       for (const [key, row] of rows) {
         if (!seen.has(key)) {
+          orderChanged = true;
           for (const b of row.blocks) {
             b.dispose();
             b.el.remove();
@@ -2052,13 +2182,18 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         if (!emptyEl.parentNode) el.appendChild(emptyEl);
         return;
       }
+      if (!orderChanged) return;
       // Single forward pass: place each desired element at the cursor.
+      // Use moveBefore() where available for already-connected row nodes so the
+      // browser preserves focus, animations, media playback, and iframe state.
+      const canMove = typeof el.moveBefore === 'function';
       let cursor = el.firstChild;
       for (let i = 0; i < order.length; i++) {
         const blocks = rows.get(order[i]).blocks;
         for (let j = 0; j < blocks.length; j++) {
           const n = blocks[j].el;
           if (n === cursor) cursor = cursor.nextSibling;
+          else if (canMove && n.parentNode === el) el.moveBefore(n, cursor);
           else el.insertBefore(n, cursor);
         }
       }
@@ -2106,6 +2241,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     pendingGlobalForFlush = globalChanges;
     updateInstance(rootInst, globalChanges);
     pendingGlobalForFlush = null;
+    flushHostMounts();
     callbacks.onRender?.(getSnapshot());
   }
 
@@ -2126,6 +2262,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     if (!inst) return;
     const from = inst.state;
     inst.state = nextState;
+    markDirty(inst, null);
     callbacks.onTransition?.({ instanceKey, viewName: inst.viewName, from, to: nextState, manual: true });
     flush();
   }
@@ -2251,6 +2388,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   hydrating = false;
   hyCursor = null;
   hyStack.length = 0;
+  deferHostMounts = false;
+  flushHostMounts();
   for (const type of EVENT_TYPES) container.addEventListener(type, dispatch);
   for (const type of DRAG_TYPES) container.addEventListener(type, onDrag);
   if (hasKeyHandlers) doc.addEventListener('keydown', onDocKeyDown);
