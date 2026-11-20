@@ -380,7 +380,7 @@ await step('sidebar toggle', async () => {
   return page.waitFor(`!!document.querySelector('.f4-Sidebar')`);
 });
 await step('export: Markdown conversion', async () => {
-  const md = await ev(`import('/examples/notes-on-foar/host/export.js').then((m) => m.toMarkdown(root().notes.find((n) => n.id === 'lisbon').html))`);
+  const md = await ev(`import(new URL('../examples/notes-on-foar/host/export.js', location.href).href).then((m) => m.toMarkdown(root().notes.find((n) => n.id === 'lisbon').html))`);
   const ok = md.startsWith('# Lisbon trip') && md.includes('- [x] Passport') && md.includes('[Tram 28](https://carris.pt)') && md.includes('| Day | Plan |');
   if (!ok) throw new Error(['# Lisbon', '- [x] Passport', '[Tram 28](https://carris.pt)', '| Day | Plan |'].filter((x) => !md.includes(x)).join(' / ') + ' missing');
   return md.split('\n').slice(0, 3).join(' ⏎ ');

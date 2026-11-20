@@ -100,28 +100,71 @@ const template = (path) => {
 const VALID = /^[A-Za-z0-9_][A-Za-z0-9_. -]*(?:\/[A-Za-z0-9_][A-Za-z0-9_. -]*)*\.foar$/;
 
 // ---- backends ---------------------------------------------------------------------------
+/** A short fingerprint of a project's files: which version of an example edits were made on. */
+function fingerprint(files) {
+  const text = JSON.stringify(Object.keys(files).sort().map((k) => [k, files[k]]));
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return `${(h >>> 0).toString(36)}.${text.length}`;
+}
+
+const sameFiles = (a, b) => fingerprint(a) === fingerprint(b);
+
+// Edits to a bundled example, kept in this browser. Each save records which
+// version of the example it was made on: when the example changes (a new
+// release of the playground), old edits would mix stale files into the new
+// project, so they're set aside — restorable — and the new version opens.
 export function localBackend(id, original) {
   const key = `foar.playground.v1.${id}`;
+  const asideKey = `${key}.previous`;
+  const base = fingerprint(original.files);
+  const read = (k) => {
+    try {
+      return JSON.parse(localStorage.getItem(k) || 'null');
+    } catch {
+      return null;
+    }
+  };
+  const write = (k, v) => {
+    try {
+      if (v == null) localStorage.removeItem(k);
+      else localStorage.setItem(k, JSON.stringify(v));
+    } catch {}
+  };
   return {
     kind: 'local',
     label: 'Kept in this browser',
     async load() {
-      try {
-        const saved = JSON.parse(localStorage.getItem(key) || 'null');
-        if (saved?.files && saved.files[original.entry]) return { ...original, files: saved.files, modified: true };
-      } catch {}
+      const saved = read(key);
+      if (saved?.files && saved.files[original.entry]) {
+        if (saved.base === base) return { ...original, files: saved.files, modified: true };
+        // made on an older version of this example (or before versions were recorded)
+        write(key, null);
+        if (!sameFiles(saved.files, original.files)) {
+          write(asideKey, saved);
+          return { ...original, files: { ...original.files }, modified: false, setAside: true };
+        }
+      }
       return { ...original, files: { ...original.files }, modified: false };
     },
     async save(files) {
-      try {
-        localStorage.setItem(key, JSON.stringify({ files }));
-      } catch {}
+      write(key, { files, base });
     },
     async revert() {
-      try {
-        localStorage.removeItem(key);
-      } catch {}
+      write(key, null);
       return { ...original, files: { ...original.files } };
+    },
+    /** Edits set aside because the example changed since they were made. */
+    hasSetAside: () => Boolean(read(asideKey)?.files),
+    async restoreSetAside() {
+      const prev = read(asideKey);
+      if (!prev?.files) return null;
+      write(key, { files: prev.files, base });
+      write(asideKey, null);
+      return { ...original, files: prev.files, modified: true };
+    },
+    discardSetAside() {
+      write(asideKey, null);
     },
   };
 }
@@ -1284,6 +1327,12 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
       foot.append(
         h('span', { class: n ? 'unsaved' : '', text: !writable ? 'Read-only' : n ? `● ${n} unsaved · Ctrl+S saves to disk` : 'All changes saved to disk' })
       );
+    } else if (backend?.hasSetAside?.()) {
+      foot.append(
+        h('span', { text: 'The example was updated, so the new version opened. Your earlier edits were set aside.' }),
+        h('button', { type: 'button', class: 'link-btn', text: 'Restore them', onclick: restoreSetAside }),
+        h('button', { type: 'button', class: 'link-btn', text: 'Discard', onclick: () => (backend.discardSetAside(), renderFoot()) })
+      );
     } else if (backend) {
       const changedFromOriginal = JSON.stringify(files) !== JSON.stringify(original);
       foot.append(h('span', { text: changedFromOriginal ? 'Your edits are kept in this browser' : 'Edits are kept in this browser' }));
@@ -1293,6 +1342,12 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
   }
 
   let original = {};
+  async function restoreSetAside() {
+    const p = await backend.restoreSetAside?.();
+    if (!p) return;
+    applyProject(p, { keepUi: false });
+    flash('Restored your earlier edits (made on an older version of this example)');
+  }
   async function revert() {
     const p = await backend.revert();
     applyProject(p, { keepUi: false });
@@ -1445,6 +1500,10 @@ export function createWorkspace(root, { onChange, onSave } = {}) {
       (tree.querySelector('[aria-selected="true"]') ?? tree.querySelector('[tabindex="0"]') ?? tree.querySelector('.tree-row'))?.focus();
     },
     revert: () => backend?.kind === 'local' && revert(),
+    restoreSetAside: () => backend?.kind === 'local' && restoreSetAside(),
+    get hasSetAside() {
+      return Boolean(backend?.hasSetAside?.());
+    },
     /** Loads a project through `backend`; `name` is shown in the explorer. */
     async load(b, { name, id, original: orig } = {}) {
       unwatch();

@@ -534,6 +534,7 @@ const COMMANDS = [
   }, hasEditor],
   ['file.collapse', 'File', 'Collapse Folders in Explorer', [], () => ws.collapseAll()],
   ['file.revert', 'File', 'Revert Project to Original', [], () => ws.revert(), () => ws.backendKind === 'local'],
+  ['file.restoreAside', 'File', 'Restore Earlier Edits (made on an older version)', [], () => ws.restoreSetAside(), () => ws.hasSetAside],
   // project / app
   ['project.open', 'Project', 'Open Project…', [], () =>
     palette.pick({

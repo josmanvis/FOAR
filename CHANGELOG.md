@@ -5,6 +5,7 @@ All notable changes to FOAR are documented in this file.
 ## Unreleased
 
 ### Playground
+- Edits to a bundled example no longer shadow newer versions of it. The playground kept the whole edited project in the browser and kept loading it after the example changed, so anyone who had touched the Notes example before its rewrite got a stale, broken mix. Saves now record the example version; edits made on an older one are set aside (the footer offers Restore / Discard) and the current example opens.
 - Typing no longer makes the caret jump: Enter only takes a suggestion you asked for (typed part of a word, moved through the list, or pressed Ctrl+Space). A list that opened by itself after `,` or `:` used to swallow Enter and insert e.g. `label:` where you wanted a new line. No suggestions pop up inside strings (except import paths and `t("…")` keys).
 - Saving while still typing no longer loses the newest keystrokes when the dev server reloads the project from disk.
 
