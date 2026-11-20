@@ -242,3 +242,16 @@ test('install.sh: verifies SHA-256 checksum, installs binary, and uninstalls cle
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('the compiler and the runtime know the same DOM events', async () => {
+  const { DOM_EVENTS } = await import('../web/foar-runtime.js');
+  const rust = fs.readFileSync(path.join(ROOT, 'src/parser.rs'), 'utf8');
+  const block = rust.slice(rust.indexOf('pub const DOM_EVENTS'), rust.indexOf('];', rust.indexOf('pub const DOM_EVENTS')));
+  const fromRust = [...block.matchAll(/"(on_[a-z_]+)"/g)].map((m) => m[1]).sort();
+  assert.deepEqual(fromRust, Object.keys(DOM_EVENTS).sort());
+  // React's DOM events, all covered (FOAR names in snake_case)
+  for (const react of ['onMouseEnter', 'onMouseLeave', 'onPointerMove', 'onTouchStart', 'onWheel', 'onScroll', 'onKeyDown', 'onFocus', 'onBlur', 'onCopy', 'onPaste', 'onCompositionEnd', 'onBeforeInput', 'onInvalid', 'onAnimationEnd', 'onTransitionEnd', 'onTimeUpdate', 'onToggle', 'onLoad', 'onError', 'onGotPointerCapture']) {
+    const foar = react.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+    assert.ok(DOM_EVENTS[foar], `${react} → ${foar}`);
+  }
+});

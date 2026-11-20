@@ -4,6 +4,26 @@ All notable changes to FOAR are documented in this file.
 
 ## Unreleased
 
+## [0.4.0] — 2026-11-20
+
+**Upgrading:** the new accessibility rules are compile errors. Code that worked in 0.3 can stop compiling where it has an `Image` without `alt:`, a form control without `label:`, an icon-only button without `label:`/`title:`, an invalid ARIA role or attribute, or a positive `tab_index`. Each error says what to add.
+
+### Events (React parity)
+- Every DOM event React has, as `on_snake_case` (89, plus FOAR's `on_enter` and `on_resize`): mouse, pointer, touch, wheel, scroll, keyboard, focus, forms, clipboard, composition, drag and drop, images, media, animations, transitions, `<dialog>`, toggle. Each also has an `_capture` variant (outermost first; `e.stop_propagation()` stops the rest).
+- Effects receive an event object with React's `SyntheticEvent` fields in snake case (`e.key`, `e.client_x`, `e.delta_y`, `e.pointer_type`, …, `e.prevent_default()`, `e.stop_propagation()`). Existing payloads (`on_input` value, `on_context_menu` `{ x, y }`, …) are unchanged.
+- Enter/leave fire on the element only (as in React); non-bubbling events reach their exact target; touch/wheel listeners are passive; listeners are added only for event types the app uses.
+- `on_resize`: ResizeObserver-based, applied before the next paint (no transient overflow).
+- An unknown event name is a compile error with a suggestion (`on_mouseleave` → `on_mouse_leave`, `on_hover` → enter/leave). Previously `-> on_mouse_leave(…)` compiled and never fired.
+- Fixed: events other than `on_click` on a `Link` were ignored.
+
+### Accessibility (WCAG 2.2 AA / WAI-ARIA 1.2)
+- Compile errors: `Image` without `alt:`; `Svg`/`Canvas` without a name; form controls and `Dialog` without `label:`; icon-only buttons/links without a name; unknown or abstract ARIA roles; unknown `aria` keys and invalid values; positive `tab_index`; `Dialog` without `on_close`.
+- `Dialog`: a modal on the native `<dialog>` (focus trap, inert page, focus restore, Escape → `on_close`).
+- `announce(message, politeness)`: live-region announcements.
+- Default visible focus ring (system Highlight colour), `prefers-reduced-motion` support, `Spinner` is `role="status"`.
+- Fixed: a `Button` with readable text and a `title:` used the title as its name, so voice control couldn't target the visible text (WCAG 2.5.3).
+- The examples fixed for contrast, labels, list semantics and separator values; axe-core WCAG 2.0–2.2 A/AA checks run on all examples in CI.
+
 ### Playground
 - Edits to a bundled example no longer shadow newer versions of it. The playground kept the whole edited project in the browser and kept loading it after the example changed, so anyone who had touched the Notes example before its rewrite got a stale, broken mix. Saves now record the example version; edits made on an older one are set aside (the footer offers Restore / Discard) and the current example opens.
 - Typing no longer makes the caret jump: Enter only takes a suggestion you asked for (typed part of a word, moved through the list, or pressed Ctrl+Space). A list that opened by itself after `,` or `:` used to swallow Enter and insert e.g. `label:` where you wanted a new line. No suggestions pop up inside strings (except import paths and `t("…")` keys).

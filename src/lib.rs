@@ -1,5 +1,6 @@
 //! FOAR compiler: .foar source -> JSON program (consumed by web/foar-runtime.js)
 //! or a ready-to-import JS module. Builds natively and for wasm32.
+pub mod a11y;
 pub mod ast;
 pub mod css;
 pub mod fmt;

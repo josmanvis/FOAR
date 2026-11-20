@@ -45,20 +45,20 @@ view TodoApp {
                 .style({ font-size: 32px; font-weight: bold; color: #333; })
 
             // Search Bar
-            Input(value: search_query, placeholder: "🔍 Search todos...")
+            Input(value: search_query, placeholder: "🔍 Search todos...", label: "Search todos")
                 -> on_input(UpdateSearch)
                 .style(Field)
 
             // Create New Todo Row
             Row {
-                Input(value: draft, placeholder: "What needs to be done?")
+                Input(value: draft, placeholder: "What needs to be done?", label: "New todo")
                     -> on_input(UpdateDraft)
                     -> on_enter(AddTodo)
                     .style(Field, { flex: 1; })
 
                 Button("Add")
                     -> on_click(AddTodo)
-                    .style({ background: #007bff; color: white; border-radius: 6px; padding: 0 20px; })
+                    .style({ background: #0b63ce; color: white; border-radius: 6px; padding: 0 20px; })
             }
 
             // Keyed list: rows are reused, not rebuilt

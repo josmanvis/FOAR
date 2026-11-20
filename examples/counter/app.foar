@@ -35,8 +35,8 @@ view AsyncCounter {
                 .style({ font-size: 24px; font-weight: bold; })
 
             Row {
-                Button("-") -> on_click(Decrement)
-                Button("+") -> on_click(Increment)
+                Button("-", label: "Decrease") -> on_click(Decrement)
+                Button("+", label: "Increase") -> on_click(Increment)
             }
 
             Button("Finish") -> on_click(FinishAndSave)

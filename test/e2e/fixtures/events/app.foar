@@ -1,0 +1,45 @@
+view App {
+    store log: Vec<String> = [];
+    store w: i32 = 200;
+    store size: String = "";
+    state S {
+        render {
+            Column(id: "outer") {
+                Row(id: "inner") { Text("child", id: "child") }
+                    -> on_mouse_enter(InnerEnter) -> on_mouse_leave(InnerLeave)
+                    -> on_pointer_down(PDown) -> on_wheel(Wheel)
+            } -> on_mouse_enter(OuterEnter) -> on_mouse_leave(OuterLeave) -> on_click_capture(OuterCap)
+            Button("btn", id: "btn") -> on_click(BtnClick) -> on_mouse_down(BtnDown) -> on_mouse_up(BtnUp)
+            Input(value: "", id: "inp", label: "field") -> on_focus(Focus) -> on_blur(Blur) -> on_key_down(KeyDown) -> on_key_up(KeyUp) -> on_enter(Enter)
+            Image(src: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", alt: "ok", id: "img-ok") -> on_load(ImgLoad)
+            Image(src: "/missing.png", alt: "missing", id: "img-bad") -> on_error(ImgError)
+            Column(id: "scroller") { Text("tall").style({ height: 2000px; flex-shrink: 0; }) } -> on_scroll(Scrolled)
+                .style({ height: 100px; overflow: auto; })
+            Row(id: "sized") { Text("sized") } -> on_resize(Resized)
+                .style({ width: {w + "px"}; })
+            Button("grow", id: "grow") -> on_click(Grow)
+            Text(log.join(","), id: "log")
+            Text(size, id: "size")
+        }
+        effect OuterEnter(e: any) { log = [...log, "outer-enter"]; }
+        effect OuterLeave(e: any) { log = [...log, "outer-leave"]; }
+        effect InnerEnter(e: any) { log = [...log, "inner-enter"]; }
+        effect InnerLeave(e: any) { log = [...log, "inner-leave"]; }
+        effect OuterCap(e: any) { log = [...log, "outer-capture:" + e.type]; }
+        effect PDown(e: any) { log = [...log, "pointerdown:" + e.pointer_type + ":" + e.button]; }
+        effect Wheel(e: any) { log = [...log, "wheel:" + e.delta_y]; }
+        effect BtnDown(e: any) { log = [...log, "mousedown"]; }
+        effect BtnUp(e: any) { log = [...log, "mouseup"]; }
+        effect BtnClick(e: any) { log = [...log, "click:" + e.client_x]; }
+        effect Focus(e: any) { log = [...log, "focus"]; }
+        effect Blur(v: any) { log = [...log, "blur"]; }
+        effect KeyDown(e: any) { log = [...log, "keydown:" + e.key + (e.shift_key ? "+shift" : "")]; }
+        effect KeyUp(e: any) { log = [...log, "keyup:" + e.key]; }
+        effect Enter() { log = [...log, "enter"]; }
+        effect ImgLoad(e: any) { log = [...log, "img-load"]; }
+        effect ImgError(e: any) { log = [...log, "img-error"]; }
+        effect Scrolled(e: any) { log = [...log, "scroll:" + e.scroll_top]; }
+        effect Resized(s: any) { size = s.width + "x" + s.height; }
+        effect Grow() { w = w + 100; }
+    }
+}

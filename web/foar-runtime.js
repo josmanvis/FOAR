@@ -49,19 +49,119 @@
 const EVENT_TYPES = ['click', 'dblclick', 'input', 'change', 'submit', 'keydown', 'contextmenu', 'focusout'];
 const DRAG_TYPES = ['dragstart', 'dragover', 'dragleave', 'drop', 'dragend'];
 const RTL = new Set(['ar', 'he', 'fa', 'ur', 'yi', 'ps', 'sd', 'ug', 'dv']);
-const EVENT_MAP = {
-  on_click: 'click',
-  on_double_click: 'dblclick',
-  on_input: 'input',
-  on_change: 'change',
-  on_submit: 'submit',
-  on_enter: 'keydown',
-  on_context_menu: 'contextmenu',
-  on_blur: 'focusout',
-  on_drop: 'drop',
-  on_drag_start: 'dragstart',
-  on_drag_end: 'dragend',
-};
+
+// Every DOM event React exposes, as `-> on_snake_case(Effect)` (plus a `_capture`
+// variant of each). [DOM type, bubbles]. Events that don't bubble (enter/leave,
+// media, load/error, scroll, toggle) are caught in the capture phase and given to
+// their exact target only, as React does. Keep in sync with DOM_EVENTS in
+// src/parser.rs (test/tooling.test.js checks).
+export const DOM_EVENTS = Object.freeze({
+  // mouse
+  on_click: ['click', true], on_double_click: ['dblclick', true], on_context_menu: ['contextmenu', true],
+  on_mouse_down: ['mousedown', true], on_mouse_up: ['mouseup', true], on_mouse_move: ['mousemove', true],
+  on_mouse_over: ['mouseover', true], on_mouse_out: ['mouseout', true],
+  on_mouse_enter: ['mouseenter', false], on_mouse_leave: ['mouseleave', false],
+  on_aux_click: ['auxclick', true],
+  // pointer
+  on_pointer_down: ['pointerdown', true], on_pointer_up: ['pointerup', true], on_pointer_move: ['pointermove', true],
+  on_pointer_cancel: ['pointercancel', true], on_pointer_over: ['pointerover', true], on_pointer_out: ['pointerout', true],
+  on_pointer_enter: ['pointerenter', false], on_pointer_leave: ['pointerleave', false],
+  on_got_pointer_capture: ['gotpointercapture', true], on_lost_pointer_capture: ['lostpointercapture', true],
+  // touch, wheel, scroll
+  on_touch_start: ['touchstart', true], on_touch_move: ['touchmove', true], on_touch_end: ['touchend', true], on_touch_cancel: ['touchcancel', true],
+  on_wheel: ['wheel', true], on_scroll: ['scroll', false], on_scroll_end: ['scrollend', false],
+  // keyboard
+  on_key_down: ['keydown', true], on_key_up: ['keyup', true], on_key_press: ['keypress', true],
+  on_enter: ['keydown', true], // FOAR: Enter only (not while composing)
+  // focus (bubbling, like React's onFocus/onBlur)
+  on_focus: ['focusin', true], on_blur: ['focusout', true],
+  // forms
+  on_input: ['input', true], on_before_input: ['beforeinput', true], on_change: ['change', true],
+  on_submit: ['submit', true], on_reset: ['reset', true], on_invalid: ['invalid', false], on_select: ['select', true],
+  // clipboard, composition
+  on_copy: ['copy', true], on_cut: ['cut', true], on_paste: ['paste', true],
+  on_composition_start: ['compositionstart', true], on_composition_update: ['compositionupdate', true], on_composition_end: ['compositionend', true],
+  // drag and drop (on_drag_start / on_drag_end / on_drop carry FOAR's in-app `drag:` payload)
+  on_drag_start: ['dragstart', true], on_drag_end: ['dragend', true], on_drop: ['drop', true],
+  on_drag: ['drag', true], on_drag_enter: ['dragenter', true], on_drag_leave: ['dragleave', true], on_drag_over: ['dragover', true],
+  // images and other resources
+  on_load: ['load', false], on_error: ['error', false],
+  // media (Video, Audio)
+  on_abort: ['abort', false], on_can_play: ['canplay', false], on_can_play_through: ['canplaythrough', false],
+  on_duration_change: ['durationchange', false], on_emptied: ['emptied', false], on_encrypted: ['encrypted', false],
+  on_ended: ['ended', false], on_loaded_data: ['loadeddata', false], on_loaded_metadata: ['loadedmetadata', false],
+  on_load_start: ['loadstart', false], on_pause: ['pause', false], on_play: ['play', false], on_playing: ['playing', false],
+  on_progress: ['progress', false], on_rate_change: ['ratechange', false], on_seeked: ['seeked', false], on_seeking: ['seeking', false],
+  on_stalled: ['stalled', false], on_suspend: ['suspend', false], on_time_update: ['timeupdate', false],
+  on_volume_change: ['volumechange', false], on_waiting: ['waiting', false],
+  // animations and transitions
+  on_animation_start: ['animationstart', true], on_animation_end: ['animationend', true], on_animation_iteration: ['animationiteration', true],
+  on_animation_cancel: ['animationcancel', true],
+  on_transition_start: ['transitionstart', true], on_transition_end: ['transitionend', true],
+  on_transition_run: ['transitionrun', true], on_transition_cancel: ['transitioncancel', true],
+  // <details>, popovers
+  on_toggle: ['toggle', false], on_before_toggle: ['beforetoggle', false],
+  // <dialog> (on a Dialog, on_close runs when Escape asks it to close)
+  on_cancel: ['cancel', false], on_close: ['close', false],
+  // FOAR: the element's size changed (ResizeObserver, applied before the next paint)
+  on_resize: ['resize', false],
+});
+const EVENT_MAP = Object.fromEntries(Object.entries(DOM_EVENTS).map(([k, [t]]) => [k, t]));
+const NON_BUBBLING = new Set(Object.values(DOM_EVENTS).filter(([, b]) => !b).map(([t]) => t));
+// React registers these as passive listeners too: prevent_default() has no effect on them.
+const PASSIVE = new Set(['touchstart', 'touchmove', 'wheel']);
+/** `on_click_capture` → { base: 'on_click', capture: true } */
+function eventName(name) {
+  if (name.endsWith('_capture') && DOM_EVENTS[name.slice(0, -8)]) return { base: name.slice(0, -8), capture: true };
+  return { base: name, capture: false };
+}
+
+/**
+ * The event object effects receive: React's SyntheticEvent fields in FOAR's
+ * snake_case, read lazily from the native event.
+ */
+function foarEvent(e, el) {
+  let stopped = false;
+  const n = e;
+  const out = {
+    type: n.type,
+    native: n,
+    target: el,
+    timestamp: n.timeStamp,
+    get key() { return n.key; }, get code() { return n.code; }, get repeat() { return n.repeat; },
+    get alt_key() { return n.altKey; }, get ctrl_key() { return n.ctrlKey; }, get meta_key() { return n.metaKey; }, get shift_key() { return n.shiftKey; },
+    get is_composing() { return n.isComposing; },
+    get client_x() { return n.clientX; }, get client_y() { return n.clientY; },
+    get x() { return n.clientX; }, get y() { return n.clientY; },
+    get page_x() { return n.pageX; }, get page_y() { return n.pageY; },
+    get screen_x() { return n.screenX; }, get screen_y() { return n.screenY; },
+    get offset_x() { return n.offsetX; }, get offset_y() { return n.offsetY; },
+    get movement_x() { return n.movementX; }, get movement_y() { return n.movementY; },
+    get button() { return n.button; }, get buttons() { return n.buttons; }, get detail() { return n.detail; },
+    get pointer_id() { return n.pointerId; }, get pointer_type() { return n.pointerType; }, get is_primary() { return n.isPrimary; },
+    get pressure() { return n.pressure; }, get tilt_x() { return n.tiltX; }, get tilt_y() { return n.tiltY; },
+    get width() { return n.width ?? el?.getBoundingClientRect?.().width; }, get height() { return n.height ?? el?.getBoundingClientRect?.().height; },
+    get delta_x() { return n.deltaX; }, get delta_y() { return n.deltaY; }, get delta_z() { return n.deltaZ; }, get delta_mode() { return n.deltaMode; },
+    get touches() { return n.touches ? [...n.touches].map(touchOf) : undefined; },
+    get changed_touches() { return n.changedTouches ? [...n.changedTouches].map(touchOf) : undefined; },
+    get data() { return n.data ?? n.clipboardData?.getData('text/plain'); },
+    get input_type() { return n.inputType; },
+    get value() { return el && 'value' in el ? el.value : undefined; },
+    get checked() { return el && 'checked' in el ? el.checked : undefined; },
+    get selection_start() { return el?.selectionStart; }, get selection_end() { return el?.selectionEnd; },
+    get scroll_top() { return el?.scrollTop; }, get scroll_left() { return el?.scrollLeft; },
+    get animation_name() { return n.animationName; }, get property_name() { return n.propertyName; }, get elapsed_time() { return n.elapsedTime; },
+    get current_time() { return el?.currentTime; }, get duration() { return el?.duration; }, get paused() { return el?.paused; },
+    get volume() { return el?.volume; }, get muted() { return el?.muted; }, get playback_rate() { return el?.playbackRate; },
+    get open() { return n.newState ? n.newState === 'open' : el?.open; },
+    get default_prevented() { return n.defaultPrevented; },
+    get propagation_stopped() { return stopped; },
+    prevent_default() { n.preventDefault?.(); },
+    stop_propagation() { stopped = true; n.stopPropagation?.(); },
+  };
+  return out;
+}
+const touchOf = (t) => ({ id: t.identifier, client_x: t.clientX, client_y: t.clientY, page_x: t.pageX, page_y: t.pageY });
 const EMPTY = Object.freeze({});
 const UNSET = Symbol('unset');
 
@@ -69,7 +169,19 @@ const BASE_CSS = [
   '.f4-row{display:flex;flex-direction:row;gap:10px;align-items:center}',
   '.f4-column{display:flex;flex-direction:column;gap:10px;align-items:stretch}',
   '.f4-text[data-clickable],.f4-text.f4-clickable{cursor:pointer}',
+  // WCAG 2.4.7: a visible keyboard focus ring (zero specificity: any app style wins);
+  // Highlight follows the system colours, including Windows High Contrast
+  ':where(.f4-view-host :focus-visible){outline:2px solid Highlight;outline-offset:2px}',
+  // text for screen readers only (live regions, hidden labels)
+  '.f4-sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}',
+  ':where(.f4-dialog){border:0;border-radius:12px;padding:20px;max-width:min(560px,calc(100vw - 32px))}',
+  ':where(.f4-dialog)::backdrop{background:rgba(0,0,0,.4)}',
 ].join('\n');
+// WCAG 2.3.3: people who ask their OS for less motion get (almost) none.
+// createFoarRuntime(..., { reducedMotion: false }) leaves animations alone.
+const REDUCED_MOTION_CSS =
+  '@media (prefers-reduced-motion: reduce){:where(.f4-view-host) *,:where(.f4-view-host) *::before,:where(.f4-view-host) *::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}';
+const baseCss = (opts = {}) => (opts.reducedMotion === false ? BASE_CSS : `${BASE_CSS}\n${REDUCED_MOTION_CSS}`);
 
 let runtimeCounter = 0;
 const random_uuid = () => Math.random().toString(36).slice(2, 9);
@@ -460,6 +572,55 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   const viewMap = new Map(ast.views.map((v) => [v.name, v]));
   const instances = new Map(); // key -> instance (live registry)
   const HANDLERS = Symbol('f4-handlers'); // element[HANDLERS] -> { [eventType]: fn } (proxy-safe & GC-safe)
+  const CAPTURE = Symbol('f4-capture'); // element[CAPTURE] -> capture-phase handlers (`on_click_capture`)
+  // DOM event types some element listens for: a delegated listener each, on the root and on portals
+  const usedEventTypes = new Set(EVENT_TYPES);
+  const listeningRoots = new Set();
+  const FOAR_DRAG = new Set(['on_drag_start', 'on_drag_end', 'on_drop']);
+  const listenerOptions = (type) => ({ capture: NON_BUBBLING.has(type), passive: PASSIVE.has(type) });
+  /** A new event type in use: listen for it on every root (the mount element, portals). */
+  function useType(type) {
+    if (usedEventTypes.has(type)) return;
+    usedEventTypes.add(type);
+    for (const root of listeningRoots) root.addEventListener(type, dispatch, listenerOptions(type));
+  }
+  function listen(root) {
+    listeningRoots.add(root);
+    for (const type of usedEventTypes) root.addEventListener(type, dispatch, listenerOptions(type));
+    for (const type of DRAG_TYPES) root.addEventListener(type, onDrag);
+  }
+  function unlisten(root) {
+    listeningRoots.delete(root);
+    for (const type of usedEventTypes) root.removeEventListener(type, dispatch, listenerOptions(type));
+    for (const type of DRAG_TYPES) root.removeEventListener(type, onDrag);
+  }
+
+  // `-> on_resize(Effect)`: one ResizeObserver for the app. Its callback runs after
+  // layout and before paint, and FOAR applies updates in a microtask, so the
+  // first frame after a resize already shows the new state (no transient overflow).
+  let resizeObserver = null;
+  const resizeHandlers = new WeakMap();
+  function observeResize(el, fn) {
+    if (typeof ResizeObserver === 'undefined') return;
+    resizeObserver = resizeObserver || new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const t = entry.target;
+        if (!t.isConnected) {
+          resizeObserver.unobserve(t);
+          continue;
+        }
+        const box = entry.borderBoxSize?.[0];
+        resizeHandlers.get(t)?.({
+          width: box ? box.inlineSize : entry.contentRect.width,
+          height: box ? box.blockSize : entry.contentRect.height,
+          content_width: entry.contentRect.width,
+          content_height: entry.contentRect.height,
+        });
+      }
+    });
+    resizeHandlers.set(el, fn);
+    resizeObserver.observe(el);
+  }
   const hosts = new Map(); // Host(name:) -> DOM node for imperative integrations
   const dragSources = new WeakMap(); // element -> () => { payload, text }
   const dropTargets = new WeakMap(); // element -> () => (payload) => void
@@ -628,7 +789,28 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
 
   // t_key("a.b") marks a key that is stored now and translated later (gettext's N_()).
   const t_key = (key) => key;
-  const externs = Object.assign(Object.create(null), { random_uuid, t, t_key, route, navigate, replace }, callbacks.bindings || {});
+  // announce("Saved"): a polite live region (`announce("Error", "assertive")` interrupts).
+  // WCAG 4.1.3 status messages, without building your own region.
+  const liveRegions = {};
+  function announce(message, politeness = 'polite') {
+    if (!doc.body) return;
+    const kind = politeness === 'assertive' ? 'assertive' : 'polite';
+    let region = liveRegions[kind];
+    if (!region) {
+      region = liveRegions[kind] = doc.createElement('div');
+      region.className = 'f4-sr-only';
+      region.setAttribute('role', kind === 'assertive' ? 'alert' : 'status');
+      region.setAttribute('aria-live', kind);
+      region.setAttribute('aria-atomic', 'true');
+      doc.body.appendChild(region);
+    }
+    // empty, then fill on the next tick: the same message twice is announced twice
+    region.textContent = '';
+    setTimeout(() => {
+      region.textContent = String(message ?? '');
+    }, 30);
+  }
+  const externs = Object.assign(Object.create(null), { random_uuid, t, t_key, route, navigate, replace, announce }, callbacks.bindings || {});
   // Generated ES modules attach static evaluators. JSON programs deliberately
   // retain the legacy fallback below for playgrounds and tooling, but a module
   // built with `--format js` never reaches `new Function`.
@@ -727,7 +909,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   if (!styleEl) {
     styleEl = doc.createElement('style');
     styleEl.setAttribute('data-f4-runtime', String(rid));
-    styleEl.textContent = `${BASE_CSS}\n${ast.css || ''}`;
+    styleEl.textContent = `${baseCss(callbacks)}\n${ast.css || ''}`;
     (doc.head || doc.documentElement).appendChild(styleEl);
     ownsStyleEl = true;
   }
@@ -1211,34 +1393,57 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     };
   }
 
+  // Several handlers can share a DOM type on one element (on_enter + on_key_down,
+  // the keyboard fallback of clickable rows): run them all. The element passes
+  // the event on to its parent only if every one of them returned false.
+  function addHandler(map, type, fn) {
+    const prev = map[type];
+    map[type] = prev
+      ? (e) => {
+          const a = prev(e);
+          const b = fn(e);
+          return a === false && b === false ? false : undefined;
+        }
+      : fn;
+  }
+
   function registerEvents(el, node, inst) {
-    let map = null;
+    let map = el[HANDLERS] || null;
+    let cap = null;
     const evs = node.events;
     for (const evName in evs) {
       const handlerName = evs[evName];
-      const domType = EVENT_MAP[evName];
+      const { base, capture } = eventName(evName);
+      const domType = EVENT_MAP[base];
       if (!domType) continue;
+      if (node.tag === 'Link' && base === 'on_click' && !capture) continue; // Link's own click navigates, then runs it
+      if (node.tag === 'Dialog' && base === 'on_close' && !capture) continue; // Escape → on_close (see 'Dialog')
+      const run = (payload) => invokeEffect(inst, handlerName, payload);
+      if (capture) {
+        cap = cap || {};
+        addHandler(cap, domType, (e) => run(foarEvent(e, el)));
+        useType(domType);
+        continue;
+      }
       map = map || {};
-      switch (evName) {
+      // FOAR's drag payloads and on_resize have their own plumbing (onDrag, ResizeObserver)
+      if (!FOAR_DRAG.has(base) && base !== 'on_resize') useType(domType);
+      switch (base) {
         case 'on_input':
           // RichText reports its HTML; Slider reports a Number; form controls their value.
-          map.input = () => invokeEffect(
-            inst,
-            handlerName,
-            node.tag === 'RichText' ? el.innerHTML : node.tag === 'Slider' ? Number(el.value) : el.value,
-          );
+          addHandler(map, 'input', () => run(node.tag === 'RichText' ? el.innerHTML : node.tag === 'Slider' ? Number(el.value) : el.value));
           break;
         case 'on_submit':
-          map.submit = (e) => {
+          addHandler(map, 'submit', (e) => {
             e.preventDefault();
-            invokeEffect(inst, handlerName);
-          };
+            run();
+          });
           break;
         case 'on_blur':
-          map.focusout = () => invokeEffect(inst, handlerName, el.value);
+          addHandler(map, 'focusout', () => run(el.value));
           break;
         case 'on_context_menu':
-          map.contextmenu = (e) => {
+          addHandler(map, 'contextmenu', (e) => {
             // Shift+right-click keeps the browser's own menu (spelling, inspect...).
             if (e.shiftKey) return false;
             e.preventDefault();
@@ -1250,34 +1455,40 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
               x = r.left + 16;
               y = r.bottom;
             }
-            invokeEffect(inst, handlerName, { x, y });
-          };
+            run({ x, y });
+          });
           break;
         case 'on_drop':
-          dropTargets.set(el, () => (payload) => invokeEffect(inst, handlerName, payload));
+          dropTargets.set(el, () => (payload) => run(payload));
           break;
         case 'on_drag_start':
         case 'on_drag_end':
-          map[domType] = (payload) => invokeEffect(inst, handlerName, payload);
+          map[domType] = (payload) => run(payload);
           break;
         case 'on_change':
-          map.change = (e) => invokeEffect(inst, handlerName, node.tag === 'Checkbox' ? e.target.checked : e.target.value);
+          addHandler(map, 'change', (e) => run(node.tag === 'Checkbox' ? e.target.checked : e.target.value));
           break;
         case 'on_enter':
-          map.keydown = (e) => {
+          addHandler(map, 'keydown', (e) => {
             if (e.key !== 'Enter' || e.isComposing) return false;
             e.preventDefault();
-            invokeEffect(inst, handlerName);
-          };
+            run();
+          });
+          break;
+        case 'on_resize':
+          observeResize(el, (size) => run(size));
           break;
         default:
-          map[domType] = () => invokeEffect(inst, handlerName);
+          // every other event: the FOAR event object (React's SyntheticEvent, snake_case)
+          addHandler(map, domType, (e) => run(foarEvent(e, el)));
       }
     }
-    // Clickable non-controls are reachable and operable from the keyboard.
+    // Clickable non-controls are reachable and operable from the keyboard
+    // (WCAG 2.1.1): tabindex 0, role=button, Enter/Space activate.
     const tag = node.tag;
     if (
       map?.click &&
+      evs.on_click &&
       tag !== 'Button' &&
       tag !== 'Input' &&
       tag !== 'TextArea' &&
@@ -1289,15 +1500,16 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     ) {
       if (!el.hasAttribute('tabindex')) el.tabIndex = 0;
       if (!el.hasAttribute('role')) el.setAttribute('role', 'button');
-      if (!map.keydown) {
-        map.keydown = (e) => {
-          if (e.target !== el || (e.key !== 'Enter' && e.key !== ' ')) return false;
-          e.preventDefault();
-          map.click(e);
-        };
-      }
+      const click = map.click;
+      addHandler(map, 'keydown', (e) => {
+        if (e.target !== el || e.defaultPrevented || (e.key !== 'Enter' && e.key !== ' ')) return false;
+        e.preventDefault();
+        click(e);
+      });
+      useType('keydown');
     }
     if (map) el[HANDLERS] = map;
+    if (cap) el[CAPTURE] = cap;
   }
 
   function getNodePlan(node) {
@@ -1545,7 +1757,10 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         let txt;
         if (!c.claimed) {
           el.className = withCls('f4-spinner-wrap');
+          // WCAG 4.1.3: "Loading…" is a status message
+          el.setAttribute('role', 'status');
           const ring = doc.createElement('div');
+          ring.setAttribute('aria-hidden', 'true');
           ring.className = 'f4-spinner-ring';
           txt = doc.createElement('span');
           el.append(ring, txt);
@@ -1609,6 +1824,41 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         for (const [name, attr] of [['view_box', 'viewBox'], ['width', 'width'], ['height', 'height'], ['preserve_aspect_ratio', 'preserveAspectRatio']]) {
           if (node.namedArgs[name] !== undefined) bind(node.namedArgs[name], (v) => setAttr(el, attr, v));
         }
+        break;
+      }
+      case 'Dialog': {
+        // A modal on the native <dialog>: showModal() gives the focus trap, the
+        // inert page behind it, aria-modal and focus restore on close. `open:`
+        // is the source of truth; Escape asks the app to close it (on_close).
+        const c = claim('dialog');
+        el = c.el;
+        if (!c.claimed) el.className = withCls('f4-dialog');
+        enterHydrate(el, c.claimed);
+        children = node.children.map((ch, i) => mountNode(ch, inst, localNames, locals, `${path}/${idxStr(i)}`));
+        for (const ch of children) if (ch.el.parentNode !== el) el.appendChild(ch.el);
+        leaveHydrate();
+        const dialog = el;
+        let wantOpen = node.namedArgs.open === undefined;
+        const sync = () => {
+          if (wantOpen) {
+            if (!dialog.isConnected) return queueMicrotask(sync); // not in the page yet
+            if (dialog.open && dialog.matches && !dialog.matches(':modal')) dialog.close(); // server-rendered open
+            if (!dialog.open) {
+              if (typeof dialog.showModal === 'function') dialog.showModal();
+              else dialog.setAttribute('open', '');
+            }
+          } else if (dialog.open || dialog.hasAttribute('open')) {
+            if (typeof dialog.close === 'function') dialog.close();
+            else dialog.removeAttribute('open');
+          }
+        };
+        if (node.namedArgs.open !== undefined) bind(node.namedArgs.open, (v) => { wantOpen = Boolean(v); sync(); });
+        else sync();
+        const onClose = node.events.on_close;
+        dialog.addEventListener('cancel', (e) => {
+          e.preventDefault();
+          if (onClose) invokeEffect(inst, onClose);
+        });
         break;
       }
       case 'Form': {
@@ -1734,12 +1984,14 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     const na = node.namedArgs;
     if (plan.hasCommonAttrs) {
       if (na.title !== undefined && node.tag !== 'Image') {
-        // An icon button's tooltip is also its accessible name unless `label:` says otherwise.
+        // An icon button's tooltip is also its accessible name (unless `label:` says
+        // otherwise). A button with readable text keeps that text as its name, and
+        // the title stays a tooltip: WCAG 2.5.3, the name contains the visible label.
         const nameFromTitle = node.tag === 'Button' && na.label === undefined;
         bind(na.title, (v) => {
           if (v) el.title = v;
           else el.removeAttribute('title');
-          if (nameFromTitle) setAttr(el, 'aria-label', v);
+          if (nameFromTitle) setAttr(el, 'aria-label', /[\p{L}\p{N}]/u.test(el.textContent || '') ? null : v);
         });
       }
       if (na.label !== undefined) bind(na.label, (v) => setAttr(el, 'aria-label', v));
@@ -1809,7 +2061,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         });
       }
     }
-    if (plan.hasEvents && node.tag !== 'Link') registerEvents(el, node, inst);
+    if (plan.hasEvents) registerEvents(el, node, inst);
     if (bindings.length > 0) {
       runBindings(bindings, inst.vars, locals);
       if (flushStyle) flushStyle();
@@ -2026,8 +2278,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
     portalRoot.dataset.portalTarget = String(selector || 'body');
     targetEl.appendChild(portalRoot);
 
-    for (const type of EVENT_TYPES) portalRoot.addEventListener(type, dispatch);
-    for (const type of DRAG_TYPES) portalRoot.addEventListener(type, onDrag);
+    listen(portalRoot);
 
     // Portals live outside `container`, so mount their children fresh (not claiming inside container).
     const wasHydrating = hydrating;
@@ -2043,8 +2294,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
       },
       dispose() {
         for (const b of blocks) b.dispose();
-        for (const type of EVENT_TYPES) portalRoot.removeEventListener(type, dispatch);
-        for (const type of DRAG_TYPES) portalRoot.removeEventListener(type, onDrag);
+        unlisten(portalRoot);
         portalRoot.remove();
       },
     };
@@ -2641,13 +2891,39 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
 
   function dispatch(e) {
     const root = e.currentTarget || container;
+    const type = e.type;
+    // capture phase (`on_click_capture`): outermost element first, as in React
+    let path = null;
+    for (let t = e.target; t && t !== root; t = t.parentNode) {
+      if (t[CAPTURE]?.[type]) {
+        path = [];
+        for (let u = e.target; u && u !== root; u = u.parentNode) path.push(u);
+        break;
+      }
+    }
+    if (path) {
+      for (let i = path.length - 1; i >= 0; i--) {
+        const fn = path[i][CAPTURE]?.[type];
+        if (fn) {
+          fn(e);
+          if (e.cancelBubble) return; // e.stop_propagation()
+        }
+      }
+    }
+    // enter/leave, media, load, scroll…: only the element it happened to
+    if (NON_BUBBLING.has(type)) {
+      const fn = e.target?.[HANDLERS]?.[type];
+      if (fn) fn(e);
+      return;
+    }
     let t = e.target;
     while (t && t !== root) {
       const h = t[HANDLERS];
-      const fn = h && h[e.type];
+      const fn = h && h[type];
       // Innermost handler wins: a button inside a clickable row must not
       // also trigger the row. A handler returns false to pass the event on.
       if (fn && fn(e) !== false) return;
+      if (e.cancelBubble) return;
       t = t.parentNode;
     }
   }
@@ -2739,14 +3015,15 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   function destroy() {
     if (destroyed) return;
     destroyed = true;
+    for (const region of Object.values(liveRegions)) region.remove();
     for (const t of asyncTimers) clearTimeout(t);
     asyncTimers.clear();
     if (hasKeyHandlers) doc.removeEventListener('keydown', onDocKeyDown);
     if (win && (routerMode === 'history' || routerMode === 'hash')) {
       win.removeEventListener(routerMode === 'hash' ? 'hashchange' : 'popstate', onPopState);
     }
-    for (const type of EVENT_TYPES) container.removeEventListener(type, dispatch);
-    for (const type of DRAG_TYPES) container.removeEventListener(type, onDrag);
+    unlisten(container);
+    resizeObserver?.disconnect();
     disposeInstance(rootInst);
     if (ownsStyleEl) styleEl.remove();
     container.textContent = '';
@@ -2762,8 +3039,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   hyStack.length = 0;
   deferHostMounts = false;
   flushHostMounts();
-  for (const type of EVENT_TYPES) container.addEventListener(type, dispatch);
-  for (const type of DRAG_TYPES) container.addEventListener(type, onDrag);
+  listen(container);
   if (hasKeyHandlers) doc.addEventListener('keydown', onDocKeyDown);
   callbacks.onRender?.(getSnapshot());
 
@@ -2948,7 +3224,7 @@ export function renderToString(ast, options = {}) {
   const parsed = parseUrl(options.url || '/');
   const route = { path: parsed.path, query: parsed.query, hash: parsed.hash, params: {} };
   const noop = () => {};
-  const externs = Object.assign(Object.create(null), { random_uuid, t, t_key, route, navigate: noop, replace: noop }, options.bindings || {});
+  const externs = Object.assign(Object.create(null), { random_uuid, t, t_key, route, navigate: noop, replace: noop, announce: noop }, options.bindings || {});
   const staticProgram = ast.__foarCompiled || EMPTY;
   const compile = (expr, varNames, localNames) =>
     compileExpr(expr, varNames, localNames, staticProgram.expressions?.[expr], externs);
@@ -3295,7 +3571,7 @@ export function renderToString(ast, options = {}) {
       }
       case 'Spinner': {
         const txt = node.args[0] ? evalSafe(node.args[0], vn, vars, ln, locals) ?? '' : 'Loading...';
-        return `<div${commonAttrs('f4-spinner-wrap')}><div class="f4-spinner-ring"></div><span>${escapeHtml(txt)}</span></div>`;
+        return `<div${commonAttrs('f4-spinner-wrap', [['role', 'status']])}><div class="f4-spinner-ring" aria-hidden="true"></div><span>${escapeHtml(txt)}</span></div>`;
       }
       case 'Host': {
         const nameExpr = na.name !== undefined ? na.name : na.ref !== undefined ? na.ref : na.id;
@@ -3322,6 +3598,11 @@ export function renderToString(ast, options = {}) {
           if (na[name] !== undefined) extra.push([attr, evalSafe(na[name], vn, vars, ln, locals)]);
         }
         return `<svg${commonAttrs('f4-svg', extra)}></svg>`;
+      }
+      case 'Dialog': {
+        const inner = node.children.map((c, i) => renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/${i}`, slotCtx)).join('');
+        const isOpen = na.open === undefined ? true : Boolean(evalSafe(na.open, vn, vars, ln, locals));
+        return `<dialog${commonAttrs('f4-dialog', isOpen ? [['open', '']] : [])}>${inner}</dialog>`;
       }
       case 'Form': {
         const inner = node.children.map((c, i) => renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/${i}`, slotCtx)).join('');
@@ -3376,7 +3657,7 @@ export function renderToString(ast, options = {}) {
   }
 
   const html = renderView('root', rootViewDecl, {}, null);
-  const css = `${BASE_CSS}\n${ast.css || ''}`;
+  const css = `${baseCss(options)}\n${ast.css || ''}`;
   const state = { route: options.url || '/', instances: serializedInstances, contexts: serializedContexts };
   const safeState = JSON.stringify(state).replace(/</g, '\\u003c');
   const head = `<style data-f4-ssr>${css}</style>\n<script id="__foar_state__" type="application/json">${safeState}</script>`;
@@ -3440,7 +3721,7 @@ export function renderToStream(ast, options = {}) {
     const enc = new TextEncoder();
     return (s) => enc.encode(s);
   })();
-  const css = `${BASE_CSS}\n${ast.css || ''}`;
+  const css = `${baseCss(options)}\n${ast.css || ''}`;
   return new ReadableStream({
     async start(controller) {
       try {

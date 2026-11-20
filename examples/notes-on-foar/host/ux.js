@@ -38,7 +38,8 @@ const widthOf = (p) => mountEl.querySelector(p.pane)?.getBoundingClientRect().wi
 function installSplitters(on) {
   for (const p of Object.values(PANES)) {
     const w = model.loadPref(p.prop, null);
-    if (w) setWidth(p, w, false);
+    // the separators report the panes' real widths (aria-valuenow) from the start
+    setWidth(p, w || widthOf(p) || p.def, false);
   }
   on('pointerdown', (e) => {
     if (!mountEl.contains(e.target)) return;

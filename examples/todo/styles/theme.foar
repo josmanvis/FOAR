@@ -2,10 +2,10 @@
 // compiler into one stylesheet.
 
 theme {
-    --accent: #007bff;
+    --accent: #0b63ce;
     --radius: 6px;
     --row-hover: #f9f9f9;
-    --muted: #aaa;
+    --muted: #767676;
     @dark { --row-hover: #1c2128; }
 }
 

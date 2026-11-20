@@ -41,7 +41,7 @@ view Orders {
             Text("Orders").style({ font-size: 28px; font-weight: 700; })
             Row {
                 Text(summary).style({ flex: 1; color: #57606a; })
-                Checkbox(checked: hide_closed) -> on_change(HideClosed)
+                Checkbox(checked: hide_closed, label: "Hide closed orders") -> on_change(HideClosed)
                 Text("Hide closed")
             }
             List(visible, empty: "No open orders.") { order =>

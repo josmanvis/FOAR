@@ -74,6 +74,12 @@ article.foar:10:13: This match doesn't handle Status.Archived (add an arm for it
   view's subtree. Async transitions pass resolved values to `on_exit(res)` and
   rejections to `on_error(err)`, alongside `on_enter`, `on_unmount`, and
   state-scoped keyboard shortcuts (`on_key("Escape") { … }`).
+- **Every React DOM event, typed and checked.** `-> on_mouse_enter`, `on_key_down`, `on_pointer_move`,
+  `on_wheel`, `on_paste`, `on_time_update`, … (89, each with a `_capture` variant), an event object with
+  React's fields in snake case, and `on_resize` applied before paint. A misspelled event is a compile error.
+- **Accessible by default (WCAG 2.2 AA, WAI-ARIA 1.2).** Missing `alt`, unlabeled controls, nameless icon
+  buttons, invalid ARIA roles and attributes are compile errors; a modal `Dialog`, `announce()`, focus ring
+  and reduced motion are built in; the examples pass axe-core in CI.
 - **Contexts: your app's stores, one per file.** `context Library { store ...; let ...; effect ... }`
   holds a slice of app data and every operation on it; views `use Library;` and call
   `Library.Trash(id)` directly, contexts call each other, and all of it is type-checked.

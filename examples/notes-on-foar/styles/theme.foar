@@ -7,7 +7,7 @@ theme {
     --sidebar-bg: #ececee;
     --list-bg: #ffffff;
     --text: #1d1d1f;
-    --muted: #6e6e73;
+    --muted: #5f5f64;
     --hairline: rgba(0, 0, 0, 0.09);
     --accent: #e0a100;
     --focus: #0a66d6;

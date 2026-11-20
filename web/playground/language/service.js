@@ -128,6 +128,7 @@ export function createLanguageService() {
     for (const p of r?.params ?? []) items.push({ label: p.name, kind: 'variable', detail: `${p.name}: ${p.type}`, insert: p.name, sort: '0' });
     for (const l of localsAt(f, r, offset)) items.push({ label: l, kind: 'variable', detail: 'list item', insert: l, sort: '0' });
     items.push({ label: 't', kind: 'function', detail: 't(key, params)', doc: 'Translated string from the locale catalogs.', insert: 't("${1:key}")' });
+    items.push({ label: 'announce', kind: 'function', detail: 'announce(message, politeness)', doc: 'Say something to screen-reader users (a live region): `announce("Saved")`, or `announce("Failed", "assertive")` to interrupt.', insert: 'announce("${1:Saved}")' });
     for (const k of ['true', 'false']) items.push({ label: k, kind: 'keyword', insert: k, sort: '9' });
     return items;
   }
@@ -195,9 +196,12 @@ export function createLanguageService() {
       const v = tag && index.views.get(tag);
       let names;
       if (v) names = [...v.emits].map((e) => [`on_${e}`, `${tag} emits ${e}`]);
-      else if (tag && ELEMENTS[tag]) names = ELEMENTS[tag].events.map((e) => [e, EVENTS[e]]);
-      else names = Object.entries(EVENTS);
-      return { ...word(), items: names.map(([n, d]) => ({ label: n, kind: 'event', detail: tag ? `${tag} event` : 'event', doc: d, insert: `${n}($1)`, retrigger: true })) };
+      else if (tag && ELEMENTS[tag]) {
+        // the element's usual events first, then every other DOM event
+        const usual = new Set(ELEMENTS[tag].events);
+        names = [...ELEMENTS[tag].events.map((e) => [e, EVENTS[e], '0']), ...Object.entries(EVENTS).filter(([e]) => !usual.has(e)).map(([e, d]) => [e, d, '5'])];
+      } else names = Object.entries(EVENTS);
+      return { ...word(), items: names.map(([n, d, sort]) => ({ label: n, kind: 'event', detail: tag ? `${tag} event` : 'event', doc: d, insert: `${n}($1)`, retrigger: true, sort })) };
     }
     // @use <Style>  /  .style(<Style>, …)
     if (/@use\s+\w*$/.test(before) || (kind === 'styleArgs' && /(?:\(|,)\s*\w*$/.test(text.slice(r.start - 1, offset).replace(/\{[^{}]*\}/g, '')))) {
@@ -366,6 +370,7 @@ export function createLanguageService() {
     }
     if (ELEMENTS[word]) return at(ELEMENTS[word].sig, `${ELEMENTS[word].doc}${ELEMENTS[word].events.length ? `\nEvents: ${ELEMENTS[word].events.join(', ')}` : ''}`);
     if (EVENTS[word]) return at(word, EVENTS[word]);
+    if (word.endsWith('_capture') && EVENTS[word.slice(0, -8)]) return at(word, `Capture phase of ${word.slice(0, -8)}: runs on the way down, outer elements first, before the target's handler.`);
     if (word.startsWith('on_') && view) {
       const owner = ownerTag(f, s);
       if (owner && index.views.get(owner)) return at(word, `Emitted by ${owner} (\`emit ${word.slice(3)}(…)\`).`);
@@ -542,8 +547,8 @@ export function createLanguageService() {
         const v = index.views.get(ev.tag);
         if (v) {
           if (!ev.name.startsWith('on_') || !v.emits.has(ev.name.slice(3))) push(f.path, ev.s, ev.e, 'warning', `${v.name} never emits '${ev.name.replace(/^on_/, '')}'.${v.emits.size ? ` It emits: ${[...v.emits].join(', ')}.` : ''}`);
-        } else if (ELEMENTS[ev.tag] && !ELEMENTS[ev.tag].events.includes(ev.name) && ev.tag !== 'List') {
-          push(f.path, ev.s, ev.e, 'warning', `${ev.tag} doesn't fire ${ev.name}.${ELEMENTS[ev.tag].events.length ? ` It fires: ${ELEMENTS[ev.tag].events.join(', ')}.` : ''}`);
+        } else if (ELEMENTS[ev.tag] && !EVENTS[ev.name] && !EVENTS[ev.name.replace(/_capture$/, '')]) {
+          push(f.path, ev.s, ev.e, 'error', `${ev.tag} has no event '${ev.name}'.${didYouMean(ev.name, Object.keys(EVENTS))}`);
         }
       }
       f.toks.forEach((t, i) => {

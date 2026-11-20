@@ -89,7 +89,7 @@ view NotesApp {
 
                     If(Library.tags.len() > 0) {
                         Text(t("sidebar.tags"), role: "heading", aria: { level: 2 }).style(SectionLabel)
-                        List(Library.tags, role: "list") { tg =>
+                        List(Library.tags, role: "group", label: t("sidebar.tags")) { tg =>
                             TagChip(tag: tg, selected: Browse.view == "tag:" + tg.name)
                         }.style({ display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 8px; })
                     }
@@ -102,7 +102,7 @@ view NotesApp {
                     NewFolderRow()
                 } -> on_context_menu(SidebarMenu).style(Sidebar)
 
-                Row(role: "separator", label: t("sidebar.resize"), tab_index: 0, aria: { orientation: "vertical" }) { }
+                Row(role: "separator", label: t("sidebar.resize"), tab_index: 0, aria: { orientation: "vertical", valuemin: 150, valuemax: 360, valuenow: 185 }) { }
                     .style(SidebarSplitter)
             }
 
@@ -128,7 +128,7 @@ view NotesApp {
                         } -> on_context_menu(ListMenu).style(NoteScroller)
                     }.style(ListPane)
 
-                    Row(role: "separator", label: t("list.resize"), tab_index: 0, aria: { orientation: "vertical" }) { }
+                    Row(role: "separator", label: t("list.resize"), tab_index: 0, aria: { orientation: "vertical", valuemin: 190, valuemax: 460, valuenow: 230 }) { }
                         .style(ListSplitter)
 
                     List(Browse.selected_notes, empty: "") { note =>

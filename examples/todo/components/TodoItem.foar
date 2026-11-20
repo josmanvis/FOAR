@@ -22,7 +22,7 @@ view TodoItem(item: Todo) {
     // Default State: Showing the Todo
     state Idle {
         render {
-            Checkbox(checked: item.completed) -> on_change(Toggle)
+            Checkbox(checked: item.completed, label: "Done: " + item.text) -> on_change(Toggle)
 
             Text(item.text)
                 .style({
@@ -33,7 +33,7 @@ view TodoItem(item: Todo) {
                 -> on_double_click(StartEdit)
 
             Button("Edit") -> on_click(StartEdit)
-            Button("Delete") -> on_click(DeleteSelf).style({ color: red; })
+            Button("Delete") -> on_click(DeleteSelf).style({ color: #c8322b; })
         }
 
         effect Toggle(checked: bool) {
@@ -55,7 +55,7 @@ view TodoItem(item: Todo) {
     // Editing State: Layout completely changes surgically
     state Editing {
         render {
-            Input(value: draft_edit)
+            Input(value: draft_edit, label: "Edit todo")
                 -> on_input(UpdateEditDraft)
                 -> on_enter(SaveEdit)
                 .style({ flex: 1; padding: 6px; })

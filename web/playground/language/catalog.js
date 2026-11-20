@@ -1,3 +1,4 @@
+import { DOM_EVENTS } from '../../foar-runtime.js';
 // What the FOAR language and runtime provide, for completions and hovers.
 // Keep in sync with src/parser.rs (keywords, @rules) and web/foar-runtime.js
 // (elements, named arguments, events).
@@ -131,9 +132,10 @@ export const ELEMENTS = {
   Video: { sig: 'Video(src: String, controls: bool, poster: String)', doc: 'Native `<video>` element.', named: ['src', 'poster', 'preload', 'controls', 'autoplay', 'loop', 'muted', 'playsinline', ...COMMON], events: ['on_click'], snippet: 'Video(src: ${1:url}, controls: true)' },
   Canvas: { sig: 'Canvas(width: i32, height: i32)', doc: 'Native `<canvas>` drawing surface. Wrap or name with `Host` / `onMount` to draw with 2D or WebGL contexts.', named: ['width', 'height', ...COMMON], events: ['on_click', 'on_double_click', 'on_context_menu'], snippet: 'Canvas(width: ${1:640}, height: ${2:360})' },
   Svg: { sig: 'Svg(view_box: "0 0 24 24", width: 24, height: 24)', doc: 'Inline `<svg>` element.', named: ['view_box', 'width', 'height', 'preserve_aspect_ratio', ...COMMON], events: ['on_click'], snippet: 'Svg(view_box: "${1:0 0 24 24}", width: ${2:24}, height: ${3:24})' },
+  Dialog: { sig: 'Dialog(open: bool, label: String) { … } -> on_close(Close)', doc: 'A modal dialog on the native `<dialog>`: traps focus, makes the page behind it inert, and returns focus when it closes. Escape runs `on_close`; set `open:` to false there. Needs `label:` (its title).', named: ['open', ...COMMON], events: ['on_close', 'on_cancel'], snippet: 'Dialog(open: ${1:open}, label: "${2:Title}") {\n    $0\n} -> on_close(${3:Close})' },
 };
 
-export const EVENTS = {
+const FOAR_EVENT_DOCS = {
   on_click: 'Click (or Enter/Space on a focusable element).',
   on_double_click: 'Double click.',
   on_input: 'Each edit; the effect receives the new value.',
@@ -146,6 +148,38 @@ export const EVENTS = {
   on_drag_start: 'A drag started from this element.',
   on_drag_end: 'The drag from this element ended.',
 };
+
+// Everything else: React's DOM events in snake_case (web/foar-runtime.js DOM_EVENTS).
+const FIELDS = [
+  [/^on_(mouse|aux|pointer|got|lost)/, '`e.client_x`, `e.client_y`, `e.button`, `e.pointer_type`'],
+  [/^on_(key|composition|before_input)/, '`e.key`, `e.code`, `e.shift_key`, `e.ctrl_key`, `e.alt_key`, `e.meta_key`'],
+  [/^on_touch/, '`e.touches`, `e.changed_touches`'],
+  [/^on_wheel/, '`e.delta_x`, `e.delta_y`'],
+  [/^on_scroll/, '`e.scroll_top`, `e.scroll_left`'],
+  [/^on_(copy|cut|paste)/, '`e.data`'],
+  [/^on_animation/, '`e.animation_name`, `e.elapsed_time`'],
+  [/^on_transition/, '`e.property_name`, `e.elapsed_time`'],
+  [/^on_(play|pause|time_update|duration|ended|seek|volume|rate|progress|can_play|loaded|load_start|waiting|stalled|suspend|emptied|abort|encrypted|playing)/, '`e.current_time`, `e.duration`, `e.paused`'],
+  [/^on_(focus|select|reset|invalid)/, '`e.value`'],
+];
+const NON_BUBBLING_NOTE = { mouseenter: 1, mouseleave: 1, pointerenter: 1, pointerleave: 1 };
+export const EVENTS = {};
+for (const [name, [type, bubbles]] of Object.entries(DOM_EVENTS)) {
+  if (FOAR_EVENT_DOCS[name]) {
+    EVENTS[name] = FOAR_EVENT_DOCS[name];
+    continue;
+  }
+  const react = `on${name.slice(3).replace(/(^|_)([a-z])/g, (_, __, c) => c.toUpperCase())}`;
+  const fields = FIELDS.find(([re]) => re.test(name))?.[1];
+  EVENTS[name] =
+    `\`${type}\` (React \`${react}\`). ` +
+    (NON_BUBBLING_NOTE[type] ? 'Fires on this element only, not again for its children. ' : bubbles ? '' : "Doesn't bubble: fires on this element. ") +
+    `The effect receives the event${fields ? `: ${fields}` : ''}, \`e.prevent_default()\`, \`e.stop_propagation()\`.`;
+}
+EVENTS.on_resize = "The element's size changed; the effect receives `{ width, height }` before the next paint (ResizeObserver).";
+EVENTS.on_focus = 'Focus moved into the element (bubbles, like React `onFocus`). Receives the event.';
+EVENTS.on_close = '`Dialog`: Escape (or a close request) asks to close it; set `open:` to false. On other elements: `close`.';
+
 
 export const STYLE_AT = {
   '@hover': 'While the pointer is over the element (`:hover`).',

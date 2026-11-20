@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      axe-core:
+        specifier: ^4.14.1
+        version: 4.14.1
       happy-dom:
         specifier: ^15.11.7
         version: 15.11.7
@@ -16,6 +19,10 @@ importers:
         version: 15.0.12
 
 packages:
+
+  axe-core@4.14.1:
+    resolution: {integrity: sha512-FHfa+lmNjQZfJz1q8wKqIDwC6DExcHt/pkjNQb09a3NPjCKg2rhu5qb2S4r76ASyFNNtuFooJpZe37OgudVGtQ==}
+    engines: {node: '>=4'}
 
   entities@4.5.0:
     resolution: {integrity: sha512-V0hjH4dGPh9Ao5p0MoRY6BVqtwCjhz6vI5LT8AJ55H+4g9/4vbHx1I54fS0XuclLhDHArPQCiMjDxjaL8fPxhw==}
@@ -39,6 +46,8 @@ packages:
     engines: {node: '>=12'}
 
 snapshots:
+
+  axe-core@4.14.1: {}
 
   entities@4.5.0: {}
 

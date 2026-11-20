@@ -195,7 +195,7 @@ test('static styles become CSS classes; @hover becomes :hover; dynamic stays inl
   const rt = createFoarRuntime(parseFoar(todoSrc), container, {});
   const css = document.querySelector('style[data-f4-runtime]').textContent;
   assert.match(css, /\.f4-TodoItem\.f4-TodoItem:hover\{background:var\(--row-hover\)\}/);
-  assert.match(css, /background:#007bff;color:white/);
+  assert.match(css, /background:#0b63ce;color:white/);
   const add = q(container, '.f4-row .f4-button')[0];
   assert.equal(add.style.getPropertyValue('background'), '', 'static style must not be inline');
   assert.ok([...add.classList].some((c) => /^f4-TodoApp-\d+$/.test(c)));
@@ -257,7 +257,7 @@ test('externs: host functions callable from store init, expressions and effects'
       state S {
         render {
           List(notes.filter(|n| n.id == sel), empty: "Nothing selected") { n => Text(shout(n.text)) }
-          TextArea(value: notes[0].text, placeholder: "Body") -> on_input(Edit)
+          TextArea(value: notes[0].text, placeholder: "Body", label: "Body") -> on_input(Edit)
           Button("pick") -> on_click(Pick)
         }
         effect Pick() { sel = notes[0].id; }
@@ -301,9 +301,9 @@ test('If, RichText, Image, context menu, blur, title, innermost handler wins', a
             Button("toggle", title: "Toggle panel") -> on_click(Toggle)
           } -> on_click(RowClick) -> on_context_menu(Menu)
           If(open) { Text("panel") Child() }
-          RichText(value: html, placeholder: "Write…", editable: !open) -> on_input(Edit)
+          RichText(value: html, placeholder: "Write…", editable: !open, label: "Note") -> on_input(Edit)
           Image(src: img, alt: "pic")
-          Input(value: "x") -> on_blur(Blurred)
+          Input(value: "x", label: "Name") -> on_blur(Blurred)
           Text(a || b || open ? "any" : "none")
         }
         effect Toggle() { open = !open; log = [...log, "toggle"]; }
@@ -603,7 +603,7 @@ test('enums + match: values, render Match swaps arms, If/Else chain, let recompu
 
 test('Match keeps an arm mounted while the value changes inside it (binding updates)', async () => {
   const { window, container } = makeDom();
-  const src = 'view C {\n store n: i32 = 5;\n state S {\n render {\n Match(n) {\n 0 => Text("zero"),\n k if k > 0 => Text("pos {k}"),\n _ => Text("neg"),\n }\n Button("-") -> on_click(Dec)\n }\n effect Dec() { n -= 1; }\n }\n}\n';
+  const src = 'view C {\n store n: i32 = 5;\n state S {\n render {\n Match(n) {\n 0 => Text("zero"),\n k if k > 0 => Text("pos {k}"),\n _ => Text("neg"),\n }\n Button("-", label: "Decrease") -> on_click(Dec)\n }\n effect Dec() { n -= 1; }\n }\n}\n';
   const rt = createFoarRuntime(parseFoar(src), container, {});
   const node = q(container, '.f4-text')[0];
   assert.equal(node.textContent, 'pos 5');
@@ -1180,13 +1180,13 @@ view App {
   state Ready {
     render {
       Form(id: "cfg-form") {
-        Select(value: plan, class: "picker") {
+        Select(value: plan, class: "picker", label: "Plan") {
           Option(value: "free", "Free")
           Option(value: "pro", "Pro")
           Option(value: "team", "Team")
         } -> on_change(PickPlan)
-        Slider(value: level, min: 0, max: 100, step: 10) -> on_input(SetLevel)
-        Progress(value: level, max: 100)
+        Slider(value: level, min: 0, max: 100, step: 10, label: "Level") -> on_input(SetLevel)
+        Progress(value: level, max: 100, label: "Level")
         Text("{plan}:{level}:{submitted}", class: submitted > 0 ? "is-saved" : "")
         Button("Save", disabled: level == 0) -> on_click(Save)
       } -> on_submit(Save)
@@ -1201,7 +1201,7 @@ view App {
   const ssr = renderToString(ast);
   assert.ok(ssr.html.includes('<form class="f4-form" id="cfg-form">'), ssr.html);
   assert.ok(ssr.html.includes('<option class="f4-option" value="pro" selected>Pro</option>'), ssr.html);
-  assert.ok(ssr.html.includes('<progress class="f4-progress" value="40" max="100"></progress>'), ssr.html);
+  assert.ok(ssr.html.includes('<progress class="f4-progress" value="40" max="100" aria-label="Level"></progress>'), ssr.html);
 
   const { window, container } = makeDom();
   const rt = createFoarRuntime(ast, container);
@@ -1469,11 +1469,11 @@ view App {
         Button("Resize") -> on_click(Resize)
         If(show_chart) {
           Host(name: "chart") {
-            Canvas(width: width, height: 360)
+            Canvas(width: width, height: 360, label: "Chart")
           }
         }
         Video(src: clip, controls: true, muted: true, playsinline: true, poster: "/poster.jpg", preload: "metadata")
-        Svg(view_box: "0 0 24 24", width: 24, height: 24, preserve_aspect_ratio: "xMidYMid meet")
+        Svg(view_box: "0 0 24 24", width: 24, height: 24, preserve_aspect_ratio: "xMidYMid meet", aria: { hidden: true })
       }
     }
     effect Toggle() { show_chart = !show_chart; }
@@ -1486,9 +1486,9 @@ view App {
   // 1. SSR output for Host, Canvas, Video, Svg
   const ssr = renderToString(ast);
   assert.ok(ssr.html.includes('class="f4-host" data-f4-host="chart"'), ssr.html);
-  assert.ok(ssr.html.includes('<canvas class="f4-canvas" width="640" height="360"></canvas>'), ssr.html);
+  assert.ok(ssr.html.includes('<canvas class="f4-canvas" width="640" height="360" aria-label="Chart"></canvas>'), ssr.html);
   assert.ok(ssr.html.includes('<video class="f4-video" src="/demo.mp4" poster="/poster.jpg" preload="metadata" controls="" muted="" playsinline=""></video>'), ssr.html);
-  assert.ok(ssr.html.includes('<svg class="f4-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" preserveAspectRatio="xMidYMid meet"></svg>'), ssr.html);
+  assert.ok(ssr.html.includes('<svg class="f4-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>'), ssr.html);
 
   // 2. Client mount, onMount/onUnmount callbacks, getHost, and reactive updates
   const { container } = makeDom();
@@ -1836,7 +1836,7 @@ view App {
     store other: i32 = 0;
     state S {
         render {
-            Button("+") -> on_click(Bump)
+            Button("+", label: "Add one") -> on_click(Bump)
             Text("d=" + double(n))
             Child()
         }
@@ -1891,5 +1891,40 @@ test('data/aria keys from runtime data cannot inject markup (client and SSR)', a
   const el = q(container, '.f4-text')[0];
   assert.equal(el.getAttribute('data-user-id'), '7');
   assert.ok(![...el.attributes].some((a) => a.name.includes('<') || a.name.includes('"')), el.outerHTML);
+  rt.destroy();
+});
+
+test('events: capture runs outer-first and stop_propagation() stops the bubble; Link keeps other events', async () => {
+  const src = `view App {
+    store log: Vec<String> = [];
+    store block: bool = false;
+    state S {
+        render {
+            Column {
+                Button("in") -> on_click(Inner)
+                Link("/next", "go") -> on_focus(LinkFocus) -> on_click(LinkClick)
+            } -> on_click_capture(Cap)
+            Text(log.join(","))
+        }
+        effect Cap(e: any) { log = [...log, "capture"]; if block { e.stop_propagation(); } }
+        effect Inner(e: any) { log = [...log, "inner:" + e.type]; block = true; }
+        effect LinkFocus(e: any) { log = [...log, "link-focus"]; }
+        effect LinkClick() { log = [...log, "link-click"]; }
+    }
+}`;
+  const { window, container } = makeDom();
+  const rt = createFoarRuntime(parseFoar(src), container, {});
+  const last = () => q(container, '.f4-text').at(-1).textContent;
+  const btn = q(container, '.f4-button')[0];
+  fire(window, btn, 'click');
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(last(), 'capture,inner:click', 'capture first, then the target');
+  fire(window, btn, 'click');
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(last(), 'capture,inner:click,capture', 'stop_propagation() in capture stops the inner handler');
+  const link = container.querySelector('a');
+  link.dispatchEvent(new window.FocusEvent('focusin', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(last().endsWith('link-focus'), last());
   rt.destroy();
 });

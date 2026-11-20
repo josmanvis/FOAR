@@ -83,7 +83,7 @@ view App {
                         margin-left: auto;
                         font-family: monospace;
                         font-size: 12px;
-                        color: #64748b;
+                        color: #475569;
                         background: #f1f5f9;
                         padding: 4px 8px;
                         border-radius: 4px;
@@ -124,7 +124,7 @@ view App {
                         List(visible_services, empty: "No services in selected region.") { svc =>
                             Row {
                                 Link("/services/{svc.id}", svc.name).style({ font-weight: 600; color: #0f4c81; text-decoration: none; flex: 1; })
-                                Text("{svc.latency_ms} ms").style({ font-family: monospace; font-size: 13px; color: #64748b; })
+                                Text("{svc.latency_ms} ms").style({ font-family: monospace; font-size: 13px; color: #475569; })
                                 Badge(text: svc.latency_ms <= FleetPrefs.slo_ms && svc.healthy ? "Healthy" : "Degraded", tone: svc.latency_ms <= FleetPrefs.slo_ms && svc.healthy ? "ok" : "warn")
                             }.style({ padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; })
                         }.style({ display: flex; flex-direction: column; gap: 8px; })
@@ -191,7 +191,7 @@ view SettingsPanel {
                     Column {
                         Row {
                             Text("Region filter:").style({ font-weight: 600; width: 130px; })
-                            Select(value: FleetPrefs.region) {
+                            Select(value: FleetPrefs.region, label: "Region filter") {
                                 Option(value: "all", "All regions")
                                 Option(value: "iad", "US-East (iad)")
                                 Option(value: "fra", "EU-West (fra)")
@@ -200,10 +200,10 @@ view SettingsPanel {
                         }
                         Row {
                             Text("Latency SLO:").style({ font-weight: 600; width: 130px; })
-                            Slider(value: FleetPrefs.slo_ms, min: 20, max: 200, step: 10) -> on_input(PickSlo)
+                            Slider(value: FleetPrefs.slo_ms, min: 20, max: 200, step: 10, label: "Latency SLO") -> on_input(PickSlo)
                             Text(FleetPrefs.slo_label).style({ font-family: monospace; font-size: 13px; color: #0f4c81; })
                         }
-                        Progress(value: FleetPrefs.slo_ms, max: 200)
+                        Progress(value: FleetPrefs.slo_ms, max: 200, label: "Latency SLO")
                         If(saved_notice) {
                             Badge(text: "Preferences applied across all views", tone: "ok")
                         }

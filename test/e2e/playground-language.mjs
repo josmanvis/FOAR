@@ -114,9 +114,10 @@ try {
     await page.eval(`(() => { const t = ${TA}; const i = t.value.indexOf('"Second") ->'); t.focus(); t.setSelectionRange(i + 9, i + 12); document.execCommand('insertText', false, ''); t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
     ok(!(await val()).includes('"Second") ->'), 'cleanup failed');
     ok(s1 && s1.length === 0 || s1 === null, `Greeting emits nothing: ${JSON.stringify(s1)}`);
-    ok(s2?.includes('on_click') && !s2.includes('on_input'), JSON.stringify(s2));
+    // every DOM event is valid on every element; the element's usual ones come first
+    ok(s2?.slice(0, 5).includes('on_click') && s2.includes('on_mouse_enter'), JSON.stringify(s2?.slice(0, 8)));
     ok(s3?.[0] === 'Bump', JSON.stringify(s3));
-    return `Button events: ${s2.join(', ')}; effects: ${s3.join(', ')}`;
+    return `Button events: ${s2.slice(0, 5).join(', ')}, … (${s2.length}); effects: ${s3.join(', ')}`;
   });
 
   await step('inside .style({ … }) CSS properties and then values are suggested', async () => {

@@ -76,10 +76,37 @@ pub struct Parser<'s> {
 }
 
 /// Elements the runtime provides (web/foar-runtime.js mountNode/mountElement).
+/// Every DOM event an element can handle: React's DOM events in snake_case, plus
+/// FOAR's `on_enter` and `on_resize`. Each also has an `_capture` variant.
+/// Keep in sync with DOM_EVENTS in web/foar-runtime.js (test/tooling.test.js checks).
+pub const DOM_EVENTS: &[&str] = &[
+    "on_click", "on_double_click", "on_context_menu", "on_mouse_down", "on_mouse_up", "on_mouse_move",
+    "on_mouse_over", "on_mouse_out", "on_mouse_enter", "on_mouse_leave", "on_aux_click", "on_pointer_down",
+    "on_pointer_up", "on_pointer_move", "on_pointer_cancel", "on_pointer_over", "on_pointer_out", "on_pointer_enter",
+    "on_pointer_leave", "on_got_pointer_capture", "on_lost_pointer_capture", "on_touch_start", "on_touch_move", "on_touch_end",
+    "on_touch_cancel", "on_wheel", "on_scroll", "on_scroll_end", "on_key_down", "on_key_up",
+    "on_key_press", "on_enter", "on_focus", "on_blur", "on_input", "on_before_input",
+    "on_change", "on_submit", "on_reset", "on_invalid", "on_select", "on_copy",
+    "on_cut", "on_paste", "on_composition_start", "on_composition_update", "on_composition_end", "on_drag_start",
+    "on_drag_end", "on_drop", "on_drag", "on_drag_enter", "on_drag_leave", "on_drag_over",
+    "on_load", "on_error", "on_abort", "on_can_play", "on_can_play_through", "on_duration_change",
+    "on_emptied", "on_encrypted", "on_ended", "on_loaded_data", "on_loaded_metadata", "on_load_start",
+    "on_pause", "on_play", "on_playing", "on_progress", "on_rate_change", "on_seeked",
+    "on_seeking", "on_stalled", "on_suspend", "on_time_update", "on_volume_change", "on_waiting",
+    "on_animation_start", "on_animation_end", "on_animation_iteration", "on_animation_cancel", "on_transition_start", "on_transition_end",
+    "on_transition_run", "on_transition_cancel", "on_toggle", "on_before_toggle", "on_cancel", "on_close",
+    "on_resize",
+];
+
+/// `on_click`, or a capture-phase `on_click_capture`.
+pub fn is_dom_event(name: &str) -> bool {
+    DOM_EVENTS.contains(&name) || name.strip_suffix("_capture").is_some_and(|b| DOM_EVENTS.contains(&b))
+}
+
 const BUILTIN_ELEMENTS: &[&str] = &[
     "Text", "Button", "Input", "TextArea", "Checkbox", "RichText", "Image", "Spinner",
     "Row", "Column", "List", "If", "Match", "Router", "Route", "Link", "Slot", "Portal", "Catch",
-    "Form", "Select", "Option", "Slider", "Progress", "Island",
+    "Form", "Select", "Option", "Slider", "Progress", "Island", "Dialog",
     "Host", "Video", "Canvas", "Svg",
 ];
 
@@ -857,6 +884,9 @@ impl<'s> Parser<'s> {
                 self.expect(")")?;
             }
         }
+        if BUILTIN_ELEMENTS.contains(&tag.as_str()) {
+            self.check_a11y(&tag, at, &raw_pos_args, &raw_named_args)?;
+        }
         if let Some(view) = &self.cur_view {
             if !BUILTIN_ELEMENTS.contains(&tag.as_str()) {
                 self.check_items.push(crate::typecheck::CheckItem::ViewCall {
@@ -942,6 +972,20 @@ impl<'s> Parser<'s> {
             if self.eat("->") {
                 let ev_at = self.peek().start;
                 let ev = self.expect_ident()?;
+                if BUILTIN_ELEMENTS.contains(&tag.as_str()) && !is_dom_event(&ev) {
+                    // names from other frameworks
+                    let alias = match ev.as_str() {
+                        "on_hover" => Some(" (use on_mouse_enter / on_mouse_leave, or `@hover { … }` in a style)"),
+                        "on_tap" | "on_press" => Some(" (did you mean 'on_click'? It also fires for touch and the keyboard)"),
+                        "on_focus_in" => Some(" (did you mean 'on_focus'? It bubbles, like focusin)"),
+                        "on_focus_out" => Some(" (did you mean 'on_blur'? It bubbles, like focusout)"),
+                        "on_dblclick" => Some(" (did you mean 'on_double_click'?)"),
+                        "on_mount" | "on_unmount" => Some(" (use `on_enter { … }` / `on_unmount { … }` in a state, not an element event)"),
+                        _ => None,
+                    };
+                    let hint = alias.map(str::to_string).unwrap_or_else(|| crate::typecheck::did_you_mean(&ev, DOM_EVENTS.iter().copied()));
+                    return Err(err_at(self.src, ev_at, format!("{} has no event '{}'{}", tag, ev, hint)));
+                }
                 self.expect("(")?;
                 let handler_at = self.peek().start;
                 let mut handler = self.expect_ident()?;
@@ -975,6 +1019,10 @@ impl<'s> Parser<'s> {
             } else {
                 break;
             }
+        }
+        // WCAG 2.1.2 (no keyboard trap): Escape must be able to close a modal
+        if tag == "Dialog" && !el.events.contains_key("on_close") {
+            return Err(err_at(self.src, at, "Dialog needs `-> on_close(Effect)`: Escape asks to close it, and the effect sets `open:` to false (WCAG 2.1.2)".to_string()));
         }
         Ok(el)
     }
@@ -1077,6 +1125,95 @@ impl<'s> Parser<'s> {
         Ok(())
     }
 
+    /// A plain string literal's contents (no `{interpolation}`), for literal-only checks.
+    fn string_literal(&self, toks: &[Token]) -> Option<String> {
+        if toks.len() != 1 || toks[0].kind != Kind::Str {
+            return None;
+        }
+        let raw = self.text(&toks[0]);
+        let inner = raw.get(1..raw.len().saturating_sub(1))?;
+        (!inner.contains('{')).then(|| inner.to_string())
+    }
+
+    /// WCAG / WAI-ARIA checks on a built-in element (src/a11y.rs).
+    fn check_a11y(&self, tag: &str, at: usize, pos: &[(Vec<Token>, usize)], named: &[(String, Vec<Token>, usize)]) -> PResult<()> {
+        let mut aria = None;
+        let mut aria_dynamic = false;
+        let mut aria_at = std::collections::HashMap::new();
+        let mut tab_index = None;
+        let mut arg_at = std::collections::HashMap::new();
+        for (name, toks, a) in named {
+            arg_at.insert(name.clone(), *a);
+            if name == "aria" {
+                // `{ key: value, … }` written out: check each key and literal value
+                let literal = toks.len() >= 2 && self.tok_is(&toks[0], "{") && self.tok_is(&toks[toks.len() - 1], "}");
+                if !literal {
+                    aria_dynamic = true;
+                    continue;
+                }
+                let mut entries = Vec::new();
+                let inner = &toks[1..toks.len() - 1];
+                let mut depth = 0i32;
+                let mut start = 0;
+                for i in 0..=inner.len() {
+                    let end = i == inner.len();
+                    if !end {
+                        let t = &inner[i];
+                        if self.tok_is(t, "(") || self.tok_is(t, "[") || self.tok_is(t, "{") {
+                            depth += 1;
+                        } else if self.tok_is(t, ")") || self.tok_is(t, "]") || self.tok_is(t, "}") {
+                            depth -= 1;
+                        }
+                    }
+                    if end || (depth == 0 && self.tok_is(&inner[i], ",")) {
+                        let e = &inner[start..i];
+                        start = i + 1;
+                        if e.len() >= 3 && self.tok_is(&e[1], ":") {
+                            let key = self.text(&e[0]).trim_matches('"').to_string();
+                            let val = &e[2..];
+                            let lit = self.string_literal(val).or_else(|| {
+                                (val.len() == 1 && (val[0].kind == Kind::Num || matches!(self.text(&val[0]), "true" | "false"))).then(|| self.text(&val[0]).to_string())
+                            });
+                            aria_at.insert(key.clone(), e[0].start);
+                            entries.push((key, e[0].start, lit));
+                        } else if e.len() == 1 && e[0].kind == Kind::Ident {
+                            // `{ expanded }` shorthand
+                            let key = self.text(&e[0]).to_string();
+                            aria_at.insert(key.clone(), e[0].start);
+                            entries.push((key, e[0].start, None));
+                        } else if e.iter().any(|t| self.tok_is(t, "...")) {
+                            aria_dynamic = true;
+                        }
+                    }
+                }
+                aria = Some(entries);
+            } else if name == "tab_index" {
+                let txt: String = toks.iter().map(|t| self.text(t)).collect();
+                tab_index = txt.parse::<i64>().ok();
+            }
+        }
+        let el = crate::a11y::Element {
+            tag,
+            // Link("/path", "Text"): the text is the second argument
+            text: pos.get(if tag == "Link" { 1 } else { 0 }).and_then(|(t, _)| self.string_literal(t)),
+            named: named.iter().map(|(n, t, _)| (n.clone(), self.string_literal(t).or_else(|| (t.len() == 1 && t[0].kind == Kind::Num).then(|| self.text(&t[0]).to_string())))).collect(),
+            aria,
+            aria_dynamic,
+            tab_index,
+        };
+        if let Some((key, msg)) = crate::a11y::check(&el).into_iter().next() {
+            let pos = if let Some(k) = key.strip_prefix("aria:") {
+                aria_at.get(k).copied().unwrap_or(at)
+            } else if key.is_empty() {
+                at
+            } else {
+                arg_at.get(&key).copied().unwrap_or(at)
+            };
+            return Err(err_at(self.src, pos, msg));
+        }
+        Ok(())
+    }
+
     /// `-> on_click(Cart.Add)`: the context exists, the view `use`s it, and it has that effect.
     fn check_context_handlers(&self, views: &[ViewDecl], contexts: &[ContextDecl]) -> PResult<()> {
         for (view, ctx, effect, at) in &self.ctx_handler_refs {
@@ -1099,10 +1236,9 @@ impl<'s> Parser<'s> {
 
     /// `-> on_pick(...)` on a component must be an event it emits (or a DOM event).
     fn check_view_events(&self, views: &[ViewDecl]) -> PResult<()> {
-        const DOM_EVENTS: &[&str] = &["on_click", "on_double_click", "on_input", "on_change", "on_enter", "on_context_menu", "on_blur", "on_drop", "on_drag_start", "on_drag_end", "on_submit"];
         let emits = self.emits.borrow();
         for (target, ev, at) in &self.view_event_refs {
-            if !views.iter().any(|v| &v.name == target) || DOM_EVENTS.contains(&ev.as_str()) {
+            if !views.iter().any(|v| &v.name == target) || is_dom_event(ev) {
                 continue;
             }
             let name = ev.strip_prefix("on_").unwrap_or(ev);

@@ -114,6 +114,7 @@ Row {
 | `Video(src:, controls:, poster:, autoplay:, loop:, muted:)` | native `<video>` | normal container events |
 | `Canvas(width:, height:)` | native `<canvas>` | normal container events |
 | `Svg(view_box:, width:, height:)` | native `<svg>` for an imperative SVG renderer | normal container events |
+| `Dialog(open:, label:) { … }` | a modal on the native `<dialog>`, see [accessibility](#accessibility) | `on_close` (Escape) |
 | `Row { … }`, `Column { … }` | flex row / column | `on_click`, `on_double_click`, `on_context_menu`, `on_drop`, drag events |
 | `List(items, empty: …) { item => … }` | one block per item, keyed | `on_context_menu`, `on_drop` |
 | `If(cond) { … } Else If(c) { … } Else { … }` | shows one branch | |
@@ -124,7 +125,7 @@ Every element also takes:
 
 | Argument | |
 |---|---|
-| `title: text` | tooltip; for a `Button` without `label:`, also its accessible name |
+| `title: text` | tooltip; for an icon-only `Button` (no letters or digits in its text) also its accessible name |
 | `label: text` | `aria-label` |
 | `role: text` | ARIA role (`"listbox"`, `"option"`, `"menu"`, …) |
 | `aria: { expanded: open, current: sel ? "page" : null }` | `aria-*` attributes; `null` removes one; `snake_case` becomes `kebab-case` |
@@ -134,8 +135,55 @@ Every element also takes:
 | `autofocus: cond` | focus when it appears |
 
 Clickable `Row`, `Column` and `Text` get `tabindex=0`, `role=button` and
-Enter/Space activation automatically. Events are delegated, and the innermost
-handler wins: a button inside a clickable row doesn't also trigger the row.
+Enter/Space activation automatically.
+
+### Events
+
+Every DOM event React has, named in snake case: `onMouseEnter` is
+`-> on_mouse_enter(Effect)`, `onKeyDown` is `on_key_down`, `onTimeUpdate` is
+`on_time_update`. All 89 of them (mouse, pointer, touch, wheel, scroll,
+keyboard, focus, forms, clipboard, composition, drag and drop, images, media,
+animations, transitions, `<dialog>` and toggle events), plus two of FOAR's
+own: `on_enter` (Enter in a field) and `on_resize`.
+
+```foar
+Row { … }
+    -> on_mouse_enter(ShowPreview) -> on_mouse_leave(HidePreview)
+    -> on_focus(ShowPreview) -> on_blur(HidePreview)     // the same for keyboard users
+    -> on_key_down(Key)
+    -> on_resize(Fit)
+
+effect Key(e: any) {
+    if e.key == "Escape" { e.prevent_default(); transition Closed; }
+}
+effect Fit(size: any) { compact = size.width < 480; }
+```
+
+The effect receives an event with React's `SyntheticEvent` fields in snake case:
+`e.key`, `e.code`, `e.shift_key`, `e.ctrl_key`, `e.alt_key`, `e.meta_key`,
+`e.client_x`, `e.client_y`, `e.button`, `e.pointer_type`, `e.pressure`,
+`e.delta_y`, `e.touches`, `e.data` (clipboard, input), `e.value`, `e.checked`,
+`e.scroll_top`, `e.current_time`, `e.animation_name`, `e.property_name`, …,
+`e.target` (the element), `e.native` (the DOM event), `e.prevent_default()` and
+`e.stop_propagation()`. A few events keep a simpler payload: `on_input` and
+`on_change` get the value, `on_blur` the field's value, `on_context_menu`
+`{ x, y }`, `on_drop` the dragged payload, `on_resize` `{ width, height }`.
+
+- **Propagation.** Events are delegated. The innermost handler wins: a button
+  inside a clickable row doesn't also trigger the row (no `stopPropagation` to
+  remember). To see an event before the element it happened on, use the capture
+  variant, `on_click_capture`: capture handlers run first, outermost to innermost,
+  and `e.stop_propagation()` there stops the rest.
+- **Enter and leave** fire only on the element itself, not again for its children,
+  exactly like React. `on_focus` / `on_blur` bubble, like React's `onFocus` /
+  `onBlur`.
+- **`on_resize`** runs from a `ResizeObserver` and its update is applied before
+  the next paint, so a layout that depends on its size never shows a frame of
+  overflow.
+- `on_touch_start`, `on_touch_move` and `on_wheel` are passive (as in React):
+  `e.prevent_default()` has no effect on them.
+- A name that isn't an event is a compile error with a suggestion:
+  `on_mouseleave` → `on_mouse_leave`, `on_hover` → `on_mouse_enter` / `on_mouse_leave`.
 
 ### Strings
 
@@ -381,6 +429,59 @@ fallback, and `setLocale("es")` re-renders in one pass (and sets `lang`/`dir`,
 including right-to-left). `t_key("…")` marks a key that is stored now and
 translated later. `foar i18n` checks the catalogs against the code (see
 [tooling](./tooling.md#i18n)).
+
+## Accessibility
+
+FOAR aims at WCAG 2.2 AA and WAI-ARIA 1.2 by default. Some of it is automatic,
+some is checked by the compiler, and the rest is a few built-ins.
+
+**Checked when you compile.** These are errors, each with the fix in the message:
+
+| Error | WCAG |
+|---|---|
+| `Image` without `alt:` (`alt: ""` marks it decorative) | 1.1.1 |
+| `Svg` / `Canvas` without `label:` or `aria: { hidden: true }` | 1.1.1 |
+| `Input`, `TextArea`, `Select`, `Slider`, `Checkbox`, `RichText`, `Progress`, `Dialog` without `label:` (a placeholder isn't one) | 1.3.1, 3.3.2, 4.1.2 |
+| a `Button` / `Link` whose text has no letters or digits (`"⋯"`, `"+"`) and no `label:` or `title:` | 4.1.2 |
+| `role:` that isn't a WAI-ARIA 1.2 role, or an abstract one | 4.1.2 |
+| `aria: { … }` keys that aren't ARIA states/properties (`lable` → did you mean `label`?), and invalid values (`live: "loud"`) | 4.1.2 |
+| `tab_index` above 0 | 2.4.3 |
+| a `Dialog` without `-> on_close`, so Escape couldn't close it | 2.1.2 |
+
+**Automatic.**
+
+- Clickable `Row`, `Column` and `Text` get `role="button"`, `tabindex="0"` and
+  Enter/Space activation (2.1.1).
+- A visible keyboard focus ring in the system highlight colour, which follows
+  Windows High Contrast (2.4.7). Any style of yours overrides it.
+- With "reduce motion" set in the OS, animations and transitions inside FOAR apps
+  stop (2.3.3); pass `{ reducedMotion: false }` to `createFoarRuntime` to opt out.
+- `Spinner` is a status message (4.1.3); `Link` sets `aria-current="page"`; the
+  root gets `lang` and `dir` from the current locale (3.1.1).
+- An icon button's `title:` doubles as its name; a button with readable text keeps
+  that text as its name, so voice control users can say what they see (2.5.3).
+
+**Built-ins.**
+
+```foar
+Button("Rename") -> on_click(Ask)
+Dialog(open: renaming, label: "Rename folder") {
+    Input(value: draft, label: "Name", autofocus: true) -> on_input(Draft)
+    Button("Save") -> on_click(Save)
+} -> on_close(Cancel)
+
+effect Save() { renaming = false; announce("Folder renamed"); }
+```
+
+- `Dialog` is the native `<dialog>` opened with `showModal()`: focus moves in and
+  can't leave, the page behind is inert to the mouse, keyboard and screen
+  readers, and focus returns to what opened it. Escape runs `on_close`.
+- `announce(message)` reads a message to screen-reader users through a polite
+  live region; `announce(message, "assertive")` interrupts (4.1.3).
+
+The examples are checked with [axe-core](https://github.com/dequelabs/axe-core)
+against WCAG 2.0–2.2 A and AA in CI (`test/e2e/a11y.mjs`). Automated checks find
+many problems but not all of them: test with a keyboard and a screen reader too.
 
 ## Static type checking and `extern fn`
 

@@ -2065,12 +2065,12 @@ mod tests {
                      render {\n\
                          Form {\n\
                              Text(Cart.label)\n\
-                             Select(value: tier) {\n\
+                             Select(value: tier, label: \"Tier\") {\n\
                                  Option(value: \"free\", \"Free\")\n\
                                  Option(value: \"pro\", \"Pro\")\n\
                              } -> on_change(SetTier)\n\
-                             Slider(value: vol, min: 0, max: 100, step: 5) -> on_input(SetVol)\n\
-                             Progress(value: vol, max: 100)\n\
+                             Slider(value: vol, min: 0, max: 100, step: 5, label: \"Volume\") -> on_input(SetVol)\n\
+                             Progress(value: vol, max: 100, label: \"Volume\")\n\
                              Island(client: \"visible\") { Button(\"Clear\", disabled: Cart.total == 0) -> on_click(Cart.Clear) }\n\
                              Button(\"Pay\") -> on_click(Pay)\n\
                          } -> on_submit(Pay)\n\

@@ -13,7 +13,7 @@ import fs from 'node:fs';
 
 const here = new URL('.', import.meta.url).pathname;
 const root = path.join(here, '../..');
-const ALL = ['cli-dev', 'playground-editor', 'playground-search', 'playground-language', 'playground-stale-edits', 'notes-app', 'notes-editing'];
+const ALL = ['cli-dev', 'events', 'a11y', 'playground-editor', 'playground-search', 'playground-language', 'playground-stale-edits', 'notes-app', 'notes-editing'];
 const pick = process.argv.slice(2);
 const suites = pick.length ? ALL.filter((s) => pick.some((p) => s.includes(p))) : ALL;
 

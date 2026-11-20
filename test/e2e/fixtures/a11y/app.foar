@@ -1,0 +1,19 @@
+view App {
+    store open: bool = false;
+    store loading: bool = true;
+
+    state S {
+        render {
+            Button("Rename", id: "opener") -> on_click(Open)
+            Dialog(open: open, label: "Rename folder") {
+                Input(value: "", label: "Name", id: "name", autofocus: true)
+                Button("Close", id: "close") -> on_click(Close)
+            } -> on_close(Close)
+            Button("Save", id: "save") -> on_click(Save)
+            If(loading) { Spinner("Loading notes") }
+        }
+        effect Open() { open = true; }
+        effect Close() { open = false; }
+        effect Save() { announce("Saved"); }
+    }
+}
