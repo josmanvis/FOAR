@@ -4,6 +4,9 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 const PORT = Number(process.env.PORT || 3000);
+// loopback only, unless you ask for more (HOST=0.0.0.0 to open it to your network)
+const HOST = process.env.HOST || '127.0.0.1';
+const MAX_BODY = 8 * 1024 * 1024;
 const ROOT = import.meta.dirname;
 const WEB_DIR = path.join(ROOT, 'web');
 const EXAMPLES_DIR = path.join(ROOT, 'examples');
@@ -27,8 +30,19 @@ const FOAR_BIN = path.join(ROOT, 'target', 'release', 'foar');
 
 function compileNative(req, res) {
   const chunks = [];
-  req.on('data', (c) => chunks.push(c));
+  let size = 0;
+  req.on('data', (c) => {
+    size += c.length;
+    if (size > MAX_BODY) {
+      res.writeHead(413, { 'Content-Type': 'text/plain' });
+      res.end('Too large');
+      req.destroy();
+      return;
+    }
+    chunks.push(c);
+  });
   req.on('end', () => {
+    if (size > MAX_BODY) return;
     if (!fs.existsSync(FOAR_BIN)) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: { message: 'Rust compiler not built: run `cargo build --release`', line: 0, col: 0 } }));
@@ -104,6 +118,6 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, HOST, () => {
   console.log(`🚀 FOAR Interactive Browser Playground running at http://localhost:${PORT}`);
 });

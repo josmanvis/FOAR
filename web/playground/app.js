@@ -1,5 +1,6 @@
 import { compileFoarProject } from '../foar-compiler.js';
 import { createFoarRuntime, createI18n } from '../foar-runtime.js';
+import { localUrl, LOCAL_ONLY_MESSAGE } from './local-url.js';
 
 const mountEl = document.getElementById('app');
 const editLink = document.getElementById('edit-in-playground');
@@ -10,7 +11,7 @@ document.getElementById('dismiss-pill')?.addEventListener('click', () => {
 
 const params = new URLSearchParams(location.search);
 const exampleId = params.get('example') || 'todo';
-const remoteSrc = params.get('src');
+const remoteSrc = localUrl(params.get('src'));
 
 editLink.href = remoteSrc
   ? `./?src=${encodeURIComponent(remoteSrc)}`
@@ -84,6 +85,10 @@ async function mountProject(project, hostUrl) {
 }
 
 async function boot() {
+  if (params.has('src') && !remoteSrc) {
+    showError(LOCAL_ONLY_MESSAGE);
+    return;
+  }
   if (remoteSrc) {
     // If the user opened a remote local dev app (?src=...), redirect straight
     // to the running app origin if available, or compile its source standalone.

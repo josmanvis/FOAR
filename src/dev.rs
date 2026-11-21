@@ -215,6 +215,10 @@ fn respond(stream: &mut TcpStream, status: &str, kind: &str, body: &[u8]) {
 
 struct Dev {
     dir: PathBuf,
+    /// the project directory, resolved: nothing outside it is served (symlinks included)
+    root: PathBuf,
+    /// the --host the server was started with
+    bind_host: String,
     entry: String,
     /// the last compile result we printed, so each change is reported once
     last: Mutex<Option<(u128, bool)>>,
@@ -254,13 +258,25 @@ impl Dev {
         if reader.read_line(&mut first).is_err() {
             return;
         }
-        loop {
+        let mut host_header = None;
+        for _ in 0..100 {
             let mut line = String::new();
             match reader.read_line(&mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) if line == "\r\n" || line == "\n" => break,
-                _ => {}
+                _ => {
+                    if let Some((k, v)) = line.split_once(':') {
+                        if k.trim().eq_ignore_ascii_case("host") {
+                            host_header = Some(v.trim().to_string());
+                        }
+                    }
+                }
             }
+        }
+        // DNS rebinding: a web page can point its own domain at 127.0.0.1 and read
+        // this server; it can't make the browser send Host: localhost or an IP.
+        if !self.host_allowed(host_header.as_deref().unwrap_or("")) {
+            return respond(&mut stream, "403 Forbidden", "text/plain", b"foar dev: this Host isn't allowed (use localhost or the --host you started it with)");
         }
         let mut parts = first.split_whitespace();
         let method = parts.next().unwrap_or("");
@@ -278,6 +294,19 @@ impl Dev {
         }
     }
 
+    fn host_allowed(&self, header: &str) -> bool {
+        let host = if header.starts_with('[') {
+            header.split(']').next().map(|h| format!("{}]", h)).unwrap_or_default()
+        } else {
+            header.rsplit_once(':').map_or(header, |(h, port)| if port.chars().all(|c| c.is_ascii_digit()) { h } else { header }).to_string()
+        };
+        let bare = host.trim_start_matches('[').trim_end_matches(']');
+        host.eq_ignore_ascii_case("localhost")
+            || host.to_ascii_lowercase().ends_with(".localhost")
+            || bare.parse::<std::net::IpAddr>().is_ok()
+            || host.eq_ignore_ascii_case(&self.bind_host)
+    }
+
     fn serve_file(&self, stream: &mut TcpStream, path: &str) {
         let rel = Path::new(path.trim_start_matches('/'));
         if rel.components().any(|c| !matches!(c, Component::Normal(_))) {
@@ -288,6 +317,12 @@ impl Dev {
             file = file.join("index.html");
         }
         let is_root_index = rel.as_os_str().is_empty() || rel == Path::new("index.html");
+        // follow symlinks, then make sure we're still inside the project
+        if let Ok(real) = std::fs::canonicalize(&file) {
+            if !real.starts_with(&self.root) {
+                return respond(stream, "403 Forbidden", "text/plain", b"forbidden: outside the project");
+            }
+        }
         let body = match std::fs::read(&file) {
             Ok(b) => b,
             Err(_) if is_root_index => index_html(&project_name(&self.dir)).into_bytes(),
@@ -371,7 +406,8 @@ pub fn dev_cmd(args: &[String]) {
     println!("  {}  {}", paint(DIM, "Entry "), entry);
     println!("  {}  {}", paint(DIM, "Reload"), "on save");
     println!();
-    let dev = Arc::new(Dev { dir, entry, last: Mutex::new(None) });
+    let root = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+    let dev = Arc::new(Dev { dir, root, bind_host: host.clone(), entry, last: Mutex::new(None) });
     let _ = dev.app_js(); // report the first compile straight away
     for stream in listener.incoming().flatten() {
         let dev = Arc::clone(&dev);

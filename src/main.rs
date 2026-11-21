@@ -345,39 +345,125 @@ fn init_cmd(args: &[String]) {
     println!();
 }
 
+
+// ---- packages: everything here can come from someone else's foar.toml ----------------
+// Names, versions and URLs are validated, and git/curl/tar run without a shell,
+// so a manifest can't run commands or write outside foar_packages/.
+
+fn pkg_die(msg: String) -> ! {
+    eprintln!("foar: {}", msg);
+    exit(1)
+}
+
+/// `ui`, `date-fns`, `my_pkg.v2`: no paths, no leading dot or dash.
+fn check_pkg_name(name: &str) -> &str {
+    let ok = !name.is_empty()
+        && name.len() <= 100
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && !name.starts_with(['.', '-'])
+        && !name.contains("..");
+    if !ok {
+        pkg_die(format!("invalid package name {:?}: use letters, digits, '-', '_' and '.'", name));
+    }
+    name
+}
+
+/// `1.2.3`, `^1.0.0`, `~2.1`, `latest`.
+fn check_version(v: &str) -> &str {
+    let body = v.trim_start_matches(['^', '~', '=']);
+    let ok = !body.is_empty() && body.len() <= 64 && body.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'));
+    if !ok {
+        pkg_die(format!("invalid version {:?}", v));
+    }
+    v
+}
+
+fn is_loopback_http(url: &str) -> bool {
+    let rest = url.strip_prefix("http://").unwrap_or("");
+    let host = rest.split(['/', ':']).next().unwrap_or("");
+    !rest.is_empty() && matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+}
+
+/// A registry is an https URL (or http on localhost, for testing). There's no
+/// default: FOAR has no public registry, so the domain can't be squatted.
+fn check_registry(url: Option<&str>) -> String {
+    let Some(url) = url else {
+        pkg_die("this dependency has no registry: FOAR has no public package registry, so give one (`registry = \"https://…\"`, or `--registry`), or use `git` / `path`".to_string())
+    };
+    let ok = (url.starts_with("https://") || is_loopback_http(url)) && !url.chars().any(|c| c.is_whitespace() || c.is_control() || c == '"');
+    if !ok {
+        pkg_die(format!("invalid registry {:?}: it must be an https:// URL", url));
+    }
+    url.trim_end_matches('/').to_string()
+}
+
+/// https://, ssh://, git://, file:// or user@host:path; never an option or a git transport helper.
+fn check_git_url(url: &str) -> &str {
+    let scheme_ok = ["https://", "http://", "ssh://", "git://", "file://"].iter().any(|p| url.starts_with(p))
+        || (url.contains('@') && url.contains(':') && !url.contains("://"));
+    let ok = scheme_ok && !url.starts_with('-') && !url.contains("::") && !url.chars().any(|c| c.is_whitespace() || c.is_control() || c == '"');
+    if !ok {
+        pkg_die(format!("invalid git URL {:?}: use https://, ssh://, git://, file:// or user@host:path", url));
+    }
+    url
+}
+
+fn git_clone(url: &str, dest: &std::path::Path) -> bool {
+    std::process::Command::new("git")
+        .args(["-c", "protocol.ext.allow=never", "-c", "protocol.fd.allow=never", "clone", "--depth", "1", "--"])
+        .arg(url)
+        .arg(dest)
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Downloads <registry>/packages/<name>/<version>.tar.gz and unpacks it into dest.
+fn fetch_registry_package(registry: &str, name: &str, version: &str, dest: &std::path::Path) -> Result<(), String> {
+    let url = format!("{}/packages/{}/{}.tar.gz", registry, name, version.trim_start_matches(['^', '~', '=']));
+    let archive = std::env::temp_dir().join(format!("foar-pkg-{}-{}.tar.gz", std::process::id(), name));
+    let mut curl = std::process::Command::new("curl");
+    curl.args(["-fsSL", "--max-filesize", "104857600"]);
+    if url.starts_with("https://") {
+        curl.args(["--proto", "=https", "--proto-redir", "=https"]);
+    }
+    let fetched = curl.arg("-o").arg(&archive).arg("--").arg(&url).status().is_ok_and(|s| s.success());
+    if !fetched {
+        std::fs::remove_file(&archive).ok();
+        return Err(format!("could not download {}", url));
+    }
+    std::fs::create_dir_all(dest).map_err(|e| format!("cannot create {}: {}", dest.display(), e))?;
+    // tar refuses absolute paths and `..` members by default (GNU and bsdtar)
+    let unpacked = std::process::Command::new("tar").arg("-xzf").arg(&archive).arg("-C").arg(dest).arg("--no-same-owner").status().is_ok_and(|s| s.success());
+    std::fs::remove_file(&archive).ok();
+    if unpacked { Ok(()) } else { Err(format!("could not unpack {}", url)) }
+}
+
 fn add_cmd(args: &[String]) {
     if args.len() < 3 {
         eprintln!("Usage: foar add <name> --path <dir> | --git <url> | --version <ver> [--registry <url>]");
         exit(2);
     }
-    let name = &args[0];
+    let name = check_pkg_name(&args[0]);
     let (flag, val) = (args[1].as_str(), &args[2]);
-    let registry = args
-        .windows(2)
-        .find(|w| w[0] == "--registry")
-        .map(|w| w[1].as_str())
-        .unwrap_or("https://registry.foar-lang.org");
+    if val.chars().any(|c| c == '"' || c == '\\' || c.is_control()) {
+        pkg_die(format!("invalid value {:?}", val));
+    }
+    let registry_arg = args.windows(2).find(|w| w[0] == "--registry").map(|w| w[1].as_str());
     let line = match flag {
         "--path" => format!("{} = {{ path = \"{}\" }}\n", name, val),
         "--git" => {
             let dest = std::path::Path::new("foar_packages").join(name);
             if !dest.exists() {
                 std::fs::create_dir_all("foar_packages").ok();
-                let status = std::process::Command::new("git")
-                    .args(["clone", "--depth", "1", val, &dest.to_string_lossy()])
-                    .status();
-                match status {
-                    Ok(s) if s.success() => {}
-                    _ => {
-                        eprintln!("foar: git clone {} failed", val);
-                        exit(1);
-                    }
+                if !git_clone(check_git_url(val), &dest) {
+                    pkg_die(format!("git clone {} failed", val));
                 }
             }
             format!("{} = {{ git = \"{}\", path = \"foar_packages/{}\" }}\n", name, val, name)
         }
         "--version" => {
-            format!("{} = {{ version = \"{}\", registry = \"{}\" }}\n", name, val, registry)
+            let registry = check_registry(registry_arg);
+            format!("{} = {{ version = \"{}\", registry = \"{}\" }}\n", name, check_version(val), registry)
         }
         _ => {
             eprintln!("Usage: foar add <name> --path <dir> | --git <url> | --version <ver> [--registry <url>]");
@@ -422,6 +508,7 @@ fn install_cmd(args: &[String]) {
 
     let mut locked = Vec::new();
     for (name, dep) in &manifest.dependencies {
+        let name = &check_pkg_name(name).to_string();
         let (rel_path, source, version) = if let Some(p) = &dep.path {
             let clean = p.trim_start_matches("./").trim_end_matches('/').to_string();
             let src = dep
@@ -442,34 +529,19 @@ fn install_cmd(args: &[String]) {
             let dest = format!("foar_packages/{}", name);
             if !std::path::Path::new(&dest).exists() {
                 std::fs::create_dir_all("foar_packages").ok();
-                let status = std::process::Command::new("git")
-                    .args(["clone", "--depth", "1", git, &dest])
-                    .status();
-                match status {
-                    Ok(s) if s.success() => {}
-                    _ => {
-                        eprintln!("foar: git clone {} failed", git);
-                        exit(1);
-                    }
+                if !git_clone(check_git_url(git), std::path::Path::new(&dest)) {
+                    pkg_die(format!("git clone {} failed", git));
                 }
             }
             (dest, format!("git+{}", git), dep.version.clone().unwrap_or_else(|| "0.1.0".to_string()))
         } else {
-            let ver = dep.version.clone().unwrap_or_else(|| "latest".to_string());
-            let reg = dep.registry.as_deref().unwrap_or("https://registry.foar-lang.org").trim_end_matches('/');
+            let ver = check_version(dep.version.as_deref().unwrap_or("latest")).to_string();
+            let reg = check_registry(dep.registry.as_deref());
             let dest = format!("foar_packages/{}", name);
             if !std::path::Path::new(&dest).exists() {
-                let url = format!("{}/packages/{}/{}.tar.gz", reg, name, ver.trim_start_matches('^'));
-                std::fs::create_dir_all(&dest).ok();
-                let status = std::process::Command::new("sh")
-                    .args(["-c", &format!("curl -fsSL {} | tar -xz -C {}", url, dest)])
-                    .status();
-                match status {
-                    Ok(s) if s.success() => {}
-                    _ => {
-                        eprintln!("foar: failed to fetch @{} ({}) from {}", name, ver, url);
-                        exit(1);
-                    }
+                if let Err(e) = fetch_registry_package(&reg, name, &ver, std::path::Path::new(&dest)) {
+                    std::fs::remove_dir_all(&dest).ok();
+                    pkg_die(format!("@{} ({}): {}", name, ver, e));
                 }
             }
             (dest, format!("registry+{}", reg), ver)

@@ -477,6 +477,114 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 }
 
+// ---- untrusted HTML and URLs ------------------------------------------------------------
+// Data can come from anyone (other users, an API). Link/Image/Video URLs and
+// RichText HTML go through these on the client and in SSR alike.
+
+const ENTITY = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', colon: ':', tab: '\t', newline: '\n', sol: '/', lpar: '(', rpar: ')', period: '.', comma: ',', semi: ';', equals: '=', excl: '!', num: '#', percnt: '%', plus: '+', dollar: '$' };
+/** Decodes character references the way the browser will (numeric and common named). */
+function decodeEntities(s) {
+  return String(s).replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);?/gi, (m, e) => {
+    if (e[0] === '#') {
+      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return code > 0 && code < 0x110000 ? String.fromCodePoint(code) : '�';
+    }
+    const v = ENTITY[e.toLowerCase()];
+    return v !== undefined ? v : m;
+  });
+}
+
+const URL_SCHEME = /^([a-z][a-z0-9+.-]*):/i;
+const DATA_MEDIA = /^data:(image\/(png|gif|jpe?g|webp|avif|bmp|svg\+xml)|video\/(mp4|webm|ogg)|audio\/(mpeg|ogg|wav|webm))[;,]/i;
+/**
+ * A URL that can't run script: http(s), mailto, tel, relative URLs, and (for
+ * media) data: images, video and audio. Anything else (javascript:, vbscript:,
+ * data:text/html, …) becomes '' and the attribute is left out.
+ */
+export function safeUrl(value, media = false) {
+  if (value === undefined || value === null || value === false) return '';
+  const raw = String(value);
+  // the browser ignores these when it parses a URL's scheme
+  const s = decodeEntities(raw).replace(/[\u0000- \u007f-\u009f]/g, '');
+  const scheme = URL_SCHEME.exec(s)?.[1].toLowerCase();
+  if (!scheme) return raw.trim();
+  if (scheme === 'http' || scheme === 'https' || scheme === 'mailto' || scheme === 'tel') return raw.trim();
+  if (media && scheme === 'data' && DATA_MEDIA.test(s)) return raw.trim();
+  if (media && scheme === 'blob') return raw.trim();
+  return '';
+}
+
+const RICH_TAGS = new Set('a abbr b bdi bdo blockquote br caption cite code col colgroup dd del details dfn div dl dt em figcaption figure font h1 h2 h3 h4 h5 h6 hr i img ins kbd li mark ol p pre q rp rt ruby s samp small span strike strong sub summary sup table tbody td tfoot th thead time tr u ul var wbr'.split(' '));
+const VOID_TAGS = new Set(['br', 'hr', 'img', 'wbr', 'col']);
+// dropped together with everything inside them
+const DROP_WITH_CONTENT = new Set('script style iframe frame frameset object embed applet noscript noembed noframes template textarea title xmp plaintext math svg select option button form input base link meta head'.split(' '));
+const RICH_ATTRS = new Set('class style title lang dir align color face size colspan rowspan scope headers alt width height start reversed type datetime open contenteditable spellcheck href src target rel cite'.split(' '));
+const DANGEROUS_CSS = /expression\s*\(|javascript:|vbscript:|url\s*\(|@import|behavior\s*:|-moz-binding/i;
+
+/**
+ * RichText's HTML, rebuilt from an allowlist: text formatting, lists, tables,
+ * links and images survive; scripts, event handlers, javascript: URLs, forms,
+ * frames and styles that load resources don't. Every tag and attribute in the
+ * result was emitted by this function, with escaped values.
+ */
+export function sanitizeHtml(html) {
+  const src = String(html ?? '');
+  const out = [];
+  const open = [];
+  const TAG = /<!--[\s\S]*?(?:-->|$)|<![^>]*>?|<\?[^>]*>?|<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
+  const ATTR = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  let last = 0;
+  let skip = null; // the element whose content is being dropped
+  const text = (t) => { if (!skip && t) out.push(t.replace(/</g, '&lt;').replace(/>/g, '&gt;')); };
+  for (let m; (m = TAG.exec(src)); ) {
+    text(src.slice(last, m.index));
+    last = TAG.lastIndex;
+    if (!m[2]) continue; // comment, doctype, processing instruction
+    const closing = m[1] === '/';
+    const tag = m[2].toLowerCase();
+    if (skip) {
+      if (closing && tag === skip) skip = null;
+      continue;
+    }
+    if (DROP_WITH_CONTENT.has(tag)) {
+      if (!closing && !/\/\s*$/.test(m[3])) skip = tag;
+      continue;
+    }
+    if (!RICH_TAGS.has(tag)) continue; // unknown tags go, their text stays
+    if (closing) {
+      const at = open.lastIndexOf(tag);
+      if (at === -1) continue; // nothing to close: never close the container around RichText
+      while (open.length > at) out.push(`</${open.pop()}>`);
+      continue;
+    }
+    let attrs = '';
+    let blank = false;
+    for (let a; (a = ATTR.exec(m[3])); ) {
+      const name = a[1].toLowerCase();
+      if (!(RICH_ATTRS.has(name) || /^data-[a-z0-9_.-]+$/.test(name) || /^aria-[a-z]+$/.test(name))) continue;
+      let value = decodeEntities(a[2] ?? a[3] ?? a[4] ?? '');
+      if (name === 'href' || name === 'src' || name === 'cite') {
+        value = safeUrl(value, name === 'src');
+        if (!value) continue;
+      } else if (name === 'style') {
+        if (DANGEROUS_CSS.test(value)) continue;
+      } else if (name === 'target') {
+        if (value !== '_blank' && value !== '_self') continue;
+        blank = value === '_blank';
+      } else if (name === 'contenteditable') {
+        if (value !== 'false' && value !== 'true') continue;
+      } else if (name === 'rel') continue; // set below for target=_blank
+      attrs += ` ${name}="${escapeHtml(value)}"`;
+    }
+    if (tag === 'a' && blank) attrs += ' rel="noopener noreferrer"';
+    out.push(`<${tag}${attrs}>`);
+    if (!VOID_TAGS.has(tag)) open.push(tag);
+  }
+  text(src.slice(last));
+  while (open.length) out.push(`</${open.pop()}>`);
+  return out.join('');
+}
+
 function inlineStyleToCss(key, val) {
   if (val === undefined || val === null || val === false || val === '') return '';
   if (key === 'layout') return `display:flex;flex-direction:${val === 'horizontal' ? 'row' : 'column'}`;
@@ -766,6 +874,12 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
   // Attribute helper: null/undefined/false-for-non-aria removes, booleans become "true"/"false".
   function removeAttr(el, name) {
     if (name) el.removeAttribute(name);
+  }
+  function warnUnsafeUrl(v) {
+    const key = `url:${String(v).slice(0, 40)}`;
+    if (warned.has(key)) return;
+    warned.add(key);
+    console.warn(`FOAR: blocked an unsafe URL (${String(v).slice(0, 40)}…): only http(s), mailto, tel, relative and media data: URLs are allowed`);
   }
   function setAttr(el, name, v) {
     if (!name) return;
@@ -1623,7 +1737,7 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         let currentHref = '/';
         if (hrefExpr !== undefined) {
           bind(hrefExpr, (v) => {
-            currentHref = v == null ? '/' : String(v);
+            currentHref = v == null ? '/' : String(v) === '' ? '' : safeUrl(v) || (warnUnsafeUrl(v), '#');
             const target = routerMode === 'hash' && currentHref.startsWith('/') ? `#${currentHref}` : currentHref;
             if (el.getAttribute('href') !== target) el.setAttribute('href', target);
             const active = parseUrl(currentHref).path === route.path;
@@ -1714,7 +1828,11 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         if (valueExpr !== undefined) {
           bind(valueExpr, (v) => {
             const s = v == null ? '' : String(v);
-            if (el.innerHTML !== s) el.innerHTML = s;
+            // its own output (on_input) comes back unchanged; anything else is sanitized
+            if (el.innerHTML !== s) {
+              const clean = sanitizeHtml(s);
+              if (el.innerHTML !== clean) el.innerHTML = clean;
+            }
           }, true);
         }
         if (node.namedArgs.placeholder !== undefined) {
@@ -1738,7 +1856,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         }
         const srcExpr = node.namedArgs.src !== undefined ? node.namedArgs.src : node.args[0];
         if (srcExpr !== undefined) {
-          bind(srcExpr, (v) => {
+          bind(srcExpr, (raw) => {
+            const v = raw ? safeUrl(raw, true) || (warnUnsafeUrl(raw), '') : '';
             if (v) {
               el.src = v;
               el.hidden = false;
@@ -1786,8 +1905,8 @@ export function createFoarRuntime(ast, container, callbacks = {}) {
         el = c.el;
         if (!c.claimed) el.className = withCls('f4-video');
         const srcExpr = node.namedArgs.src !== undefined ? node.namedArgs.src : node.args[0];
-        if (srcExpr !== undefined) bind(srcExpr, (v) => setAttr(el, 'src', v));
-        if (node.namedArgs.poster !== undefined) bind(node.namedArgs.poster, (v) => setAttr(el, 'poster', v));
+        if (srcExpr !== undefined) bind(srcExpr, (v) => setAttr(el, 'src', safeUrl(v, true)));
+        if (node.namedArgs.poster !== undefined) bind(node.namedArgs.poster, (v) => setAttr(el, 'poster', safeUrl(v, true)));
         if (node.namedArgs.preload !== undefined) bind(node.namedArgs.preload, (v) => setAttr(el, 'preload', v));
         for (const name of ['controls', 'autoplay', 'loop', 'muted', 'playsinline']) {
           if (node.namedArgs[name] !== undefined) bind(node.namedArgs[name], (v) => {
@@ -3534,7 +3653,7 @@ export function renderToString(ast, options = {}) {
       }
       case 'Link': {
         const hrefExpr = na.to !== undefined ? na.to : na.href !== undefined ? na.href : node.args[0];
-        const href = hrefExpr !== undefined ? String(evalSafe(hrefExpr, vn, vars, ln, locals) ?? '/') : '/';
+        const href = hrefExpr !== undefined ? (() => { const h = String(evalSafe(hrefExpr, vn, vars, ln, locals) ?? '/'); return h === '' ? '' : safeUrl(h) || '#'; })() : '/';
         const active = parseUrl(href).path === route.path;
         const inner = node.children.length > 0
           ? node.children.map((c, i) => renderNode(c, instKey, viewName, vn, vars, ln, locals, `${path}/${i}`, slotCtx)).join('')
@@ -3560,12 +3679,12 @@ export function renderToString(ast, options = {}) {
       }
       case 'RichText': {
         const valExpr = na.value !== undefined ? na.value : node.args[0];
-        const htmlVal = valExpr !== undefined ? String(evalSafe(valExpr, vn, vars, ln, locals) ?? '') : '';
+        const htmlVal = valExpr !== undefined ? sanitizeHtml(evalSafe(valExpr, vn, vars, ln, locals) ?? '') : '';
         return `<div${commonAttrs('f4-richtext', [['contenteditable', 'true'], ['role', 'textbox'], ['aria-multiline', 'true']])}>${htmlVal}</div>`;
       }
       case 'Image': {
         const srcExpr = na.src !== undefined ? na.src : node.args[0];
-        const src = srcExpr !== undefined ? evalSafe(srcExpr, vn, vars, ln, locals) : null;
+        const src = srcExpr !== undefined ? safeUrl(evalSafe(srcExpr, vn, vars, ln, locals), true) || null : null;
         const alt = na.alt !== undefined ? evalSafe(na.alt, vn, vars, ln, locals) ?? '' : '';
         return `<img${commonAttrs('f4-image', [['src', src], ['alt', alt], ['loading', 'lazy'], ['decoding', 'async']])}>`;
       }
@@ -3581,9 +3700,10 @@ export function renderToString(ast, options = {}) {
       }
       case 'Video': {
         const srcExpr = na.src !== undefined ? na.src : node.args[0];
-        const src = srcExpr !== undefined ? evalSafe(srcExpr, vn, vars, ln, locals) : null;
+        const src = srcExpr !== undefined ? safeUrl(evalSafe(srcExpr, vn, vars, ln, locals), true) || null : null;
         const extra = [['src', src]];
-        for (const name of ['poster', 'preload']) if (na[name] !== undefined) extra.push([name, evalSafe(na[name], vn, vars, ln, locals)]);
+        if (na.poster !== undefined) extra.push(['poster', safeUrl(evalSafe(na.poster, vn, vars, ln, locals), true) || null]);
+        if (na.preload !== undefined) extra.push(['preload', evalSafe(na.preload, vn, vars, ln, locals)]);
         for (const name of ['controls', 'autoplay', 'loop', 'muted', 'playsinline']) if (na[name] !== undefined && Boolean(evalSafe(na[name], vn, vars, ln, locals))) extra.push([name, '']);
         return `<video${commonAttrs('f4-video', extra)}></video>`;
       }

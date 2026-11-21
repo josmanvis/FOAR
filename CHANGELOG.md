@@ -4,6 +4,18 @@ All notable changes to FOAR are documented in this file.
 
 ## Unreleased
 
+## [0.4.2] — 2026-11-20
+
+### Security
+- **`foar install` could run commands from a manifest** (critical): registry packages were fetched with `sh -c "curl … | tar …"` built from the manifest's name, version and registry, so a `foar.toml` with `version = "1.0$(cmd)"` ran `cmd`. Fetching now runs `curl` and `tar` directly (no shell), and names, versions, registry and git URLs are validated; `git clone` gets `--` and has the `ext::`/`fd::` transports disabled (no `--upload-pack=` option injection); package names can't contain paths (`../`).
+- **No default package registry.** The built-in default `registry.foar-lang.org` was a domain nobody owned: whoever registered it could have served packages to `foar add --version`. A registry must now be given explicitly (https only, or http on localhost).
+- **Playground links could run someone else's code on the site** (high): `playground/app.html?src=<url>` compiled and ran a `.foar` file from any URL, and `playground/?app=javascript:…` put the URL into an iframe. `?src=` and `?app=` now accept only http(s) URLs on this machine (localhost), which is what they're for.
+- **`RichText` HTML is sanitized** (client and SSR): an allowlist keeps formatting, lists, tables, links and images and drops scripts, event handlers, `javascript:` URLs, frames, forms and SVG. Before, any HTML in a value ran, e.g. another user's note containing `<img src=x onerror=…>`.
+- **`Link`, `Image` and `Video` URLs can't run script**: `javascript:` and other non-http(s) schemes are dropped on the client and in SSR (`href="#"` plus a console warning).
+- **`foar dev`** rejects requests whose `Host` isn't localhost, an IP address or the `--host` it was started with (DNS rebinding let any web page read the project while it ran), and no longer follows symlinks out of the project.
+- `node server.js` (the repo's dev server) listens on 127.0.0.1 unless `HOST` says otherwise, and caps compile requests at 8 MB.
+- New exports: `sanitizeHtml(html)`, `safeUrl(url, media)`.
+
 ### Website
 - The new logo now shows as the browser-tab icon everywhere: the icon kept the same URL through four redesigns, so browsers' favicon caches kept showing old ones. Icon links are versioned (`favicon.svg?v=4`), and there are fallbacks rendered from the same SVG: `favicon.ico` (16/32/48) for browsers without SVG favicons and a 180 px `apple-touch-icon.png` for iOS/Safari.
 

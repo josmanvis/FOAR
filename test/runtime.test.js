@@ -1930,3 +1930,61 @@ test('events: capture runs outer-first and stop_propagation() stops the bubble; 
   assert.ok(last().endsWith('link-focus'), last());
   rt.destroy();
 });
+
+test('untrusted data: RichText HTML is sanitized, Link/Image/Video URLs cannot run script (client and SSR)', async () => {
+  const { sanitizeHtml, safeUrl } = await import(process.env.FOAR_RUNTIME ? `../${process.env.FOAR_RUNTIME}` : '../web/foar-runtime.js');
+  const vectors = [
+    '<img src=x onerror=alert(1)>',
+    '<script>alert(1)</script>after',
+    '<a href="javascript:alert(1)">a</a>',
+    '<a href="jav&#x09;ascript:alert(1)">b</a>',
+    '<a href="javascript&colon;alert(1)">c</a>',
+    '<a href=" JaVaScRiPt:alert(1)">d</a>',
+    '<svg onload=alert(1)><circle/></svg>',
+    '<svg/onload=alert(1)>',
+    '<iframe srcdoc="<script>alert(1)</script>"></iframe>',
+    '<div style="background:url(javascript:alert(1))">s</div>',
+    '<math><mi xlink:href="javascript:alert(1)">m</mi></math>',
+    '<form action="javascript:alert(1)"><button>x</button></form>',
+    '<p title="x" onclick="alert(1)">p</p>',
+    '<img src="data:text/html,<script>alert(1)</script>">',
+    '<noscript><p title="</noscript><img src=x onerror=alert(1)>"></noscript>',
+    '<a href="https://ok.example" target="_blank">ok</a>',
+    '</div></div><b>escape</b>',
+  ];
+  for (const v of vectors) {
+    const out = sanitizeHtml(v);
+    assert.doesNotMatch(out, /<script|onerror|onload|onclick|javascript|<iframe|<svg|<form|<math|srcdoc|data:text/i, `${v} -> ${out}`);
+  }
+  assert.equal(sanitizeHtml('</div></div><b>escape</b>'), '<b>escape</b>', 'stray closing tags cannot break out of the RichText container');
+  assert.equal(sanitizeHtml('<a href="https://ok.example" target="_blank">ok</a>'), '<a href="https://ok.example" target="_blank" rel="noopener noreferrer">ok</a>');
+  // what the Notes editor writes survives
+  const notes = '<h1>Trip</h1><ul class="checklist"><li data-checked="">Passport</li></ul><p style="text-align: center"><span style="color: rgb(255, 0, 0)">red</span> <a href="https://carris.pt">Tram</a></p><table><tbody><tr><td>1</td></tr></tbody></table><img src="data:image/svg+xml;utf8,%3Csvg%3E" alt=""><h2 data-collapsed="">x</h2><font color="#ff0000">f</font><br>';
+  assert.equal(sanitizeHtml(notes), notes);
+  assert.equal(safeUrl('javascript:alert(1)'), '');
+  assert.equal(safeUrl('/notes/1'), '/notes/1');
+  assert.equal(safeUrl('data:image/png;base64,AAAA', true), 'data:image/png;base64,AAAA');
+  assert.equal(safeUrl('data:image/png;base64,AAAA'), '', 'data: is for media only');
+
+  const src = `view App {
+    store html: String = "<img src=x onerror=window.__xss=1><b>bold</b>";
+    store url: String = "javascript:window.__xss=2";
+    state S {
+        render {
+            RichText(value: html, label: "Body")
+            Link(href: url, "site")
+            Image(src: url, alt: "pic")
+        }
+    }
+}`;
+  const ast = parseFoar(src);
+  const { container } = makeDom();
+  const rt = createFoarRuntime(ast, container, {});
+  assert.equal(container.querySelector('.f4-richtext').innerHTML, '<img src="x"><b>bold</b>');
+  assert.equal(container.querySelector('.f4-link').getAttribute('href'), '#');
+  assert.equal(container.querySelector('.f4-image').hasAttribute('src'), false);
+  rt.destroy();
+  const { html } = renderToString(ast, {});
+  assert.doesNotMatch(html, /onerror|javascript:/, html);
+  assert.match(html, /<b>bold<\/b>/);
+});

@@ -107,7 +107,7 @@ Row {
 | `Input(value:, placeholder:, secure:, autofocus:)` | `secure: true` is a password field | `on_input(text)`, `on_enter`, `on_blur(text)`, `on_change` |
 | `TextArea(value:, placeholder:, autofocus:)` | | `on_input(text)`, `on_blur(text)`, `on_change` |
 | `Checkbox(checked:)` | | `on_change(bool)` |
-| `RichText(value:, placeholder:, editable:)` | contenteditable; the value is HTML | `on_input(html)`, `on_blur`, `on_context_menu`, `on_drop` |
+| `RichText(value:, placeholder:, editable:)` | contenteditable; the value is HTML, [sanitized](#untrusted-data) | `on_input(html)`, `on_blur`, `on_context_menu`, `on_drop` |
 | `Image(src:, alt:)` | hidden while `src` is empty | `on_click`, `on_drop` |
 | `Spinner(text)` | | |
 | `Host(name: "map") { … }` | stable `<div>` handle for an imperative integration | normal container events |
@@ -722,6 +722,27 @@ hydrate(document.getElementById('app'), {
 `hydrate` restores serialized store/state snapshots from `<script id="__foar_state__">`
 and adopts the existing server-rendered DOM nodes in place (creating zero new
 elements when the server HTML matches).
+
+## Untrusted data
+
+Values from other people (other users' notes, an API, a URL) are safe to
+render:
+
+- Text is always text: `Text`, labels, attributes and interpolated strings are
+  escaped, on the client and in server rendering.
+- `RichText`'s value is HTML, rebuilt from an allowlist: formatting, headings,
+  lists, tables, links, images, `class`, `style`, `data-*` and `aria-*`
+  survive; scripts, event handlers (`onerror`, …), `iframe`/`object`/`form`/
+  `svg`, `javascript:` URLs and styles that load resources are removed. Its own
+  `on_input` output round-trips unchanged.
+- `Link`'s `href` and `Image`/`Video`'s `src` and `poster` accept http(s),
+  `mailto:`, `tel:` and relative URLs (media also `data:` images, video and
+  audio). Anything else, such as `javascript:`, is dropped (`href="#"`) with a
+  console warning.
+
+`sanitizeHtml(html)` and `safeUrl(url, media)` are exported for host code.
+
+Effects and host functions are code: only compile `.foar` sources you trust.
 
 ## Host functions and the runtime
 

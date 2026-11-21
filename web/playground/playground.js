@@ -1,4 +1,5 @@
 import { compileFoarProject, extractStateMachines, generateReadableJS, compilerBackend } from '../foar-compiler.js';
+import { localUrl, LOCAL_ONLY_MESSAGE } from './local-url.js';
 import { createWorkspace, localBackend, remoteBackend } from './workbench/workspace.js';
 import { createSearchPanel } from './workbench/search.js';
 import { createFindBar } from './workbench/findbar.js';
@@ -33,15 +34,15 @@ let activeHost = null;
 // (an app with its own JS), the preview embeds the running app (?app=<url>,
 // default: the source's origin) instead of mounting it bare.
 const params = new URLSearchParams(location.search);
-const remoteSrc = params.get('src');
-const previewUrl = remoteSrc ? params.get('app') || new URL(remoteSrc, location.href).origin + '/' : null;
+const rejectedSrc = (params.has('src') && !localUrl(params.get('src'))) || (params.has('app') && !localUrl(params.get('app')));
+const remoteSrc = rejectedSrc ? null : localUrl(params.get('src'));
+const previewUrl = remoteSrc ? localUrl(params.get('app')) || new URL(remoteSrc).origin + '/' : null;
 
 function buildAppUrl(value) {
   const v = value || exampleSelect.value || 'todo';
   if (v.startsWith('src:')) {
-    const raw = v.slice(4);
-    try { return new URL(raw, location.href).origin + '/'; } catch {}
-    return `app.html?src=${encodeURIComponent(raw)}`;
+    const raw = localUrl(v.slice(4));
+    return raw ? new URL(raw).origin + '/' : 'app.html';
   }
   if (remoteSrc && !v) {
     return previewUrl || `app.html?src=${encodeURIComponent(remoteSrc)}`;
@@ -578,6 +579,7 @@ if (remoteSrc) {
   }
   loadRemote(remoteSrc);
 } else {
+  if (rejectedSrc) notify(LOCAL_ONLY_MESSAGE);
   examplesReady.then(() => {
     const example = params.get('example');
     const ids = examples.map((e) => e.id);

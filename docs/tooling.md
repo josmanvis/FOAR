@@ -85,6 +85,11 @@ entry = "app.foar"
 ui = { path = "./packages/ui" }
 ```
 
+Registry packages need an explicit `registry = "https://…"` (or `foar add … --registry`):
+FOAR has no public registry yet. `foar install` validates every name, version
+and URL in the manifest and runs `git`, `curl` and `tar` without a shell, so a
+dependency's `foar.toml` can't run commands or write outside `foar_packages/`.
+
 Run `foar install` to compute deterministic SHA-256 integrity hashes in `foar.lock`, and `foar pkg --verify` (or `foar install --frozen` in CI) to verify no dependency file has been tampered with.
 
 ### Editor & Vite integration
